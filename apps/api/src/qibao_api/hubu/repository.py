@@ -97,6 +97,17 @@ class PaperRepository:
         ).fetchall()
         return [dict(row) for row in rows]
 
+    def reject_order(self, order_id: str, reason: str) -> None:
+        with self.connection:
+            cursor = self.connection.execute(
+                """UPDATE paper_orders
+                   SET status = 'rejected', rejection_reason = ?
+                   WHERE order_id = ? AND status = 'pending'""",
+                (reason, order_id),
+            )
+            if cursor.rowcount == 0:
+                raise ValueError("order is not pending")
+
     def get_allocation_settings(self, account_id: str) -> tuple[Decimal, Decimal]:
         row = self.connection.execute(
             "SELECT * FROM paper_settings WHERE account_id = ?", (account_id,)
