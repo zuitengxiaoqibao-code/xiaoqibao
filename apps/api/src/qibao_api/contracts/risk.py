@@ -1,9 +1,11 @@
-from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints
 
 from qibao_api.contracts.market import AssetKind
+
+
+NonBlankReference = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
 class RiskRule(BaseModel):
@@ -14,7 +16,7 @@ class RiskRule(BaseModel):
     asset: AssetKind
     description: str = Field(min_length=1)
     parameters: tuple[tuple[str, str], ...] = ()
-    created_at: datetime
+    created_at: AwareDatetime
 
 
 class RiskDecision(BaseModel):
@@ -26,10 +28,10 @@ class RiskDecision(BaseModel):
     asset: AssetKind
     outcome: Literal["approve", "reduce", "reject", "observe_only"]
     reason_code: str = Field(pattern=r"^[a-z][a-z0-9_]*$", max_length=128)
-    evidence: tuple[str, ...] = Field(min_length=1)
+    evidence: tuple[NonBlankReference, ...] = Field(min_length=1)
     rule_id: str = Field(min_length=1, max_length=128)
     rule_version: str = Field(min_length=1, max_length=64)
-    decided_at: datetime
+    decided_at: AwareDatetime
 
 
 class ComplianceRecord(BaseModel):
@@ -41,8 +43,8 @@ class ComplianceRecord(BaseModel):
     permission_state: Literal["authorized", "pending", "revoked"]
     permission_reference: str = Field(min_length=1)
     disclaimer_version: str = Field(min_length=1, max_length=64)
-    user_acknowledged_at: datetime | None = None
-    recorded_at: datetime
+    user_acknowledged_at: AwareDatetime | None = None
+    recorded_at: AwareDatetime
 
 
 class AuditFinding(BaseModel):
@@ -52,8 +54,8 @@ class AuditFinding(BaseModel):
     asset: AssetKind
     finding_type: str = Field(pattern=r"^[a-z][a-z0-9_]*$", max_length=128)
     severity: Literal["low", "medium", "high", "critical"]
-    evidence: tuple[str, ...] = Field(min_length=1)
-    input_snapshot_ids: tuple[str, ...] = Field(min_length=1)
+    evidence: tuple[NonBlankReference, ...] = Field(min_length=1)
+    input_snapshot_ids: tuple[NonBlankReference, ...] = Field(min_length=1)
     owner_department: Literal["xingbu", "dongchang", "libu"]
     resolution_state: Literal["open", "investigating", "resolved", "accepted"]
-    detected_at: datetime
+    detected_at: AwareDatetime

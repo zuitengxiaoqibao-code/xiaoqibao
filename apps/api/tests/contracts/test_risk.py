@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from qibao_api.contracts.market import AssetKind
 from qibao_api.contracts.risk import (
@@ -13,6 +13,7 @@ from qibao_api.contracts.risk import (
 
 
 NOW = datetime(2026, 7, 13, 9, 30, tzinfo=UTC)
+NAIVE_NOW = datetime(2026, 7, 13, 9, 30)
 
 
 def test_risk_rule_is_versioned_asset_specific_and_frozen() -> None:
@@ -113,3 +114,135 @@ def test_audit_finding_links_immutable_evidence_and_input_snapshots() -> None:
     assert finding.input_snapshot_ids == ("snapshot-1",)
     with pytest.raises(ValidationError):
         finding.resolution_state = "resolved"
+
+
+@pytest.mark.parametrize(
+    ("model", "values"),
+    [
+        (
+            RiskDecision,
+            {
+                "decision_id": "decision-1",
+                "order_id": "order-1",
+                "symbol": "600000",
+                "asset": AssetKind.A_SHARE,
+                "outcome": "approve",
+                "reason_code": "within_position_limit",
+                "evidence": ("   ",),
+                "rule_id": "max_position",
+                "rule_version": "2026-07-13.1",
+                "decided_at": NOW,
+            },
+        ),
+        (
+            AuditFinding,
+            {
+                "finding_id": "finding-1",
+                "asset": AssetKind.A_SHARE,
+                "finding_type": "duplicate_news_evidence",
+                "severity": "high",
+                "evidence": ("evidence://news/1", "\t"),
+                "input_snapshot_ids": ("snapshot-1",),
+                "owner_department": "dongchang",
+                "resolution_state": "open",
+                "detected_at": NOW,
+            },
+        ),
+        (
+            AuditFinding,
+            {
+                "finding_id": "finding-1",
+                "asset": AssetKind.A_SHARE,
+                "finding_type": "duplicate_news_evidence",
+                "severity": "high",
+                "evidence": ("evidence://news/1",),
+                "input_snapshot_ids": (" ",),
+                "owner_department": "dongchang",
+                "resolution_state": "open",
+                "detected_at": NOW,
+            },
+        ),
+    ],
+)
+def test_evidence_and_snapshot_collections_reject_blank_members(
+    model: type[BaseModel], values: dict[str, object]
+) -> None:
+    with pytest.raises(ValidationError):
+        model(**values)
+
+
+@pytest.mark.parametrize(
+    ("model", "values"),
+    [
+        (
+            RiskRule,
+            {
+                "rule_id": "max_position",
+                "rule_version": "2026-07-13.1",
+                "asset": AssetKind.A_SHARE,
+                "description": "Limit a single position",
+                "created_at": NAIVE_NOW,
+            },
+        ),
+        (
+            RiskDecision,
+            {
+                "decision_id": "decision-1",
+                "order_id": "order-1",
+                "symbol": "600000",
+                "asset": AssetKind.A_SHARE,
+                "outcome": "approve",
+                "reason_code": "within_position_limit",
+                "evidence": ("snapshot://orders/order-1",),
+                "rule_id": "max_position",
+                "rule_version": "2026-07-13.1",
+                "decided_at": NAIVE_NOW,
+            },
+        ),
+        (
+            ComplianceRecord,
+            {
+                "record_id": "compliance-1",
+                "asset": AssetKind.A_SHARE,
+                "source": "tencent",
+                "permission_state": "authorized",
+                "permission_reference": "license://tencent/2026",
+                "disclaimer_version": "2026-07-01",
+                "user_acknowledged_at": NAIVE_NOW,
+                "recorded_at": NOW,
+            },
+        ),
+        (
+            ComplianceRecord,
+            {
+                "record_id": "compliance-1",
+                "asset": AssetKind.A_SHARE,
+                "source": "tencent",
+                "permission_state": "authorized",
+                "permission_reference": "license://tencent/2026",
+                "disclaimer_version": "2026-07-01",
+                "user_acknowledged_at": NOW,
+                "recorded_at": NAIVE_NOW,
+            },
+        ),
+        (
+            AuditFinding,
+            {
+                "finding_id": "finding-1",
+                "asset": AssetKind.A_SHARE,
+                "finding_type": "duplicate_news_evidence",
+                "severity": "high",
+                "evidence": ("evidence://news/1",),
+                "input_snapshot_ids": ("snapshot-1",),
+                "owner_department": "dongchang",
+                "resolution_state": "open",
+                "detected_at": NAIVE_NOW,
+            },
+        ),
+    ],
+)
+def test_contract_timestamps_require_timezone_awareness(
+    model: type[BaseModel], values: dict[str, object]
+) -> None:
+    with pytest.raises(ValidationError):
+        model(**values)
