@@ -9,6 +9,7 @@ from qibao_api.gongbu.data_service import FallbackHistorySource, MarketDataServi
 from qibao_api.gongbu.tdx_client import create_tdx_client
 from qibao_api.gongbu.tdx_history import TdxHistorySource
 from qibao_api.gongbu.tencent_quotes import TencentQuoteSource
+from qibao_api.routes.backtest import router as backtest_router
 from qibao_api.routes.data import router as data_router
 from qibao_api.routes.health import router as health_router
 from qibao_api.routes.research import router as research_router
@@ -55,3 +56,4 @@ app = FastAPI(title="小七宝量化决策台", version="0.1.0", lifespan=lifesp
 app.include_router(health_router)
 app.include_router(research_router)
 app.include_router(data_router)
+app.include_router(backtest_router)
