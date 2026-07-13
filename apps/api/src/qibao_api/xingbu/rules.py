@@ -1,5 +1,6 @@
 from datetime import timedelta
 from decimal import Decimal
+from hashlib import sha256
 from typing import Literal, Protocol
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
@@ -53,12 +54,16 @@ class BaseRule:
     def breached(self, context: RiskContext) -> bool:
         raise NotImplementedError
 
+    def breach_reason(self, context: RiskContext) -> str:
+        return self.breach_reason_code
+
     def evaluate(self, context: RiskContext) -> RiskDecision:
         is_breached = self.breached(context)
         outcome: Outcome = self.breach_outcome if is_breached else "approve"
-        reason_code = self.breach_reason_code if is_breached else self.approval_reason_code
+        reason_code = self.breach_reason(context) if is_breached else self.approval_reason_code
+        decision_key = f"{context.order_id}:{self.rule_id}:{self.rule_version}"
         return RiskDecision(
-            decision_id=f"{context.order_id}:{self.rule_id}:{self.rule_version}",
+            decision_id=f"risk_{sha256(decision_key.encode('utf-8')).hexdigest()}",
             order_id=context.order_id,
             symbol=context.symbol,
             asset=context.asset,
@@ -78,7 +83,13 @@ class DataFreshnessRule(BaseRule):
     approval_reason_code = "quote_data_fresh"
 
     def breached(self, context: RiskContext) -> bool:
-        return context.decided_at - context.quote_observed_at > context.max_quote_age
+        quote_age = context.decided_at - context.quote_observed_at
+        return quote_age < timedelta(0) or quote_age > context.max_quote_age
+
+    def breach_reason(self, context: RiskContext) -> str:
+        if context.quote_observed_at > context.decided_at:
+            return "quote_timestamp_in_future"
+        return self.breach_reason_code
 
 
 class MaxPositionRule(BaseRule):

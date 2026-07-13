@@ -4,6 +4,7 @@
 .runtime/
 __pycache__/
 .pytest_cache/
+.hypothesis/
 node_modules/
 dist/
 *.tsbuildinfo

@@ -16,6 +16,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+  "hypothesis==6.135.32",
   "pytest==8.4.1",
   "pytest-asyncio==1.1.0",
   "ruff==0.12.3",

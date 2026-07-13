@@ -1,8 +1,8 @@
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from itertools import permutations
 
 import pytest
+from hypothesis import given, strategies as st
 from pydantic import ValidationError
 
 from qibao_api.contracts.market import AssetKind
@@ -113,15 +113,101 @@ def test_rule_boundaries_are_inclusive_and_breaches_are_auditable(
     assert breached.decided_at == NOW
 
 
-def test_engine_result_is_independent_of_rule_order() -> None:
-    rules = (
-        DataFreshnessRule(),
-        MaxPositionRule(),
-        TotalExposureRule(),
-        IndustryConcentrationRule(),
-        LiquidityRule(),
-        AccountDrawdownRule(),
+def test_decision_id_is_fixed_length_for_maximum_order_id() -> None:
+    risk_context = context(order_id="o" * 128)
+
+    first = MaxPositionRule().evaluate(risk_context)
+    second = MaxPositionRule().evaluate(risk_context)
+
+    assert first.decision_id == second.decision_id
+    assert len(first.decision_id) <= 128
+
+
+def test_future_quote_timestamp_is_rejected_with_machine_reason() -> None:
+    decision = DataFreshnessRule().evaluate(
+        context(quote_observed_at=NOW + timedelta(microseconds=1))
     )
+
+    assert decision.outcome == "reject"
+    assert decision.reason_code == "quote_timestamp_in_future"
+
+
+RATIO_RULE_CASES = (
+    (MaxPositionRule(), "projected_position", "max_position", "reduce"),
+    (
+        TotalExposureRule(),
+        "projected_total_exposure",
+        "max_total_exposure",
+        "reduce",
+    ),
+    (
+        IndustryConcentrationRule(),
+        "projected_industry_exposure",
+        "max_industry_exposure",
+        "reduce",
+    ),
+    (AccountDrawdownRule(), "current_drawdown", "max_drawdown", "reject"),
+)
+
+
+@given(
+    case=st.sampled_from(RATIO_RULE_CASES),
+    limit=st.decimals(min_value="0", max_value="1000000", places=6),
+    excess=st.decimals(min_value="0.000001", max_value="1000", places=6),
+)
+def test_ratio_rules_hold_at_limit_and_breach_above_it(
+    case: tuple[object, str, str, str], limit: Decimal, excess: Decimal
+) -> None:
+    rule, value_field, limit_field, breach_outcome = case
+
+    at_limit = rule.evaluate(context(**{value_field: limit, limit_field: limit}))
+    above_limit = rule.evaluate(context(**{value_field: limit + excess, limit_field: limit}))
+
+    assert at_limit.outcome == "approve"
+    assert above_limit.outcome == breach_outcome
+
+
+@given(
+    turnover=st.decimals(min_value="0.01", max_value="1000000000000", places=2),
+    participation=st.decimals(min_value="0", max_value="10", places=6),
+    excess=st.decimals(min_value="0.01", max_value="1000000", places=2),
+)
+def test_liquidity_boundary_scales_with_turnover(
+    turnover: Decimal, participation: Decimal, excess: Decimal
+) -> None:
+    limit = turnover * participation
+
+    approved = LiquidityRule().evaluate(
+        context(
+            average_daily_turnover=turnover,
+            max_turnover_participation=participation,
+            order_value=limit,
+        )
+    )
+    breached = LiquidityRule().evaluate(
+        context(
+            average_daily_turnover=turnover,
+            max_turnover_participation=participation,
+            order_value=limit + excess,
+        )
+    )
+
+    assert approved.outcome == "approve"
+    assert breached.outcome == "observe_only"
+
+
+RULES = (
+    DataFreshnessRule(),
+    MaxPositionRule(),
+    TotalExposureRule(),
+    IndustryConcentrationRule(),
+    LiquidityRule(),
+    AccountDrawdownRule(),
+)
+
+
+@given(candidate_rules=st.permutations(RULES))
+def test_engine_result_is_independent_of_rule_order(candidate_rules: list[object]) -> None:
     breached = context(
         quote_observed_at=NOW - timedelta(minutes=2),
         projected_position=Decimal("0.21"),
@@ -131,13 +217,10 @@ def test_engine_result_is_independent_of_rule_order() -> None:
         current_drawdown=Decimal("0.11"),
     )
 
-    results = {
-        RiskEngine(candidate_rules).review(breached).model_dump_json()
-        for candidate_rules in permutations(rules)
-    }
+    decision = RiskEngine(tuple(candidate_rules)).review(breached)
+    reference = RiskEngine(RULES).review(breached)
 
-    assert len(results) == 1
-    decision = RiskEngine(rules).review(breached)
+    assert decision == reference
     assert decision.outcome == "reject"
     assert decision.rule_id == "account_drawdown"
 
