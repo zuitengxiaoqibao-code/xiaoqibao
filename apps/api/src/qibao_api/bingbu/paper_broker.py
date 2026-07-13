@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 from decimal import Decimal
+from functools import wraps
+from threading import RLock
 from typing import Literal
 from uuid import uuid4
 
@@ -9,6 +11,15 @@ from qibao_api.contracts.market import AssetKind, DataQuality, Quote
 from qibao_api.contracts.trading import Fill, OrderRequest
 from qibao_api.hubu.repository import PaperRepository
 from qibao_api.libu.allocation import AllocationPolicy
+
+
+def serialized(method):
+    @wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return wrapper
 
 
 class PaperOrderResult(BaseModel):
@@ -27,11 +38,28 @@ class PaperBroker:
         minimum_commission: Decimal = Decimal("5"),
         slippage_rate: Decimal = Decimal("0.0005"),
     ) -> None:
+        self._lock = RLock()
         self.repository = repository
         self.commission_rate = commission_rate
         self.minimum_commission = minimum_commission
         self.slippage_rate = slippage_rate
 
+    @serialized
+    def reject_without_quote(
+        self, *, account_id: str, request: OrderRequest, reason: str
+    ) -> PaperOrderResult:
+        order_id = self.repository.create_order(account_id, request)
+        saved = self.repository.get_order(order_id)
+        if saved["status"] != "pending":
+            return PaperOrderResult(
+                order_id=order_id,
+                status=saved["status"],
+                reason=saved["rejection_reason"],
+            )
+        self.repository.reject_order(order_id, reason)
+        return PaperOrderResult(order_id=order_id, status="rejected", reason=reason)
+
+    @serialized
     def submit(
         self,
         *,

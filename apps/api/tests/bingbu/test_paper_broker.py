@@ -115,3 +115,22 @@ def test_limit_down_sell_is_persisted_before_position_check(repository) -> None:
 
     assert result.status == "rejected"
     assert result.reason == "limit_down_sell"
+
+
+def test_sell_above_position_is_persisted_as_rejected(repository) -> None:
+    result = PaperBroker(repository).submit(
+        account_id="paper-1",
+        request=OrderRequest(
+            client_order_id="oversold",
+            symbol="600000",
+            side="sell",
+            shares=100,
+        ),
+        quote=quote(),
+        risk_decision_id="risk-1",
+        risk_approved=True,
+    )
+
+    assert result.status == "rejected"
+    assert result.reason == "insufficient_shares"
+    assert repository.get_order(result.order_id)["rejection_reason"] == "insufficient_shares"

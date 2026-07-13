@@ -1,8 +1,16 @@
 import { Dashboard } from "../features/dashboard/Dashboard";
 import { loadSnapshot } from "../features/dashboard/api";
 import { syncHistory } from "../features/data-status/api";
+import { createPaperAccount, loadPaperPortfolio, submitPaperOrder } from "../features/paper-trading/api";
+import { runBacktest } from "../features/backtest/api";
 
 export function App() {
-  return <Dashboard loadSnapshot={loadSnapshot} syncHistory={syncHistory} runBacktest={runBacktest} />;
+  return <Dashboard
+    loadSnapshot={loadSnapshot}
+    syncHistory={syncHistory}
+    runBacktest={runBacktest}
+    loadPaperPortfolio={loadPaperPortfolio}
+    createPaperAccount={createPaperAccount}
+    submitPaperOrder={submitPaperOrder}
+  />;
 }
-import { runBacktest } from "../features/backtest/api";

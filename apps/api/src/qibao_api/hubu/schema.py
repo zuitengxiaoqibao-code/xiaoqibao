@@ -27,6 +27,14 @@ CREATE TABLE IF NOT EXISTS paper_fills (
     payload TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS paper_risk_decisions (
+    decision_id TEXT PRIMARY KEY,
+    order_id TEXT NOT NULL UNIQUE REFERENCES paper_orders(order_id),
+    approved INTEGER NOT NULL,
+    reasons TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS paper_positions (
     account_id TEXT NOT NULL REFERENCES paper_accounts(account_id),
     symbol TEXT NOT NULL,

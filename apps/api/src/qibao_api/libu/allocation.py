@@ -44,6 +44,9 @@ class AllocationPolicy:
             ),
             Decimal("0"),
         )
+        current_symbol_shares = sum(
+            position.shares for position in positions if position.symbol == order.symbol
+        )
         direction = Decimal("1") if order.side == "buy" else Decimal("-1")
         projected_symbol_value = max(Decimal("0"), current_symbol_value + direction * gross)
         projected_market_value = max(Decimal("0"), current_market_value + direction * gross)
@@ -52,7 +55,9 @@ class AllocationPolicy:
         cash_required = gross + estimated_fees if order.side == "buy" else Decimal("0")
 
         reason = None
-        if cash_required > account.cash:
+        if order.side == "sell" and order.shares > current_symbol_shares:
+            reason = "insufficient_shares"
+        elif cash_required > account.cash:
             reason = "insufficient_cash"
         elif projected_single > self.single_position_cap:
             reason = "single_position_cap"

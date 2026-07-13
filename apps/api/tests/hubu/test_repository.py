@@ -109,3 +109,26 @@ def test_allocation_settings_are_stored_per_account(tmp_path) -> None:
         Decimal("0.15"),
         Decimal("0.70"),
     )
+
+
+def test_risk_decision_is_idempotent_for_same_order(tmp_path) -> None:
+    repository = PaperRepository(tmp_path / "paper.sqlite3")
+    repository.create_account("paper-1", Decimal("100000"))
+    order_id = repository.create_order(
+        "paper-1",
+        OrderRequest(
+            client_order_id="client-risk",
+            symbol="600000",
+            side="buy",
+            shares=100,
+        ),
+    )
+
+    first = repository.record_risk_decision(
+        decision_id="risk-1", order_id=order_id, approved=True, reasons=[]
+    )
+    second = repository.record_risk_decision(
+        decision_id="risk-2", order_id=order_id, approved=True, reasons=[]
+    )
+
+    assert first == second == "risk-1"

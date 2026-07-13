@@ -1,22 +1,37 @@
 import sqlite3
+import json
 from datetime import datetime, timezone
 from decimal import Decimal
+from functools import wraps
 from pathlib import Path
+from threading import RLock
 from uuid import uuid4
 
 from qibao_api.contracts.trading import Fill, LedgerEntry, OrderRequest, PaperAccount, Position
 from qibao_api.hubu.schema import SCHEMA
 
 
+def synchronized(method):
+    @wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return wrapper
+
+
 class PaperRepository:
     def __init__(self, database: str | Path) -> None:
-        self.connection = sqlite3.connect(database)
+        self._lock = RLock()
+        self.connection = sqlite3.connect(database, check_same_thread=False)
         self.connection.row_factory = sqlite3.Row
         self.connection.executescript(SCHEMA)
 
+    @synchronized
     def close(self) -> None:
         self.connection.close()
 
+    @synchronized
     def create_account(self, account_id: str, initial_cash: Decimal) -> PaperAccount:
         now = datetime.now(timezone.utc)
         with self.connection:
@@ -39,6 +54,7 @@ class PaperRepository:
             )
         return self.get_account(account_id)
 
+    @synchronized
     def get_account(self, account_id: str) -> PaperAccount:
         row = self.connection.execute(
             "SELECT * FROM paper_accounts WHERE account_id = ?", (account_id,)
@@ -58,6 +74,7 @@ class PaperRepository:
             exposure=exposure,
         )
 
+    @synchronized
     def create_order(self, account_id: str, request: OrderRequest) -> str:
         existing = self.connection.execute(
             "SELECT order_id FROM paper_orders WHERE account_id = ? AND client_order_id = ?",
@@ -83,6 +100,7 @@ class PaperRepository:
             )
         return order_id
 
+    @synchronized
     def get_order(self, order_id: str) -> dict[str, object]:
         row = self.connection.execute(
             "SELECT * FROM paper_orders WHERE order_id = ?", (order_id,)
@@ -91,12 +109,14 @@ class PaperRepository:
             raise KeyError(order_id)
         return dict(row)
 
+    @synchronized
     def list_orders(self, account_id: str) -> list[dict[str, object]]:
         rows = self.connection.execute(
             "SELECT * FROM paper_orders WHERE account_id = ? ORDER BY created_at", (account_id,)
         ).fetchall()
         return [dict(row) for row in rows]
 
+    @synchronized
     def reject_order(self, order_id: str, reason: str) -> None:
         with self.connection:
             cursor = self.connection.execute(
@@ -108,6 +128,43 @@ class PaperRepository:
             if cursor.rowcount == 0:
                 raise ValueError("order is not pending")
 
+    @synchronized
+    def record_risk_decision(
+        self,
+        *,
+        decision_id: str,
+        order_id: str,
+        approved: bool,
+        reasons: list[str],
+    ) -> str:
+        existing = self.connection.execute(
+            "SELECT decision_id FROM paper_risk_decisions WHERE order_id = ?", (order_id,)
+        ).fetchone()
+        if existing is not None:
+            return str(existing["decision_id"])
+        with self.connection:
+            self.connection.execute(
+                "INSERT INTO paper_risk_decisions VALUES (?, ?, ?, ?, ?)",
+                (
+                    decision_id,
+                    order_id,
+                    int(approved),
+                    json.dumps(reasons, ensure_ascii=False),
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+        return decision_id
+
+    @synchronized
+    def get_risk_decision_for_order(self, order_id: str) -> dict[str, object]:
+        row = self.connection.execute(
+            "SELECT * FROM paper_risk_decisions WHERE order_id = ?", (order_id,)
+        ).fetchone()
+        if row is None:
+            raise KeyError(order_id)
+        return dict(row)
+
+    @synchronized
     def get_allocation_settings(self, account_id: str) -> tuple[Decimal, Decimal]:
         row = self.connection.execute(
             "SELECT * FROM paper_settings WHERE account_id = ?", (account_id,)
@@ -116,6 +173,7 @@ class PaperRepository:
             raise KeyError(account_id)
         return Decimal(row["single_position_cap"]), Decimal(row["total_exposure_cap"])
 
+    @synchronized
     def update_allocation_settings(
         self,
         account_id: str,
@@ -135,6 +193,7 @@ class PaperRepository:
             if cursor.rowcount == 0:
                 raise KeyError(account_id)
 
+    @synchronized
     def apply_fill(
         self,
         account_id: str,
@@ -243,6 +302,7 @@ class PaperRepository:
             ],
         )
 
+    @synchronized
     def list_positions(self, account_id: str) -> list[Position]:
         rows = self.connection.execute(
             "SELECT * FROM paper_positions WHERE account_id = ? ORDER BY symbol", (account_id,)
@@ -257,6 +317,7 @@ class PaperRepository:
             for row in rows
         ]
 
+    @synchronized
     def list_ledger(self, account_id: str) -> list[LedgerEntry]:
         rows = self.connection.execute(
             "SELECT * FROM paper_ledger WHERE account_id = ? ORDER BY created_at, rowid",
