@@ -28,6 +28,19 @@ class PaperRepository:
         self.connection.row_factory = sqlite3.Row
         self.connection.executescript(SCHEMA)
         self._migrate_legacy_risk_decisions()
+        self._ensure_risk_decision_triggers()
+
+    def _ensure_risk_decision_triggers(self) -> None:
+        self.connection.executescript("""
+            CREATE TRIGGER IF NOT EXISTS paper_risk_decisions_no_update
+            BEFORE UPDATE ON paper_risk_decisions BEGIN
+                SELECT RAISE(ABORT, 'paper risk decisions are immutable');
+            END;
+            CREATE TRIGGER IF NOT EXISTS paper_risk_decisions_no_delete
+            BEFORE DELETE ON paper_risk_decisions BEGIN
+                SELECT RAISE(ABORT, 'paper risk decisions are immutable');
+            END;
+        """)
 
     def _migrate_legacy_risk_decisions(self) -> None:
         columns = {
@@ -174,10 +187,13 @@ class PaperRepository:
     @synchronized
     def record_risk_decision(self, decision: RiskDecision) -> str:
         existing = self.connection.execute(
-            "SELECT decision_id FROM paper_risk_decisions WHERE order_id = ?", (decision.order_id,)
+            "SELECT order_id FROM paper_risk_decisions WHERE order_id = ?", (decision.order_id,)
         ).fetchone()
         if existing is not None:
-            return str(existing["decision_id"])
+            saved = self.get_risk_decision_for_order(decision.order_id)
+            if saved != decision:
+                raise ValueError(f"conflicting risk decision for order {decision.order_id!r}")
+            return saved.decision_id
         with self.connection:
             self.connection.execute(
                 "INSERT INTO paper_risk_decisions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",

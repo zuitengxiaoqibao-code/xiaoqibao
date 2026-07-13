@@ -52,6 +52,7 @@ class PaperTradingService:
         reason = "legacy_risk_gate_blocked" if blocked else "industry_liquidity_data_missing"
         account = self.broker.repository.get_account(account_id)
         positions = self.broker.repository.list_positions(account_id)
+        single_cap, total_cap = self.broker.repository.get_allocation_settings(account_id)
         quote_snapshot = json.dumps({
             "source": assessed.source, "observed_at": assessed.observed_at.isoformat(),
             "quality": assessed.quality.value, "price": str(assessed.price),
@@ -60,10 +61,17 @@ class PaperTradingService:
             "cash": str(account.cash), "equity": str(account.total_equity),
             "exposure": str(account.exposure),
             "positions": [position.model_dump(mode="json") for position in positions],
+            "single_position_cap": str(single_cap), "total_exposure_cap": str(total_cap),
+        }, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+        order_snapshot = json.dumps({
+            "client_order_id": request.client_order_id, "symbol": request.symbol,
+            "side": request.side, "shares": request.shares,
         }, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
         evidence = (
-            f"quote_snapshot:{quote_snapshot}", f"account_snapshot:{account_snapshot}",
+            f"order_snapshot:{order_snapshot}", f"quote_snapshot:{quote_snapshot}",
+            f"account_snapshot:{account_snapshot}",
             "risk_parameters:quote_age=180s;industry=required;liquidity=required",
+            f"execution_parameters:commission_rate={self.broker.commission_rate};minimum_commission={self.broker.minimum_commission};slippage_rate={self.broker.slippage_rate}",
             *(f"invalid_reason:{item}" for item in reviewed.invalid_reasons),
         )
         decision = self._decision(
@@ -80,9 +88,14 @@ class PaperTradingService:
         )
 
     def _record_system_decision(self, order_id: str, request: OrderRequest, reason: str, error: Exception) -> None:
+        order_snapshot = json.dumps({
+            "client_order_id": request.client_order_id, "symbol": request.symbol,
+            "side": request.side, "shares": request.shares,
+        }, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
         self.broker.repository.record_risk_decision(
             self._decision(order_id, request, "reject", reason, (
-                f"order:{order_id}", f"exception_type:{type(error).__name__}",
+                f"order:{order_id}", f"order_snapshot:{order_snapshot}",
+                f"exception_type:{type(error).__name__}",
                 f"exception_message:{str(error) or 'unavailable'}",
             ), "system_availability", "availability.1", datetime.now(timezone.utc))
         )

@@ -62,5 +62,20 @@ describe("governance navigation", () => {
     fireEvent.click(screen.getByRole("button", { name: /礼部/ }));
     fireEvent.click(await screen.findByRole("button", { name: "授权" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("授权服务不可用");
+    expect(screen.getByRole("heading", { name: "来源权限与声明" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "重试" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "授权" })).toBeEnabled();
+  });
+
+  it("retries an initial compliance load failure", async () => {
+    const loadCompliance = vi.fn()
+      .mockRejectedValueOnce(new Error("合规状态不可用"))
+      .mockResolvedValueOnce({ policy_state: "current", sources: [], features: [] });
+    render(<Dashboard loadSnapshot={snapshot} loadCompliance={loadCompliance} />);
+    fireEvent.click(screen.getByRole("button", { name: /礼部/ }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("合规状态不可用");
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    expect(await screen.findByRole("heading", { name: "来源权限与声明" })).toBeInTheDocument();
+    expect(loadCompliance).toHaveBeenCalledTimes(2);
   });
 });

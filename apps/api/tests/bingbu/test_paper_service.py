@@ -160,6 +160,11 @@ async def test_missing_industry_and_liquidity_data_is_observe_only(tmp_path) -> 
     assert '"source":"tencent"' in evidence
     assert '"price":"10"' in evidence
     assert '"cash":"100000"' in evidence
+    assert '"client_order_id":"missing-risk-data"' in evidence
+    assert '"shares":100' in evidence
+    assert '"side":"buy"' in evidence
+    assert '"single_position_cap":"0.20"' in evidence
+    assert '"total_exposure_cap":"0.80"' in evidence
     assert "risk_parameters:quote_age=180s;industry=required;liquidity=required" in evidence
 
 

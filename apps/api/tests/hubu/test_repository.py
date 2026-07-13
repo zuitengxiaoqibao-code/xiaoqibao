@@ -135,10 +135,36 @@ def test_risk_decision_is_idempotent_for_same_order(tmp_path) -> None:
         decided_at=datetime(2026, 7, 13, tzinfo=timezone.utc),
     )
     first = repository.record_risk_decision(decision)
-    second = repository.record_risk_decision(decision.model_copy(update={"decision_id": "risk-2"}))
+    second = repository.record_risk_decision(decision)
 
     assert first == second == "risk-1"
     assert repository.get_risk_decision_for_order(order_id) == decision
+    with pytest.raises(ValueError, match="conflicting risk decision"):
+        repository.record_risk_decision(
+            decision.model_copy(update={"decision_id": "risk-conflict", "reason_code": "different"})
+        )
+
+
+def test_risk_decisions_are_immutable(tmp_path) -> None:
+    import sqlite3
+    repository = PaperRepository(tmp_path / "paper.sqlite3")
+    repository.create_account("paper-1", Decimal("100000"))
+    order_id = repository.create_order("paper-1", OrderRequest(client_order_id="immutable", symbol="600000", side="buy", shares=100))
+    from datetime import datetime, timezone
+    from qibao_api.contracts.market import AssetKind
+    from qibao_api.contracts.risk import RiskDecision
+    decision = RiskDecision(
+        decision_id="risk-immutable", order_id=order_id, symbol="600000",
+        asset=AssetKind.A_SHARE, outcome="reject", reason_code="risk_unavailable",
+        evidence=("exception_type:RuntimeError",), rule_id="system_availability",
+        rule_version="availability.1", decided_at=datetime(2026, 7, 13, tzinfo=timezone.utc),
+    )
+    repository.record_risk_decision(decision)
+
+    with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+        repository.connection.execute("UPDATE paper_risk_decisions SET outcome = 'approve'")
+    with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+        repository.connection.execute("DELETE FROM paper_risk_decisions")
 
 
 def test_legacy_risk_schema_migrates_transactionally_and_accepts_new_decisions(tmp_path) -> None:
