@@ -90,3 +90,22 @@ def test_fill_rolls_back_cash_and_position_when_ledger_write_fails(tmp_path) -> 
     assert repository.get_account("paper-1").cash == Decimal("100000")
     assert repository.list_positions("paper-1") == []
     assert repository.get_order(order_id)["status"] == "pending"
+
+
+def test_allocation_settings_are_stored_per_account(tmp_path) -> None:
+    database = tmp_path / "paper.sqlite3"
+    repository = PaperRepository(database)
+    repository.create_account("paper-1", Decimal("100000"))
+    repository.update_allocation_settings(
+        "paper-1",
+        single_position_cap=Decimal("0.15"),
+        total_exposure_cap=Decimal("0.70"),
+    )
+    repository.close()
+
+    recovered = PaperRepository(database)
+
+    assert recovered.get_allocation_settings("paper-1") == (
+        Decimal("0.15"),
+        Decimal("0.70"),
+    )

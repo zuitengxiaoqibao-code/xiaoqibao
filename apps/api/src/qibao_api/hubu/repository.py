@@ -97,6 +97,33 @@ class PaperRepository:
         ).fetchall()
         return [dict(row) for row in rows]
 
+    def get_allocation_settings(self, account_id: str) -> tuple[Decimal, Decimal]:
+        row = self.connection.execute(
+            "SELECT * FROM paper_settings WHERE account_id = ?", (account_id,)
+        ).fetchone()
+        if row is None:
+            raise KeyError(account_id)
+        return Decimal(row["single_position_cap"]), Decimal(row["total_exposure_cap"])
+
+    def update_allocation_settings(
+        self,
+        account_id: str,
+        *,
+        single_position_cap: Decimal,
+        total_exposure_cap: Decimal,
+    ) -> None:
+        if not 0 < single_position_cap <= total_exposure_cap <= 1:
+            raise ValueError("allocation caps must satisfy 0 < single <= total <= 1")
+        with self.connection:
+            cursor = self.connection.execute(
+                """UPDATE paper_settings
+                   SET single_position_cap = ?, total_exposure_cap = ?
+                   WHERE account_id = ?""",
+                (str(single_position_cap), str(total_exposure_cap), account_id),
+            )
+            if cursor.rowcount == 0:
+                raise KeyError(account_id)
+
     def apply_fill(
         self,
         account_id: str,
