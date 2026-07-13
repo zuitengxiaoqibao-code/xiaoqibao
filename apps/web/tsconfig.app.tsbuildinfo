@@ -1,1 +1,0 @@
-{"root":["./src/main.tsx","./src/app/app.tsx","./src/features/dashboard/dashboard.test.tsx","./src/features/dashboard/dashboard.tsx","./src/features/dashboard/api.ts","./src/features/dashboard/types.ts","./src/test/setup.ts"],"version":"5.8.3"}
