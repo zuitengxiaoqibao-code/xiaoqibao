@@ -3,5 +3,6 @@ import { loadSnapshot } from "../features/dashboard/api";
 import { syncHistory } from "../features/data-status/api";
 
 export function App() {
-  return <Dashboard loadSnapshot={loadSnapshot} syncHistory={syncHistory} />;
+  return <Dashboard loadSnapshot={loadSnapshot} syncHistory={syncHistory} runBacktest={runBacktest} />;
 }
+import { runBacktest } from "../features/backtest/api";

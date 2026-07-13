@@ -7,6 +7,8 @@ import {
 
 import { DataStatusPanel } from "../data-status/DataStatusPanel";
 import type { DataStatusState, SyncReport } from "../data-status/types";
+import { BacktestPanel } from "../backtest/BacktestPanel";
+import type { BacktestResult } from "../backtest/types";
 import type { ResearchCard } from "./types";
 
 type ViewState =
@@ -18,6 +20,7 @@ type ViewState =
 type Props = {
   loadSnapshot: (symbol: string) => Promise<ResearchCard>;
   syncHistory?: (symbol: string, limit?: number) => Promise<SyncReport>;
+  runBacktest?: (symbol: string) => Promise<BacktestResult>;
 };
 
 const departments = [
@@ -86,7 +89,7 @@ function ResearchPanel({ card }: { card: ResearchCard }) {
   );
 }
 
-export function Dashboard({ loadSnapshot, syncHistory }: Props) {
+export function Dashboard({ loadSnapshot, syncHistory, runBacktest }: Props) {
   const [state, setState] = useState<ViewState>({ kind: "idle" });
   const [symbol, setSymbol] = useState("600000");
   const [dataState, setDataState] = useState<DataStatusState>({ kind: "idle" });
@@ -198,6 +201,7 @@ export function Dashboard({ loadSnapshot, syncHistory }: Props) {
             </section>
           </aside>
         </div>
+        {runBacktest && <BacktestPanel symbol={symbol} runBacktest={runBacktest} />}
       </main>
     </div>
   );
