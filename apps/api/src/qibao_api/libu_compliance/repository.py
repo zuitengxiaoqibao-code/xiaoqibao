@@ -1,17 +1,31 @@
 import sqlite3
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock
+from uuid import uuid4
 
 from qibao_api.contracts.risk import ComplianceRecord
+from qibao_api.contracts.market import AssetKind
 from qibao_api.libu_compliance.schema import SCHEMA
 
 
 @dataclass(frozen=True)
 class FeatureAuthorization:
     feature: str
+    asset: AssetKind
     allowed: bool
     blocked_sources: tuple[str, ...]
+    blocked_reasons: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class FeatureSourceEvent:
+    event_id: str
+    feature: str
+    asset: AssetKind
+    source: str
+    recorded_at: datetime
 
 
 class SourceAuthorizationError(PermissionError):
@@ -29,17 +43,43 @@ class ComplianceRepository:
         with self._lock:
             self.connection.close()
 
-    def set_feature_sources(self, feature: str, sources: tuple[str, ...]) -> None:
+    def set_feature_sources(
+        self, feature: str, asset: AssetKind | str, sources: tuple[str, ...]
+    ) -> None:
         if not feature or not sources or any(not source for source in sources):
             raise ValueError("feature and sources must be non-empty")
+        asset = AssetKind(asset)
+        recorded_at = datetime.now(timezone.utc).isoformat()
         with self._lock, self.connection:
-            self.connection.execute(
-                "DELETE FROM compliance_feature_sources WHERE feature = ?", (feature,)
-            )
             self.connection.executemany(
-                "INSERT INTO compliance_feature_sources VALUES (?, ?)",
-                [(feature, source) for source in dict.fromkeys(sources)],
+                """INSERT INTO compliance_feature_source_events
+                   (event_id, feature, asset, source, recorded_at) VALUES (?, ?, ?, ?, ?)""",
+                [
+                    (f"feature-source-{uuid4().hex}", feature, asset.value, source, recorded_at)
+                    for source in dict.fromkeys(sources)
+                ],
             )
+
+    def list_feature_source_history(
+        self, feature: str, asset: AssetKind | str
+    ) -> list[FeatureSourceEvent]:
+        asset = AssetKind(asset)
+        with self._lock:
+            rows = self.connection.execute(
+                """SELECT * FROM compliance_feature_source_events
+                   WHERE feature = ? AND asset = ? ORDER BY sequence""",
+                (feature, asset.value),
+            ).fetchall()
+        return [
+            FeatureSourceEvent(
+                event_id=row["event_id"],
+                feature=row["feature"],
+                asset=AssetKind(row["asset"]),
+                source=row["source"],
+                recorded_at=datetime.fromisoformat(row["recorded_at"]),
+            )
+            for row in rows
+        ]
 
     def append_record(self, record: ComplianceRecord) -> None:
         values = (
@@ -73,39 +113,54 @@ class ComplianceRepository:
             ).fetchall()
         return [self._record_from_row(row) for row in rows]
 
-    def check_feature_sources(self, feature: str) -> FeatureAuthorization:
+    def check_feature_sources(
+        self, feature: str, asset: AssetKind | str
+    ) -> FeatureAuthorization:
+        asset = AssetKind(asset)
         with self._lock:
             sources = self.connection.execute(
-                """SELECT source FROM compliance_feature_sources
-                   WHERE feature = ? ORDER BY source""",
-                (feature,),
+                """SELECT DISTINCT source FROM compliance_feature_source_events
+                   WHERE feature = ? AND asset = ? ORDER BY source""",
+                (feature, asset.value),
             ).fetchall()
-            states = [(row["source"], self._latest_record(row["source"])) for row in sources]
-        blocked = tuple(source for source, record in states if self._block_reason(record) is not None)
-        return FeatureAuthorization(feature=feature, allowed=not blocked, blocked_sources=blocked)
-
-    def require_feature_sources(self, feature: str) -> None:
-        with self._lock:
-            sources = self.connection.execute(
-                """SELECT source FROM compliance_feature_sources
-                   WHERE feature = ? ORDER BY source""",
-                (feature,),
-            ).fetchall()
-            blocked = [
-                f"{row['source']}:{reason}"
-                for row in sources
-                if (reason := self._block_reason(self._latest_record(row["source"]))) is not None
+            states = [
+                (row["source"], self._latest_record(row["source"], asset)) for row in sources
             ]
-        if blocked:
+        if not sources:
+            return FeatureAuthorization(
+                feature=feature,
+                asset=asset,
+                allowed=False,
+                blocked_sources=(),
+                blocked_reasons=("feature_sources_unregistered",),
+            )
+        blocked = tuple(source for source, record in states if self._block_reason(record) is not None)
+        reasons = tuple(
+            f"{source}:{reason}"
+            for source, record in states
+            if (reason := self._block_reason(record)) is not None
+        )
+        return FeatureAuthorization(
+            feature=feature,
+            asset=asset,
+            allowed=not blocked,
+            blocked_sources=blocked,
+            blocked_reasons=reasons,
+        )
+
+    def require_feature_sources(self, feature: str, asset: AssetKind | str) -> None:
+        decision = self.check_feature_sources(feature, asset)
+        if not decision.allowed:
             raise SourceAuthorizationError(
-                f"feature {feature!r} blocked by source authorization: {', '.join(blocked)}"
+                f"feature {feature!r} blocked by source authorization: "
+                f"{', '.join(decision.blocked_reasons)}"
             )
 
-    def _latest_record(self, source: str) -> ComplianceRecord | None:
+    def _latest_record(self, source: str, asset: AssetKind) -> ComplianceRecord | None:
         row = self.connection.execute(
-            """SELECT * FROM compliance_records WHERE source = ?
+            """SELECT * FROM compliance_records WHERE source = ? AND asset = ?
                ORDER BY recorded_at DESC, sequence DESC LIMIT 1""",
-            (source,),
+            (source, asset.value),
         ).fetchone()
         return self._record_from_row(row) if row else None
 
