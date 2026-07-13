@@ -16,6 +16,10 @@ from qibao_api.xingbu.rules import (
 )
 
 
+class DecisionPersistenceUnavailable(RuntimeError):
+    pass
+
+
 class PaperTradingService:
     def __init__(self, pipeline: ResearchPipeline, broker: PaperBroker) -> None:
         self.pipeline = pipeline
@@ -27,6 +31,14 @@ class PaperTradingService:
             if existing["status"] == "filled":
                 return PaperOrderResult(order_id=str(existing["order_id"]), status="filled", fill=self.broker.repository.get_fill_for_order(str(existing["order_id"])))
             return PaperOrderResult(order_id=str(existing["order_id"]), status="rejected", reason=str(existing["rejection_reason"]))
+        if existing is not None:
+            try:
+                saved_decision = self.broker.repository.get_risk_decision_for_order(str(existing["order_id"]))
+            except KeyError:
+                pass
+            else:
+                self.broker.repository.persist_decision_and_reject(saved_decision, "recovery_requires_new_order")
+                return PaperOrderResult(order_id=str(existing["order_id"]), status="rejected", reason="recovery_requires_new_order")
         order_id = self.broker.repository.create_order(account_id, request)
         try:
             quote = await self.pipeline.quote_source.fetch(request.symbol)
@@ -113,16 +125,21 @@ class PaperTradingService:
     def _fail(self, order_id: str, account_id: str, request: OrderRequest, reason: str, error: Exception, *, persist: bool = True) -> PaperOrderResult:
         if persist:
             try:
-                self._record_system_decision(order_id, request, reason, error)
-            except Exception:
-                pass
-        try:
-            saved = self.broker.repository.get_order(order_id)
-            if saved["status"] == "pending":
-                self.broker.repository.reject_order(order_id, reason)
-        except Exception:
-            pass
+                decision = self._system_decision(order_id, request, reason, error)
+                self.broker.repository.persist_decision_and_reject(decision, reason)
+            except Exception as persistence_error:
+                raise DecisionPersistenceUnavailable("decision persistence unavailable") from persistence_error
+        else:
+            try:
+                saved_decision = self.broker.repository.get_risk_decision_for_order(order_id)
+                self.broker.repository.persist_decision_and_reject(saved_decision, reason)
+            except Exception as persistence_error:
+                raise DecisionPersistenceUnavailable("decision persistence unavailable") from persistence_error
         return PaperOrderResult(order_id=order_id, status="rejected", reason=reason)
+
+    def _system_decision(self, order_id: str, request: OrderRequest, reason: str, error: Exception) -> RiskDecision:
+        order_snapshot = json.dumps({"client_order_id": request.client_order_id, "symbol": request.symbol, "side": request.side, "shares": request.shares}, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+        return self._decision(order_id, request, "reject", reason, (f"order:{order_id}", f"order_snapshot:{order_snapshot}", f"exception_type:{type(error).__name__}", f"exception_message:{str(error) or 'unavailable'}"), "system_availability", "availability.1", datetime.now(timezone.utc))
 
     @staticmethod
     def _aware(value: datetime) -> datetime:

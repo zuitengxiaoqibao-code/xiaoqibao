@@ -224,6 +224,29 @@ class PaperRepository:
         return decision.decision_id
 
     @synchronized
+    def persist_decision_and_reject(self, decision: RiskDecision, reason: str) -> str:
+        existing_row = self.connection.execute(
+            "SELECT order_id FROM paper_risk_decisions WHERE order_id = ?", (decision.order_id,)
+        ).fetchone()
+        with self.connection:
+            if existing_row is None:
+                self.connection.execute(
+                    "INSERT INTO paper_risk_decisions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (decision.decision_id, decision.order_id, decision.symbol, decision.asset.value,
+                     decision.outcome, decision.reason_code, json.dumps(decision.evidence, ensure_ascii=True),
+                     decision.rule_id, decision.rule_version, decision.decided_at.isoformat()),
+                )
+            elif self.get_risk_decision_for_order(decision.order_id) != decision:
+                raise ValueError(f"conflicting risk decision for order {decision.order_id!r}")
+            cursor = self.connection.execute(
+                "UPDATE paper_orders SET status = 'rejected', rejection_reason = ? WHERE order_id = ? AND status = 'pending'",
+                (reason, decision.order_id),
+            )
+            if cursor.rowcount == 0:
+                raise ValueError("order is not pending")
+        return decision.decision_id
+
+    @synchronized
     def get_risk_decision_for_order(self, order_id: str) -> RiskDecision:
         row = self.connection.execute(
             "SELECT * FROM paper_risk_decisions WHERE order_id = ?", (order_id,)

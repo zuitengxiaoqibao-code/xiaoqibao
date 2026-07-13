@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from qibao_api.bingbu.paper_broker import PaperOrderResult
-from qibao_api.bingbu.paper_service import PaperTradingService
+from qibao_api.bingbu.paper_service import DecisionPersistenceUnavailable, PaperTradingService
 from qibao_api.contracts.trading import LedgerEntry, OrderRequest, PaperAccount, Position
 from qibao_api.dependencies import get_paper_repository, get_paper_service
 from qibao_api.hubu.repository import PaperRepository
@@ -79,3 +79,5 @@ async def submit_order(
         return await service.submit(account_id, payload)
     except KeyError as error:
         raise HTTPException(status_code=404, detail="模拟账户不存在") from error
+    except DecisionPersistenceUnavailable as error:
+        raise HTTPException(status_code=503, detail="risk_decision_persistence_unavailable") from error

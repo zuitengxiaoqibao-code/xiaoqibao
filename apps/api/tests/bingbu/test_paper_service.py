@@ -192,6 +192,53 @@ async def test_terminal_client_order_retry_does_not_refetch_or_recompute(tmp_pat
     assert Pipeline.quote_source.calls == 1
 
 
+@pytest.mark.asyncio
+async def test_pending_order_with_saved_decision_requires_new_client_order_id(tmp_path) -> None:
+    repository = PaperRepository(tmp_path / "paper.sqlite3")
+    repository.create_account("paper-1", Decimal("100000"))
+    request = OrderRequest(client_order_id="recover", symbol="600000", side="buy", shares=100)
+    order_id = repository.create_order("paper-1", request)
+    from qibao_api.contracts.risk import RiskDecision
+    from datetime import timezone
+    repository.record_risk_decision(RiskDecision(
+        decision_id="risk-recover", order_id=order_id, symbol="600000", asset=AssetKind.A_SHARE,
+        outcome="observe_only", reason_code="industry_data_unavailable", evidence=("saved",),
+        rule_id="industry_concentration", rule_version="2026-07-13.1",
+        decided_at=datetime(2026, 7, 13, tzinfo=timezone.utc),
+    ))
+    source = FreshQuoteSource()
+    source.calls = 0
+    original = source.fetch
+    async def counted(symbol):
+        source.calls += 1
+        return await original(symbol)
+    source.fetch = counted
+    pipeline = IncompleteMarketPipeline()
+    pipeline.quote_source = source
+
+    result = await PaperTradingService(pipeline, PaperBroker(repository)).submit("paper-1", request)  # type: ignore[arg-type]
+
+    assert result.status == "rejected"
+    assert result.reason == "recovery_requires_new_order"
+    assert source.calls == 0
+    assert repository.get_risk_decision_for_order(order_id).decision_id == "risk-recover"
+
+
+@pytest.mark.asyncio
+async def test_decision_persistence_failure_leaves_order_pending(tmp_path) -> None:
+    repository = PaperRepository(tmp_path / "paper.sqlite3")
+    repository.create_account("paper-1", Decimal("100000"))
+    repository.connection.execute("""CREATE TRIGGER fail_decision_insert BEFORE INSERT ON paper_risk_decisions BEGIN SELECT RAISE(ABORT, 'decision store offline'); END""")
+    service = PaperTradingService(FakePipeline(), PaperBroker(repository))  # type: ignore[arg-type]
+    request = OrderRequest(client_order_id="store-down", symbol="600000", side="buy", shares=100)
+
+    with pytest.raises(Exception, match="decision persistence unavailable"):
+        await service.submit("paper-1", request)
+
+    order = repository.get_order_by_client_id("paper-1", "store-down")
+    assert order["status"] == "pending"
+
+
 def test_risk_decision_round_trip_preserves_saved_rule_version(tmp_path) -> None:
     from datetime import timezone
     from qibao_api.contracts.risk import RiskDecision
