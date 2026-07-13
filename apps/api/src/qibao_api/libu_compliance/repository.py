@@ -131,6 +131,10 @@ class ComplianceRepository:
             ).fetchall()
             return [self._latest_record(row["source"], asset) for row in sources]
 
+    def get_current_record(self, source: str, asset: AssetKind | str) -> ComplianceRecord | None:
+        with self._lock:
+            return self._latest_record(source, AssetKind(asset))
+
     def check_feature_sources(
         self, feature: str, asset: AssetKind | str
     ) -> FeatureAuthorization:

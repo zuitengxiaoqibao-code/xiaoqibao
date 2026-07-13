@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { Dashboard } from "../dashboard/Dashboard";
 
@@ -37,5 +37,30 @@ describe("governance navigation", () => {
     rerender(<Dashboard loadSnapshot={snapshot} loadAudit={() => Promise.resolve({ state: "ready", findings: [{ finding_id: "audit-1", finding_type: "abnormal_rejection_rate", severity: "critical", owner_department: "xingbu", resolution_state: "open", evidence: ["snapshot://one"], snapshots: [{ snapshot_id: "one", evidence_link: "snapshot://one" }] }] })} />);
     expect(await screen.findByText("CRITICAL")).toBeInTheDocument();
     expect(screen.getByText("snapshot://one")).toBeInTheDocument();
+  });
+
+  it("awaits compliance actions, refreshes status, and surfaces failures", async () => {
+    let resolveAction!: () => void;
+    const loadCompliance = vi.fn()
+      .mockResolvedValueOnce({ policy_state: "current", sources: [{ source: "tencent", permission_state: "revoked", disclaimer_version: "2026-07", user_acknowledged_at: null }], features: [{ feature: "paper_orders", allowed: false, blocked_reasons: ["tencent:revoked"] }] })
+      .mockResolvedValueOnce({ policy_state: "current", sources: [{ source: "tencent", permission_state: "revoked", disclaimer_version: "2026-07", user_acknowledged_at: "2026-07-13" }], features: [{ feature: "paper_orders", allowed: false, blocked_reasons: ["tencent:revoked"] }] });
+    const action = vi.fn(() => new Promise<void>((resolve) => { resolveAction = resolve; }));
+    render(<Dashboard loadSnapshot={snapshot} loadCompliance={loadCompliance} complianceAction={action} />);
+    fireEvent.click(screen.getByRole("button", { name: /礼部/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "确认声明" }));
+    expect(screen.getByRole("button", { name: "处理中..." })).toBeDisabled();
+    resolveAction();
+    expect(await screen.findByText(/已确认/)).toBeInTheDocument();
+    expect(loadCompliance).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows a compliance action failure", async () => {
+    render(<Dashboard loadSnapshot={snapshot} loadCompliance={() => Promise.resolve({
+      policy_state: "current", sources: [{ source: "tencent", permission_state: "revoked", disclaimer_version: "2026-07", user_acknowledged_at: null }],
+      features: [{ feature: "paper_orders", allowed: false, blocked_reasons: ["tencent:revoked"] }],
+    })} complianceAction={() => Promise.reject(new Error("授权服务不可用"))} />);
+    fireEvent.click(screen.getByRole("button", { name: /礼部/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "授权" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("授权服务不可用");
   });
 });

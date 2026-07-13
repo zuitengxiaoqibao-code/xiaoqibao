@@ -52,4 +52,6 @@ def revoke(source: str, payload: PolicyAction, repository: Annotated[ComplianceR
 
 @router.post("/sources/{source}/acknowledge", response_model=ComplianceRecord)
 def acknowledge(source: str, payload: PolicyAction, repository: Annotated[ComplianceRepository, Depends(get_compliance_repository)]):
-    return _append(repository, source, payload, "authorized", True)
+    current = repository.get_current_record(source, AssetKind.A_SHARE)
+    state = current.permission_state if current is not None else "pending"
+    return _append(repository, source, payload, state, True)

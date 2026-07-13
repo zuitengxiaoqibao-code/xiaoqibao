@@ -139,3 +139,31 @@ def test_risk_decision_is_idempotent_for_same_order(tmp_path) -> None:
 
     assert first == second == "risk-1"
     assert repository.get_risk_decision_for_order(order_id) == decision
+
+
+def test_legacy_risk_schema_migrates_transactionally_and_accepts_new_decisions(tmp_path) -> None:
+    import sqlite3
+    database = tmp_path / "paper.sqlite3"
+    connection = sqlite3.connect(database)
+    connection.executescript("""
+        CREATE TABLE paper_accounts (account_id TEXT PRIMARY KEY, initial_cash TEXT, cash TEXT, created_at TEXT);
+        CREATE TABLE paper_orders (order_id TEXT PRIMARY KEY, account_id TEXT, client_order_id TEXT, symbol TEXT, side TEXT, shares INTEGER, status TEXT, rejection_reason TEXT, created_at TEXT, UNIQUE(account_id, client_order_id));
+        CREATE TABLE paper_risk_decisions (decision_id TEXT PRIMARY KEY, order_id TEXT UNIQUE, approved INTEGER, reasons TEXT, created_at TEXT);
+        INSERT INTO paper_accounts VALUES ('paper-1', '100000', '100000', '2026-07-13T00:00:00+00:00');
+        INSERT INTO paper_orders VALUES ('order-old', 'paper-1', 'old', '600000', 'buy', 100, 'rejected', 'risk_rejected', '2026-07-13T01:00:00+00:00');
+        INSERT INTO paper_risk_decisions VALUES ('risk-old', 'order-old', 0, '["legacy_limit"]', '2026-07-13T01:00:01+00:00');
+    """)
+    connection.close()
+
+    repository = PaperRepository(database)
+    migrated = repository.get_risk_decision_for_order("order-old")
+    assert migrated.outcome == "reject"
+    assert migrated.reason_code == "legacy_risk_rejected"
+    assert "legacy_reason:legacy_limit" in migrated.evidence
+    repository.close()
+
+    reopened = PaperRepository(database)
+    order_id = reopened.create_order("paper-1", OrderRequest(client_order_id="new", symbol="000001", side="buy", shares=100))
+    decision = migrated.model_copy(update={"decision_id": "risk-new", "order_id": order_id, "symbol": "000001"})
+    assert reopened.record_risk_decision(decision) == "risk-new"
+    reopened.close()

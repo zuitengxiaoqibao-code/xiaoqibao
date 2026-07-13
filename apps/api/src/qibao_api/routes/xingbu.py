@@ -13,6 +13,7 @@ router = APIRouter(prefix="/api/v1/xingbu", tags=["刑部"])
 @router.get("/status")
 def status(repository: Annotated[PaperRepository, Depends(get_paper_repository)]):
     decisions = repository.list_risk_decisions(limit=20)
+    rejections = repository.list_rejected_order_decisions(limit=20)
     return {
         "rule_version": RULE_VERSION,
         "limits": {
@@ -23,5 +24,5 @@ def status(repository: Annotated[PaperRepository, Depends(get_paper_repository)]
             "liquidity": "data_required",
         },
         "decisions": decisions,
-        "recent_rejections": [item for item in decisions if item.outcome == "reject"],
+        "recent_rejections": rejections,
     }

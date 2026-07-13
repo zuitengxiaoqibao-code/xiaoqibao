@@ -1,10 +1,13 @@
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from qibao_api.contracts.market import AssetKind
 from qibao_api.contracts.risk import ComplianceRecord
+from qibao_api.contracts.risk import RiskDecision
+from qibao_api.contracts.trading import OrderRequest
 from qibao_api.dependencies import (
     get_audit_repository,
     get_compliance_repository,
@@ -78,6 +81,11 @@ def test_libu_explicit_revoke_and_acknowledge_actions(tmp_path) -> None:
     assert acknowledged.json()["user_acknowledged_at"] is not None
     assert client.get("/api/v1/libu/status").json()["features"][0]["allowed"] is True
 
+    client.post("/api/v1/libu/sources/tencent/revoke", json={"permission_reference": "operator:revoked-again", "disclaimer_version": "2026-08"})
+    revoked_ack = client.post("/api/v1/libu/sources/tencent/acknowledge", json={"permission_reference": "operator:ack", "disclaimer_version": "2026-08"})
+    assert revoked_ack.json()["permission_state"] == "revoked"
+    assert client.get("/api/v1/libu/status").json()["features"][0]["allowed"] is False
+
 
 def test_audit_store_unavailable_is_explicit() -> None:
     class BrokenAudit:
@@ -92,3 +100,21 @@ def test_audit_store_unavailable_is_explicit() -> None:
 
     assert response.status_code == 503
     assert response.json()["detail"] == "audit_store_unavailable"
+
+
+def test_xingbu_rejections_follow_order_status_including_observe_only(tmp_path) -> None:
+    client, _, _ = make_client(tmp_path)
+    paper = client.app.dependency_overrides[get_paper_repository]()
+    paper.create_account("paper-1", Decimal("100000"))
+    order_id = paper.create_order("paper-1", OrderRequest(client_order_id="observe", symbol="600000", side="buy", shares=100))
+    paper.record_risk_decision(RiskDecision(
+        decision_id="risk-observe", order_id=order_id, symbol="600000", asset=AssetKind.A_SHARE,
+        outcome="observe_only", reason_code="industry_liquidity_data_missing",
+        evidence=("snapshot:one",), rule_id="complete_order_review",
+        rule_version="market-quality.1+missing-inputs.1", decided_at=NOW,
+    ))
+    paper.reject_order(order_id, "risk_rejected")
+
+    response = client.get("/api/v1/xingbu/status")
+
+    assert response.json()["recent_rejections"][0]["decision_id"] == "risk-observe"

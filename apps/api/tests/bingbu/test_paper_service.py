@@ -39,7 +39,9 @@ async def test_source_unavailable_order_is_persisted_as_rejected(tmp_path) -> No
     decision = repository.get_risk_decision_for_order(result.order_id)
     assert decision.outcome == "reject"
     assert decision.reason_code == "source_unavailable"
-    assert decision.rule_version == "system.1"
+    assert decision.rule_version == "availability.1"
+    assert "exception_type:RuntimeError" in decision.evidence
+    assert "exception_message:quote source offline" in decision.evidence
 
 
 class FreshQuoteSource:
@@ -94,7 +96,8 @@ async def test_risk_gate_decision_is_persisted_and_referenced(tmp_path) -> None:
     decision = repository.get_risk_decision_for_order(result.order_id)
     assert decision.outcome == "reject"
     assert decision.reason_code == "legacy_risk_gate_blocked"
-    assert decision.evidence == ("pipeline:risk-gate",)
+    assert "invalid_reason:规则否决" in decision.evidence
+    assert decision.rule_version == "market-quality.1+missing-inputs.1"
 
 
 class BrokenRiskGate:
@@ -153,6 +156,11 @@ async def test_missing_industry_and_liquidity_data_is_observe_only(tmp_path) -> 
     assert result.status == "rejected"
     assert decision.outcome == "observe_only"
     assert decision.reason_code == "industry_liquidity_data_missing"
+    evidence = "\n".join(decision.evidence)
+    assert '"source":"tencent"' in evidence
+    assert '"price":"10"' in evidence
+    assert '"cash":"100000"' in evidence
+    assert "risk_parameters:quote_age=180s;industry=required;liquidity=required" in evidence
 
 
 def test_risk_decision_round_trip_preserves_saved_rule_version(tmp_path) -> None:

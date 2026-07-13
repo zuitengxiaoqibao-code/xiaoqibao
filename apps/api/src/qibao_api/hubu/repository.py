@@ -27,6 +27,48 @@ class PaperRepository:
         self.connection = sqlite3.connect(database, check_same_thread=False)
         self.connection.row_factory = sqlite3.Row
         self.connection.executescript(SCHEMA)
+        self._migrate_legacy_risk_decisions()
+
+    def _migrate_legacy_risk_decisions(self) -> None:
+        columns = {
+            row["name"]
+            for row in self.connection.execute("PRAGMA table_info(paper_risk_decisions)")
+        }
+        if "approved" not in columns:
+            return
+        try:
+            self.connection.execute("BEGIN IMMEDIATE")
+            self.connection.execute(
+                "ALTER TABLE paper_risk_decisions RENAME TO paper_risk_decisions_legacy"
+            )
+            self.connection.execute("""CREATE TABLE paper_risk_decisions (
+                decision_id TEXT PRIMARY KEY,
+                order_id TEXT NOT NULL UNIQUE REFERENCES paper_orders(order_id),
+                symbol TEXT NOT NULL, asset TEXT NOT NULL, outcome TEXT NOT NULL,
+                reason_code TEXT NOT NULL, evidence_json TEXT NOT NULL,
+                rule_id TEXT NOT NULL, rule_version TEXT NOT NULL, decided_at TEXT NOT NULL
+            )""")
+            rows = self.connection.execute("""SELECT legacy.*, orders.symbol
+                FROM paper_risk_decisions_legacy AS legacy
+                JOIN paper_orders AS orders ON orders.order_id = legacy.order_id""").fetchall()
+            for row in rows:
+                reasons = json.loads(row["reasons"] or "[]")
+                evidence = [f"legacy_reason:{reason}" for reason in reasons] or ["legacy_reason:none"]
+                self.connection.execute(
+                    "INSERT INTO paper_risk_decisions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        row["decision_id"], row["order_id"], row["symbol"], "a_share",
+                        "approve" if row["approved"] else "reject",
+                        "legacy_risk_approved" if row["approved"] else "legacy_risk_rejected",
+                        json.dumps(evidence, ensure_ascii=True), "legacy_paper_risk",
+                        "legacy.0", row["created_at"],
+                    ),
+                )
+            self.connection.execute("DROP TABLE paper_risk_decisions_legacy")
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
 
     @synchronized
     def close(self) -> None:
@@ -166,6 +208,17 @@ class PaperRepository:
     def list_risk_decisions(self, *, limit: int = 50) -> list[RiskDecision]:
         rows = self.connection.execute(
             "SELECT order_id FROM paper_risk_decisions ORDER BY decided_at DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [self.get_risk_decision_for_order(row["order_id"]) for row in rows]
+
+    @synchronized
+    def list_rejected_order_decisions(self, *, limit: int = 20) -> list[RiskDecision]:
+        rows = self.connection.execute(
+            """SELECT decisions.order_id FROM paper_orders AS orders
+               JOIN paper_risk_decisions AS decisions ON decisions.order_id = orders.order_id
+               WHERE orders.status = 'rejected'
+               ORDER BY orders.created_at DESC LIMIT ?""",
+            (limit,),
         ).fetchall()
         return [self.get_risk_decision_for_order(row["order_id"]) for row in rows]
 

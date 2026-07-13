@@ -28,7 +28,7 @@ type Props = {
   createPaperAccount?: () => Promise<PaperAccount>;
   submitPaperOrder?: (symbol: string, side: "buy" | "sell", shares: number) => Promise<OrderResult>;
   loadRisk?: () => Promise<RiskStatus>; loadCompliance?: () => Promise<ComplianceStatus>; loadAudit?: () => Promise<AuditStatus>;
-  complianceAction?: (source: string, action: "authorize" | "revoke" | "acknowledge") => Promise<void>;
+  complianceAction?: (source: string, action: "authorize" | "revoke" | "acknowledge") => Promise<unknown>;
 };
 
 const departments = [
