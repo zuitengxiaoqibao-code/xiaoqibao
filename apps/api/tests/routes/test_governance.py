@@ -118,3 +118,18 @@ def test_xingbu_rejections_follow_order_status_including_observe_only(tmp_path) 
     response = client.get("/api/v1/xingbu/status")
 
     assert response.json()["recent_rejections"][0]["decision_id"] == "risk-observe"
+
+
+def test_dongchang_audit_run_generates_and_persists_findings(tmp_path) -> None:
+    client, _, audit_repository = make_client(tmp_path)
+    payload = {
+        "audit_run_id": "run-api-1", "asset": "a_share",
+        "recommendation": {"snapshot_id": "rec-api", "asset": "a_share", "symbol": "600000", "conclusion": "bullish", "evidence_link": "snapshot://rec-api", "captured_at": "2026-07-13T00:00:00Z"},
+        "outcome": {"snapshot_id": "out-api", "asset": "a_share", "symbol": "600000", "conclusion": "bearish", "evidence_link": "snapshot://out-api", "captured_at": "2026-07-14T00:00:00Z"},
+    }
+
+    response = client.post("/api/v1/dongchang/audit-runs", json=payload)
+
+    assert response.status_code == 201
+    assert response.json()["findings"][0]["finding_type"] == "recommendation_outcome_deviation"
+    assert len(audit_repository.list_findings(asset=AssetKind.A_SHARE)) == 1

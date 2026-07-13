@@ -43,12 +43,13 @@ async def lifespan(application: FastAPI):
     application.state.compliance_repository = compliance
     compliance.set_feature_sources("realtime_quotes", "a_share", ("tencent",))
     compliance.set_feature_sources("paper_orders", "a_share", ("tencent",))
+    compliance.set_feature_sources("history_sync.mootdx", "a_share", ("mootdx",))
+    compliance.set_feature_sources("history_sync.baidu", "a_share", ("baidu",))
     async with httpx.AsyncClient(timeout=10) as client:
         with httpx.Client(timeout=10) as history_client:
             history_sources = []
             try:
                 tdx_source = TdxHistorySource(create_tdx_client())
-                compliance.set_feature_sources("history_sync.mootdx", "a_share", ("mootdx",))
                 history_sources.append(
                     AuthorizedHistorySource(
                         tdx_source,
@@ -59,7 +60,6 @@ async def lifespan(application: FastAPI):
                 )
             except Exception:
                 pass
-            compliance.set_feature_sources("history_sync.baidu", "a_share", ("baidu",))
             history_sources.append(
                 AuthorizedHistorySource(
                     BaiduHistorySource(history_client),

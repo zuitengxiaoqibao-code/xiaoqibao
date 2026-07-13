@@ -60,6 +60,7 @@ describe("governance navigation", () => {
       features: [{ feature: "paper_orders", allowed: false, blocked_reasons: ["tencent:revoked"] }],
     })} complianceAction={() => Promise.reject(new Error("授权服务不可用"))} />);
     fireEvent.click(screen.getByRole("button", { name: /礼部/ }));
+    fireEvent.change(await screen.findByLabelText("tencent 权限依据"), { target: { value: "contract:test" } });
     fireEvent.click(await screen.findByRole("button", { name: "授权" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("授权服务不可用");
     expect(screen.getByRole("heading", { name: "来源权限与声明" })).toBeInTheDocument();

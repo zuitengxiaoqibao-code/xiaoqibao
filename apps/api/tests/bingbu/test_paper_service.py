@@ -94,10 +94,10 @@ async def test_risk_gate_decision_is_persisted_and_referenced(tmp_path) -> None:
     assert result.status == "rejected"
     assert result.reason == "risk_rejected"
     decision = repository.get_risk_decision_for_order(result.order_id)
-    assert decision.outcome == "reject"
-    assert decision.reason_code == "legacy_risk_gate_blocked"
+    assert decision.outcome == "observe_only"
+    assert decision.reason_code == "industry_data_unavailable"
     assert "invalid_reason:规则否决" in decision.evidence
-    assert decision.rule_version == "market-quality.1+missing-inputs.1"
+    assert decision.rule_version == "2026-07-13.1"
 
 
 class BrokenRiskGate:
@@ -155,7 +155,7 @@ async def test_missing_industry_and_liquidity_data_is_observe_only(tmp_path) -> 
     decision = repository.get_risk_decision_for_order(result.order_id)
     assert result.status == "rejected"
     assert decision.outcome == "observe_only"
-    assert decision.reason_code == "industry_liquidity_data_missing"
+    assert decision.reason_code == "industry_data_unavailable"
     evidence = "\n".join(decision.evidence)
     assert '"source":"tencent"' in evidence
     assert '"price":"10"' in evidence
@@ -166,6 +166,30 @@ async def test_missing_industry_and_liquidity_data_is_observe_only(tmp_path) -> 
     assert '"single_position_cap":"0.20"' in evidence
     assert '"total_exposure_cap":"0.80"' in evidence
     assert "risk_parameters:quote_age=180s;industry=required;liquidity=required" in evidence
+    trace = next(item.removeprefix("rule_trace:") for item in decision.evidence if item.startswith("rule_trace:"))
+    assert len(__import__("json").loads(trace)) == 6
+    assert any(item.startswith("risk_context:") for item in decision.evidence)
+
+
+@pytest.mark.asyncio
+async def test_terminal_client_order_retry_does_not_refetch_or_recompute(tmp_path) -> None:
+    class CountingSource(FreshQuoteSource):
+        calls = 0
+        async def fetch(self, symbol: str) -> Quote:
+            self.calls += 1
+            return await super().fetch(symbol)
+    class Pipeline(IncompleteMarketPipeline):
+        quote_source = CountingSource()
+    repository = PaperRepository(tmp_path / "paper.sqlite3")
+    repository.create_account("paper-1", Decimal("100000"))
+    service = PaperTradingService(Pipeline(), PaperBroker(repository))  # type: ignore[arg-type]
+    request = OrderRequest(client_order_id="retry", symbol="600000", side="buy", shares=100)
+
+    first = await service.submit("paper-1", request)
+    second = await service.submit("paper-1", request)
+
+    assert second == first
+    assert Pipeline.quote_source.calls == 1
 
 
 def test_risk_decision_round_trip_preserves_saved_rule_version(tmp_path) -> None:

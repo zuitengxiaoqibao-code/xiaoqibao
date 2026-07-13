@@ -28,6 +28,13 @@ class FeatureSourceEvent:
     recorded_at: datetime
 
 
+@dataclass(frozen=True)
+class SourceDependency:
+    feature: str
+    asset: AssetKind
+    source: str
+
+
 class SourceAuthorizationError(PermissionError):
     pass
 
@@ -89,6 +96,16 @@ class ComplianceRepository:
             )
             for row in rows
         ]
+
+    def list_source_dependencies(self, asset: AssetKind | str) -> list[SourceDependency]:
+        asset = AssetKind(asset)
+        with self._lock:
+            rows = self.connection.execute(
+                """SELECT DISTINCT feature, asset, source
+                   FROM compliance_feature_source_events WHERE asset = ?
+                   ORDER BY source, feature""", (asset.value,)
+            ).fetchall()
+        return [SourceDependency(row["feature"], asset, row["source"]) for row in rows]
 
     def append_record(self, record: ComplianceRecord) -> None:
         values = (

@@ -261,3 +261,17 @@ def test_engine_uses_stable_outcome_precedence(outcomes: tuple[str, str], expect
 def test_context_accepts_only_a_share_orders() -> None:
     with pytest.raises(ValidationError):
         context(asset=AssetKind.CONVERTIBLE_BOND)
+
+
+def test_unavailable_industry_and_liquidity_are_observe_only_without_hiding_real_breaches() -> None:
+    risk_context = context(
+        projected_industry_exposure=None,
+        average_daily_turnover=None,
+        projected_position=Decimal("0.30"),
+    )
+    decisions = RiskEngine(RULES).evaluate_all(risk_context)
+
+    assert {item.reason_code for item in decisions} >= {
+        "industry_data_unavailable", "liquidity_data_unavailable", "max_position_exceeded"
+    }
+    assert RiskEngine(RULES).review(risk_context).outcome == "observe_only"

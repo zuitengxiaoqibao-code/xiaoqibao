@@ -166,6 +166,23 @@ class PaperRepository:
         return dict(row)
 
     @synchronized
+    def get_order_by_client_id(self, account_id: str, client_order_id: str) -> dict[str, object] | None:
+        row = self.connection.execute(
+            "SELECT * FROM paper_orders WHERE account_id = ? AND client_order_id = ?",
+            (account_id, client_order_id),
+        ).fetchone()
+        return dict(row) if row is not None else None
+
+    @synchronized
+    def get_fill_for_order(self, order_id: str) -> Fill:
+        row = self.connection.execute(
+            "SELECT payload FROM paper_fills WHERE order_id = ?", (order_id,)
+        ).fetchone()
+        if row is None:
+            raise KeyError(order_id)
+        return Fill.model_validate_json(row["payload"])
+
+    @synchronized
     def list_orders(self, account_id: str) -> list[dict[str, object]]:
         rows = self.connection.execute(
             "SELECT * FROM paper_orders WHERE account_id = ? ORDER BY created_at", (account_id,)

@@ -28,10 +28,10 @@ class RiskContext(BaseModel):
     max_position: Decimal = Field(ge=0)
     projected_total_exposure: Decimal = Field(ge=0)
     max_total_exposure: Decimal = Field(ge=0)
-    projected_industry_exposure: Decimal = Field(ge=0)
+    projected_industry_exposure: Decimal | None = Field(default=None, ge=0)
     max_industry_exposure: Decimal = Field(ge=0)
     order_value: Decimal = Field(ge=0)
-    average_daily_turnover: Decimal = Field(gt=0)
+    average_daily_turnover: Decimal | None = Field(default=None, gt=0)
     max_turnover_participation: Decimal = Field(ge=0)
     current_drawdown: Decimal = Field(ge=0)
     max_drawdown: Decimal = Field(ge=0)
@@ -119,7 +119,16 @@ class IndustryConcentrationRule(BaseRule):
     approval_reason_code = "within_industry_concentration"
 
     def breached(self, context: RiskContext) -> bool:
+        if context.projected_industry_exposure is None:
+            return True
         return context.projected_industry_exposure > context.max_industry_exposure
+
+    def breach_reason(self, context: RiskContext) -> str:
+        return "industry_data_unavailable" if context.projected_industry_exposure is None else self.breach_reason_code
+
+    def evaluate(self, context: RiskContext) -> RiskDecision:
+        decision = super().evaluate(context)
+        return decision.model_copy(update={"outcome": "observe_only"}) if context.projected_industry_exposure is None else decision
 
 
 class LiquidityRule(BaseRule):
@@ -129,8 +138,13 @@ class LiquidityRule(BaseRule):
     approval_reason_code = "within_liquidity_limit"
 
     def breached(self, context: RiskContext) -> bool:
+        if context.average_daily_turnover is None:
+            return True
         allowed_value = context.average_daily_turnover * context.max_turnover_participation
         return context.order_value > allowed_value
+
+    def breach_reason(self, context: RiskContext) -> str:
+        return "liquidity_data_unavailable" if context.average_daily_turnover is None else self.breach_reason_code
 
 
 class AccountDrawdownRule(BaseRule):
