@@ -1,7 +1,8 @@
-from decimal import Decimal, ROUND_DOWN
+from decimal import Decimal
 
 from qibao_api.contracts.backtest import BacktestRequest, BacktestResult, EquityPoint, Trade
 from qibao_api.contracts.bars import DailyBar
+from qibao_api.zhongshu.performance import max_drawdown
 
 LIMIT_THRESHOLD = Decimal("0.098")
 
@@ -79,7 +80,7 @@ class BacktestEngine:
             initial_cash=request.initial_cash,
             ending_equity=ending_equity.quantize(Decimal("0.01")),
             total_return=total_return.quantize(Decimal("0.0001")),
-            max_drawdown=self._max_drawdown(points),
+            max_drawdown=max_drawdown([point.equity for point in points]),
             total_cost=total_cost.quantize(Decimal("0.01")),
             trades=trades,
             equity_curve=points,
@@ -90,13 +91,3 @@ class BacktestEngine:
     def _average(bars: list[DailyBar], index: int, window: int) -> Decimal:
         closes = [bar.close for bar in bars[index - window + 1:index + 1]]
         return sum(closes, Decimal("0")) / Decimal(window)
-
-    @staticmethod
-    def _max_drawdown(points: list[EquityPoint]) -> Decimal:
-        peak = Decimal("0")
-        worst = Decimal("0")
-        for point in points:
-            peak = max(peak, point.equity)
-            if peak > 0:
-                worst = max(worst, (peak - point.equity) / peak)
-        return worst.quantize(Decimal("0.0001"), rounding=ROUND_DOWN)
