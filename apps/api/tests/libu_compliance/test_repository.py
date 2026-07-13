@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from qibao_api.contracts.risk import ComplianceRecord
-from qibao_api.libu_compliance.guard import AuthorizedHistorySource
+from qibao_api.libu_compliance.guard import AuthorizedHistorySource, AuthorizedQuoteSource
 from qibao_api.libu_compliance.repository import (
     ComplianceRepository,
     SourceAuthorizationError,
@@ -150,6 +150,15 @@ def test_feature_source_configuration_is_append_only_and_cannot_remove_dependenc
         repository.connection.execute("DELETE FROM compliance_feature_source_events")
 
 
+def test_repeated_feature_registration_is_idempotent(tmp_path) -> None:
+    repository = ComplianceRepository(tmp_path / "compliance.db")
+
+    repository.set_feature_sources("realtime_quotes", "a_share", ("tencent",))
+    repository.set_feature_sources("realtime_quotes", "a_share", ("tencent",))
+
+    assert len(repository.list_feature_source_history("realtime_quotes", "a_share")) == 1
+
+
 def test_source_authorization_is_isolated_by_asset(tmp_path) -> None:
     repository = ComplianceRepository(tmp_path / "compliance.db")
     repository.set_feature_sources("daily_bars", "a_share", ("vendor",))
@@ -195,3 +204,34 @@ def test_authorized_history_guard_blocks_revoked_source_without_calling_downstre
         "permission-1",
         "permission-2",
     ]
+
+
+@pytest.mark.asyncio
+async def test_authorized_quote_guard_checks_before_each_fetch(tmp_path) -> None:
+    class Source:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def fetch(self, symbol: str):
+            self.calls += 1
+            return symbol
+
+    repository = ComplianceRepository(tmp_path / "compliance.db")
+    repository.set_feature_sources("realtime_quotes", "a_share", ("tencent",))
+    repository.append_record(compliance_record("permission-1"))
+    source = Source()
+    guarded = AuthorizedQuoteSource(source, repository, ("realtime_quotes",), "a_share")
+
+    assert await guarded.fetch("600000") == "600000"
+    repository.append_record(
+        compliance_record(
+            "permission-2",
+            state="revoked",
+            acknowledged_at=None,
+            recorded_at=NOW + timedelta(hours=1),
+        )
+    )
+
+    with pytest.raises(SourceAuthorizationError, match="tencent:revoked"):
+        await guarded.fetch("600000")
+    assert source.calls == 1

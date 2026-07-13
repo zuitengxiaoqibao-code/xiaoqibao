@@ -51,12 +51,21 @@ class ComplianceRepository:
         asset = AssetKind(asset)
         recorded_at = datetime.now(timezone.utc).isoformat()
         with self._lock, self.connection:
+            existing = {
+                row["source"]
+                for row in self.connection.execute(
+                    """SELECT DISTINCT source FROM compliance_feature_source_events
+                       WHERE feature = ? AND asset = ?""",
+                    (feature, asset.value),
+                ).fetchall()
+            }
             self.connection.executemany(
                 """INSERT INTO compliance_feature_source_events
                    (event_id, feature, asset, source, recorded_at) VALUES (?, ?, ?, ?, ?)""",
                 [
                     (f"feature-source-{uuid4().hex}", feature, asset.value, source, recorded_at)
                     for source in dict.fromkeys(sources)
+                    if source not in existing
                 ],
             )
 

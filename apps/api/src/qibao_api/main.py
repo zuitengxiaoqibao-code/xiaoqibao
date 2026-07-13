@@ -12,6 +12,8 @@ from qibao_api.gongbu.tencent_quotes import TencentQuoteSource
 from qibao_api.bingbu.paper_broker import PaperBroker
 from qibao_api.bingbu.paper_service import PaperTradingService
 from qibao_api.hubu.repository import PaperRepository
+from qibao_api.libu_compliance.guard import AuthorizedHistorySource, AuthorizedQuoteSource
+from qibao_api.libu_compliance.repository import ComplianceRepository
 from qibao_api.routes.backtest import router as backtest_router
 from qibao_api.routes.data import router as data_router
 from qibao_api.routes.health import router as health_router
@@ -31,14 +33,35 @@ async def lifespan(application: FastAPI):
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     engine = create_engine(settings.database_url)
     create_schema(engine)
+    compliance = ComplianceRepository(settings.data_dir / "compliance.sqlite3")
+    application.state.compliance_repository = compliance
+    compliance.set_feature_sources("realtime_quotes", "a_share", ("tencent",))
+    compliance.set_feature_sources("paper_orders", "a_share", ("tencent",))
     async with httpx.AsyncClient(timeout=10) as client:
         with httpx.Client(timeout=10) as history_client:
             history_sources = []
             try:
-                history_sources.append(TdxHistorySource(create_tdx_client()))
+                tdx_source = TdxHistorySource(create_tdx_client())
+                compliance.set_feature_sources("history_sync.mootdx", "a_share", ("mootdx",))
+                history_sources.append(
+                    AuthorizedHistorySource(
+                        tdx_source,
+                        compliance,
+                        "history_sync.mootdx",
+                        "a_share",
+                    )
+                )
             except Exception:
                 pass
-            history_sources.append(BaiduHistorySource(history_client))
+            compliance.set_feature_sources("history_sync.baidu", "a_share", ("baidu",))
+            history_sources.append(
+                AuthorizedHistorySource(
+                    BaiduHistorySource(history_client),
+                    compliance,
+                    "history_sync.baidu",
+                    "a_share",
+                )
+            )
             bar_repository = BarRepository(
                 settings.data_dir / "market.duckdb",
                 settings.data_dir / "parquet" / "a-shares",
@@ -48,7 +71,12 @@ async def lifespan(application: FastAPI):
                 bar_repository,
             )
             application.state.pipeline = ResearchPipeline(
-                TencentQuoteSource(client),
+                AuthorizedQuoteSource(
+                    TencentQuoteSource(client),
+                    compliance,
+                    ("realtime_quotes", "paper_orders"),
+                    "a_share",
+                ),
                 QuoteRepository(engine),
                 RiskGate(),
             )
@@ -62,6 +90,7 @@ async def lifespan(application: FastAPI):
                 yield
             finally:
                 paper_repository.close()
+                compliance.close()
     engine.dispose()
 
 

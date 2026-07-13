@@ -27,3 +27,28 @@ class AuthorizedHistorySource:
     def fetch_daily(self, symbol: str, limit: int = 250) -> Result:
         self._compliance.require_feature_sources(self._feature, self._asset)
         return self._source.fetch_daily(symbol, limit)
+
+
+class QuoteSource(Protocol[Result]):
+    async def fetch(self, symbol: str) -> Result: ...
+
+
+class AuthorizedQuoteSource:
+    def __init__(
+        self,
+        source: QuoteSource[Result],
+        compliance: ComplianceRepository,
+        features: tuple[str, ...],
+        asset: AssetKind | str,
+    ) -> None:
+        if not features:
+            raise ValueError("at least one guarded feature is required")
+        self._source = source
+        self._compliance = compliance
+        self._features = features
+        self._asset = AssetKind(asset)
+
+    async def fetch(self, symbol: str) -> Result:
+        for feature in self._features:
+            self._compliance.require_feature_sources(feature, self._asset)
+        return await self._source.fetch(symbol)
