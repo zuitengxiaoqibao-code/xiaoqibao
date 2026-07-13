@@ -30,6 +30,27 @@ class AuditEngine:
 
     def audit(self, audit_input: AuditInput) -> tuple[AuditFinding, ...]:
         findings: list[AuditFinding] = []
+        if audit_input.recommendation.conclusion != audit_input.outcome.conclusion:
+            opposites = {"bullish", "bearish"}
+            severity = (
+                "high"
+                if {audit_input.recommendation.conclusion, audit_input.outcome.conclusion}
+                == opposites
+                else "medium"
+            )
+            findings.append(
+                self._finding(
+                    audit_input,
+                    "recommendation_outcome_deviation",
+                    severity,
+                    (
+                        audit_input.recommendation.evidence_link,
+                        audit_input.outcome.evidence_link,
+                    ),
+                    "dongchang",
+                    "conclusion",
+                )
+            )
         findings.extend(self._duplicate_news(audit_input))
         findings.extend(self._source_conflicts(audit_input))
         frequency = audit_input.signal_frequency
@@ -90,11 +111,11 @@ class AuditEngine:
         ]
 
     def _source_conflicts(self, audit_input: AuditInput) -> list[AuditFinding]:
-        groups: dict[str, list] = defaultdict(list)
+        groups: dict[tuple, list] = defaultdict(list)
         for item in audit_input.source_observations:
-            groups[item.field].append(item)
+            groups[(item.asset, item.symbol, item.field, item.as_of)].append(item)
         findings = []
-        for field, items in sorted(groups.items()):
+        for key, items in sorted(groups.items(), key=lambda pair: tuple(map(str, pair[0]))):
             if len({item.value for item in items}) <= 1:
                 continue
             links = tuple(
@@ -102,7 +123,12 @@ class AuditEngine:
             )
             findings.append(
                 self._finding(
-                    audit_input, "source_field_conflict", "high", links, "dongchang", field
+                    audit_input,
+                    "source_field_conflict",
+                    "high",
+                    links,
+                    "dongchang",
+                    "|".join(map(str, key)),
                 )
             )
         return findings

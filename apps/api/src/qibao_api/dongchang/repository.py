@@ -1,11 +1,19 @@
 import json
 import sqlite3
+from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
 
 from qibao_api.contracts.market import AssetKind
 from qibao_api.contracts.risk import AuditFinding
 from qibao_api.dongchang.schema import SCHEMA
+from qibao_api.dongchang.models import AuditInput, Snapshot
+
+
+@dataclass(frozen=True)
+class StoredSnapshot:
+    snapshot: Snapshot
+    content_hash: str
 
 
 class AuditFindingRepository:
@@ -19,7 +27,40 @@ class AuditFindingRepository:
         with self._lock:
             self.connection.close()
 
-    def append(self, finding: AuditFinding) -> None:
+    def append_audit(
+        self, audit_input: AuditInput, findings: tuple[AuditFinding, ...]
+    ) -> None:
+        try:
+            with self._lock, self.connection:
+                for snapshot in (audit_input.recommendation, audit_input.outcome):
+                    self.connection.execute(
+                        """INSERT INTO audit_snapshots
+                           (snapshot_id, asset, symbol, conclusion, evidence_link,
+                            captured_at, content_hash) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            snapshot.snapshot_id,
+                            snapshot.asset.value,
+                            snapshot.symbol,
+                            snapshot.conclusion,
+                            snapshot.evidence_link,
+                            snapshot.captured_at.isoformat(),
+                            snapshot.canonical_content_hash(),
+                        ),
+                    )
+                for finding in findings:
+                    self._append_finding(finding)
+                    self.connection.executemany(
+                        """INSERT INTO audit_finding_snapshots
+                           (finding_id, snapshot_id, position) VALUES (?, ?, ?)""",
+                        [
+                            (finding.finding_id, snapshot_id, position)
+                            for position, snapshot_id in enumerate(finding.input_snapshot_ids)
+                        ],
+                    )
+        except sqlite3.IntegrityError as error:
+            raise ValueError(f"audit run {audit_input.audit_run_id!r} already exists") from error
+
+    def _append_finding(self, finding: AuditFinding) -> None:
         values = (
             finding.finding_id,
             finding.asset.value,
@@ -31,17 +72,32 @@ class AuditFindingRepository:
             finding.resolution_state,
             finding.detected_at.isoformat(),
         )
-        try:
-            with self._lock, self.connection:
-                self.connection.execute(
-                    """INSERT INTO audit_findings
-                       (finding_id, asset, finding_type, severity, evidence_json,
-                        input_snapshot_ids_json, owner_department, resolution_state, detected_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    values,
-                )
-        except sqlite3.IntegrityError as error:
-            raise ValueError(f"audit finding {finding.finding_id!r} already exists") from error
+        self.connection.execute(
+            """INSERT INTO audit_findings
+               (finding_id, asset, finding_type, severity, evidence_json,
+                input_snapshot_ids_json, owner_department, resolution_state, detected_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            values,
+        )
+
+    def get_snapshot(self, snapshot_id: str) -> StoredSnapshot:
+        with self._lock:
+            row = self.connection.execute(
+                "SELECT * FROM audit_snapshots WHERE snapshot_id = ?", (snapshot_id,)
+            ).fetchone()
+        if row is None:
+            raise KeyError(snapshot_id)
+        return StoredSnapshot(
+            snapshot=Snapshot(
+                snapshot_id=row["snapshot_id"],
+                asset=row["asset"],
+                symbol=row["symbol"],
+                conclusion=row["conclusion"],
+                evidence_link=row["evidence_link"],
+                captured_at=row["captured_at"],
+            ),
+            content_hash=row["content_hash"],
+        )
 
     def list_findings(self, *, asset: AssetKind | str) -> list[AuditFinding]:
         asset = AssetKind(asset)
