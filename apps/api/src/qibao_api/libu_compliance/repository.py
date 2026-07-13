@@ -122,6 +122,15 @@ class ComplianceRepository:
             ).fetchall()
         return [self._record_from_row(row) for row in rows]
 
+    def list_current_records(self, asset: AssetKind | str) -> list[ComplianceRecord]:
+        asset = AssetKind(asset)
+        with self._lock:
+            sources = self.connection.execute(
+                "SELECT DISTINCT source FROM compliance_records WHERE asset = ? ORDER BY source",
+                (asset.value,),
+            ).fetchall()
+            return [self._latest_record(row["source"], asset) for row in sources]
+
     def check_feature_sources(
         self, feature: str, asset: AssetKind | str
     ) -> FeatureAuthorization:

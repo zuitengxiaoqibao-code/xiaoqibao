@@ -30,9 +30,14 @@ CREATE TABLE IF NOT EXISTS paper_fills (
 CREATE TABLE IF NOT EXISTS paper_risk_decisions (
     decision_id TEXT PRIMARY KEY,
     order_id TEXT NOT NULL UNIQUE REFERENCES paper_orders(order_id),
-    approved INTEGER NOT NULL,
-    reasons TEXT NOT NULL,
-    created_at TEXT NOT NULL
+    symbol TEXT NOT NULL,
+    asset TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    reason_code TEXT NOT NULL,
+    evidence_json TEXT NOT NULL,
+    rule_id TEXT NOT NULL,
+    rule_version TEXT NOT NULL,
+    decided_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS paper_positions (

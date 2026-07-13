@@ -112,6 +112,9 @@ def test_allocation_settings_are_stored_per_account(tmp_path) -> None:
 
 
 def test_risk_decision_is_idempotent_for_same_order(tmp_path) -> None:
+    from datetime import datetime, timezone
+    from qibao_api.contracts.market import AssetKind
+    from qibao_api.contracts.risk import RiskDecision
     repository = PaperRepository(tmp_path / "paper.sqlite3")
     repository.create_account("paper-1", Decimal("100000"))
     order_id = repository.create_order(
@@ -124,11 +127,15 @@ def test_risk_decision_is_idempotent_for_same_order(tmp_path) -> None:
         ),
     )
 
-    first = repository.record_risk_decision(
-        decision_id="risk-1", order_id=order_id, approved=True, reasons=[]
+    decision = RiskDecision(
+        decision_id="risk-1", order_id=order_id, symbol="600000",
+        asset=AssetKind.A_SHARE, outcome="observe_only",
+        reason_code="industry_liquidity_data_missing", evidence=("order:client-risk",),
+        rule_id="complete_order_review", rule_version="2026-07-13.1",
+        decided_at=datetime(2026, 7, 13, tzinfo=timezone.utc),
     )
-    second = repository.record_risk_decision(
-        decision_id="risk-2", order_id=order_id, approved=True, reasons=[]
-    )
+    first = repository.record_risk_decision(decision)
+    second = repository.record_risk_decision(decision.model_copy(update={"decision_id": "risk-2"}))
 
     assert first == second == "risk-1"
+    assert repository.get_risk_decision_for_order(order_id) == decision

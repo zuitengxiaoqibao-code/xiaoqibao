@@ -346,3 +346,17 @@ def test_database_rejects_finding_snapshot_links_to_unknown_snapshots(tmp_path) 
                VALUES ('missing-finding', 'missing-snapshot', 0)"""
         )
     repository.close()
+
+
+def test_repository_rejects_finding_not_scoped_to_current_audit(tmp_path) -> None:
+    repository = AuditFindingRepository(tmp_path / "audit.sqlite3")
+    audit_input = _input(signal_frequency=SignalFrequency(baseline_count=1, current_count=2))
+    finding = AuditEngine(clock=lambda: NOW).audit(audit_input)[0].model_copy(
+        update={"input_snapshot_ids": ("recommendation-1", "foreign-snapshot")}
+    )
+
+    with pytest.raises(ValueError, match="current audit snapshots"):
+        repository.append_audit(audit_input, (finding,))
+
+    assert repository.list_findings(asset=AssetKind.A_SHARE) == []
+    repository.close()

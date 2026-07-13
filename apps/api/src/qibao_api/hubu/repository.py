@@ -8,6 +8,7 @@ from threading import RLock
 from uuid import uuid4
 
 from qibao_api.contracts.trading import Fill, LedgerEntry, OrderRequest, PaperAccount, Position
+from qibao_api.contracts.risk import RiskDecision
 from qibao_api.hubu.schema import SCHEMA
 
 
@@ -129,40 +130,44 @@ class PaperRepository:
                 raise ValueError("order is not pending")
 
     @synchronized
-    def record_risk_decision(
-        self,
-        *,
-        decision_id: str,
-        order_id: str,
-        approved: bool,
-        reasons: list[str],
-    ) -> str:
+    def record_risk_decision(self, decision: RiskDecision) -> str:
         existing = self.connection.execute(
-            "SELECT decision_id FROM paper_risk_decisions WHERE order_id = ?", (order_id,)
+            "SELECT decision_id FROM paper_risk_decisions WHERE order_id = ?", (decision.order_id,)
         ).fetchone()
         if existing is not None:
             return str(existing["decision_id"])
         with self.connection:
             self.connection.execute(
-                "INSERT INTO paper_risk_decisions VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO paper_risk_decisions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
-                    decision_id,
-                    order_id,
-                    int(approved),
-                    json.dumps(reasons, ensure_ascii=False),
-                    datetime.now(timezone.utc).isoformat(),
+                    decision.decision_id, decision.order_id, decision.symbol,
+                    decision.asset.value, decision.outcome, decision.reason_code,
+                    json.dumps(decision.evidence, ensure_ascii=True), decision.rule_id,
+                    decision.rule_version, decision.decided_at.isoformat(),
                 ),
             )
-        return decision_id
+        return decision.decision_id
 
     @synchronized
-    def get_risk_decision_for_order(self, order_id: str) -> dict[str, object]:
+    def get_risk_decision_for_order(self, order_id: str) -> RiskDecision:
         row = self.connection.execute(
             "SELECT * FROM paper_risk_decisions WHERE order_id = ?", (order_id,)
         ).fetchone()
         if row is None:
             raise KeyError(order_id)
-        return dict(row)
+        return RiskDecision(
+            decision_id=row["decision_id"], order_id=row["order_id"], symbol=row["symbol"],
+            asset=row["asset"], outcome=row["outcome"], reason_code=row["reason_code"],
+            evidence=tuple(json.loads(row["evidence_json"])), rule_id=row["rule_id"],
+            rule_version=row["rule_version"], decided_at=row["decided_at"],
+        )
+
+    @synchronized
+    def list_risk_decisions(self, *, limit: int = 50) -> list[RiskDecision]:
+        rows = self.connection.execute(
+            "SELECT order_id FROM paper_risk_decisions ORDER BY decided_at DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [self.get_risk_decision_for_order(row["order_id"]) for row in rows]
 
     @synchronized
     def get_allocation_settings(self, account_id: str) -> tuple[Decimal, Decimal]:

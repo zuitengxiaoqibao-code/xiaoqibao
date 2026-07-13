@@ -3,6 +3,7 @@ import { loadSnapshot } from "../features/dashboard/api";
 import { syncHistory } from "../features/data-status/api";
 import { createPaperAccount, loadPaperPortfolio, submitPaperOrder } from "../features/paper-trading/api";
 import { runBacktest } from "../features/backtest/api";
+import { complianceAction, loadAudit, loadCompliance, loadRisk } from "../features/governance/api";
 
 export function App() {
   return <Dashboard
@@ -12,5 +13,6 @@ export function App() {
     loadPaperPortfolio={loadPaperPortfolio}
     createPaperAccount={createPaperAccount}
     submitPaperOrder={submitPaperOrder}
+    loadRisk={loadRisk} loadCompliance={loadCompliance} loadAudit={loadAudit} complianceAction={complianceAction}
   />;
 }

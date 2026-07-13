@@ -25,6 +25,10 @@ from qibao_api.storage.database import create_schema
 from qibao_api.storage.bar_repository import BarRepository
 from qibao_api.storage.quote_repository import QuoteRepository
 from qibao_api.xingbu.gate import RiskGate
+from qibao_api.dongchang.repository import AuditFindingRepository
+from qibao_api.routes.xingbu import router as xingbu_router
+from qibao_api.routes.libu import router as libu_router
+from qibao_api.routes.dongchang import router as dongchang_router
 
 
 @asynccontextmanager
@@ -34,6 +38,8 @@ async def lifespan(application: FastAPI):
     engine = create_engine(settings.database_url)
     create_schema(engine)
     compliance = ComplianceRepository(settings.data_dir / "compliance.sqlite3")
+    audit_repository = AuditFindingRepository(settings.data_dir / "audit.sqlite3")
+    application.state.audit_repository = audit_repository
     application.state.compliance_repository = compliance
     compliance.set_feature_sources("realtime_quotes", "a_share", ("tencent",))
     compliance.set_feature_sources("paper_orders", "a_share", ("tencent",))
@@ -91,6 +97,7 @@ async def lifespan(application: FastAPI):
             finally:
                 paper_repository.close()
                 compliance.close()
+                audit_repository.close()
     engine.dispose()
 
 
@@ -100,3 +107,6 @@ app.include_router(research_router)
 app.include_router(data_router)
 app.include_router(backtest_router)
 app.include_router(paper_router)
+app.include_router(xingbu_router)
+app.include_router(libu_router)
+app.include_router(dongchang_router)

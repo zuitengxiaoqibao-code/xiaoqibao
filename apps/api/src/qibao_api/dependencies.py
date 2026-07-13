@@ -4,6 +4,8 @@ from qibao_api.gongbu.data_service import MarketDataService
 from qibao_api.bingbu.paper_service import PaperTradingService
 from qibao_api.hubu.repository import PaperRepository
 from qibao_api.shangshu.pipeline import ResearchPipeline
+from qibao_api.libu_compliance.repository import ComplianceRepository
+from qibao_api.dongchang.repository import AuditFindingRepository
 
 
 def get_pipeline(request: Request) -> ResearchPipeline:
@@ -20,3 +22,11 @@ def get_paper_repository(request: Request) -> PaperRepository:
 
 def get_paper_service(request: Request) -> PaperTradingService:
     return request.app.state.paper_service
+
+
+def get_compliance_repository(request: Request) -> ComplianceRepository:
+    return request.app.state.compliance_repository
+
+
+def get_audit_repository(request: Request) -> AuditFindingRepository:
+    return request.app.state.audit_repository

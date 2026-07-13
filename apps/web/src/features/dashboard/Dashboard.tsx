@@ -12,6 +12,7 @@ import type { BacktestResult } from "../backtest/types";
 import { PaperTradingPanel } from "../paper-trading/PaperTradingPanel";
 import type { OrderResult, PaperAccount, Portfolio } from "../paper-trading/types";
 import type { ResearchCard } from "./types";
+import { GovernanceView, type AuditStatus, type ComplianceStatus, type RiskStatus } from "../governance/GovernanceViews";
 
 type ViewState =
   | { kind: "idle" }
@@ -26,6 +27,8 @@ type Props = {
   loadPaperPortfolio?: () => Promise<Portfolio>;
   createPaperAccount?: () => Promise<PaperAccount>;
   submitPaperOrder?: (symbol: string, side: "buy" | "sell", shares: number) => Promise<OrderResult>;
+  loadRisk?: () => Promise<RiskStatus>; loadCompliance?: () => Promise<ComplianceStatus>; loadAudit?: () => Promise<AuditStatus>;
+  complianceAction?: (source: string, action: "authorize" | "revoke" | "acknowledge") => Promise<void>;
 };
 
 const departments = [
@@ -94,10 +97,11 @@ function ResearchPanel({ card }: { card: ResearchCard }) {
   );
 }
 
-export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadPaperPortfolio, createPaperAccount, submitPaperOrder }: Props) {
+export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadPaperPortfolio, createPaperAccount, submitPaperOrder, loadRisk, loadCompliance, loadAudit, complianceAction }: Props) {
   const [state, setState] = useState<ViewState>({ kind: "idle" });
   const [symbol, setSymbol] = useState("600000");
   const [dataState, setDataState] = useState<DataStatusState>({ kind: "idle" });
+  const [activeView, setActiveView] = useState<"dashboard" | "xingbu" | "libu" | "dongchang">("dashboard");
 
   async function inspect(requestedSymbol: string) {
     setState({ kind: "loading" });
@@ -139,12 +143,12 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadPaperPor
         </div>
         <nav aria-label="部门导航">
           <p className="nav-label">中央机构</p>
-          {departments.map(({ name, detail, icon: Icon, active }) => (
-            <button className={active ? "nav-item active" : "nav-item"} key={name} type="button">
+          {departments.map(({ name, detail, icon: Icon }) => { const target = name === "刑部" ? "xingbu" : name === "礼部" ? "libu" : name === "东厂" ? "dongchang" : name === "今日工作台" ? "dashboard" : null; return (
+            <button className={target === activeView ? "nav-item active" : "nav-item"} key={name} type="button" onClick={() => target && setActiveView(target)}>
               <Icon size={16} strokeWidth={1.7} />
               <span><b>{name}</b><small>{detail}</small></span>
             </button>
-          ))}
+          )})}
         </nav>
         <button className="bond-entry" type="button">
           <Boxes size={16} /><span><b>可转债专区</b><small>独立资产域</small></span><ChevronRight size={15} />
@@ -152,7 +156,9 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadPaperPor
         <div className="sidebar-foot"><span className="pulse-dot" />系统本地运行</div>
       </aside>
 
-      <main className="command-center">
+      {activeView !== "dashboard" && <GovernanceView view={activeView} loadRisk={loadRisk} loadCompliance={loadCompliance} loadAudit={loadAudit} complianceAction={complianceAction} />}
+
+      {activeView === "dashboard" && <main className="command-center">
         <header className="topbar">
           <div><p className="eyebrow">尚书省 / 全域指令视图</p><h1>今日情报态势</h1></div>
           <div className="system-state"><span className="pulse-dot" /><div><b>工部数据链路</b><small>等待调取</small></div></div>
@@ -215,7 +221,7 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadPaperPor
             submitOrder={submitPaperOrder}
           />
         )}
-      </main>
+      </main>}
     </div>
   );
 }

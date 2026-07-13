@@ -36,6 +36,10 @@ async def test_source_unavailable_order_is_persisted_as_rejected(tmp_path) -> No
     assert result.status == "rejected"
     assert result.reason == "source_unavailable"
     assert repository.get_order(result.order_id)["rejection_reason"] == "source_unavailable"
+    decision = repository.get_risk_decision_for_order(result.order_id)
+    assert decision.outcome == "reject"
+    assert decision.reason_code == "source_unavailable"
+    assert decision.rule_version == "system.1"
 
 
 class FreshQuoteSource:
@@ -88,8 +92,9 @@ async def test_risk_gate_decision_is_persisted_and_referenced(tmp_path) -> None:
     assert result.status == "rejected"
     assert result.reason == "risk_rejected"
     decision = repository.get_risk_decision_for_order(result.order_id)
-    assert decision["approved"] == 0
-    assert decision["reasons"] == '["规则否决"]'
+    assert decision.outcome == "reject"
+    assert decision.reason_code == "legacy_risk_gate_blocked"
+    assert decision.evidence == ("pipeline:risk-gate",)
 
 
 class BrokenRiskGate:
@@ -120,3 +125,59 @@ async def test_risk_engine_failure_is_persisted_as_rejected(tmp_path) -> None:
     assert result.status == "rejected"
     assert result.reason == "risk_unavailable"
     assert repository.get_order(result.order_id)["rejection_reason"] == "risk_unavailable"
+    decision = repository.get_risk_decision_for_order(result.order_id)
+    assert decision.outcome == "reject"
+    assert decision.reason_code == "risk_unavailable"
+
+
+class ApprovingRiskGate:
+    def review(self, card):
+        return card.model_copy(update={"action": "observe", "invalid_reasons": []})
+
+
+class IncompleteMarketPipeline(ReviewedPipeline):
+    risk_gate = ApprovingRiskGate()
+
+
+@pytest.mark.asyncio
+async def test_missing_industry_and_liquidity_data_is_observe_only(tmp_path) -> None:
+    repository = PaperRepository(tmp_path / "paper.sqlite3")
+    repository.create_account("paper-1", Decimal("100000"))
+    service = PaperTradingService(IncompleteMarketPipeline(), PaperBroker(repository))  # type: ignore[arg-type]
+
+    result = await service.submit("paper-1", OrderRequest(
+        client_order_id="missing-risk-data", symbol="600000", side="buy", shares=100,
+    ))
+
+    decision = repository.get_risk_decision_for_order(result.order_id)
+    assert result.status == "rejected"
+    assert decision.outcome == "observe_only"
+    assert decision.reason_code == "industry_liquidity_data_missing"
+
+
+def test_risk_decision_round_trip_preserves_saved_rule_version(tmp_path) -> None:
+    from datetime import timezone
+    from qibao_api.contracts.risk import RiskDecision
+
+    repository = PaperRepository(tmp_path / "paper.sqlite3")
+    repository.create_account("paper-1", Decimal("100000"))
+    order_id = repository.create_order(
+        "paper-1",
+        OrderRequest(client_order_id="versioned", symbol="600000", side="buy", shares=100),
+    )
+    saved = RiskDecision(
+        decision_id="risk-versioned",
+        order_id=order_id,
+        symbol="600000",
+        asset=AssetKind.A_SHARE,
+        outcome="observe_only",
+        reason_code="industry_data_missing",
+        evidence=("order:versioned",),
+        rule_id="industry_concentration",
+        rule_version="2026-07-13.1",
+        decided_at=datetime(2026, 7, 13, 10, 31, tzinfo=timezone.utc),
+    )
+
+    repository.record_risk_decision(saved)
+
+    assert repository.get_risk_decision_for_order(order_id) == saved

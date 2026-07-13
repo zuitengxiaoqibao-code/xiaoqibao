@@ -30,6 +30,13 @@ class AuditFindingRepository:
     def append_audit(
         self, audit_input: AuditInput, findings: tuple[AuditFinding, ...]
     ) -> None:
+        snapshot_ids = {audit_input.recommendation.snapshot_id, audit_input.outcome.snapshot_id}
+        if any(
+            finding.asset != audit_input.asset
+            or set(finding.input_snapshot_ids) != snapshot_ids
+            for finding in findings
+        ):
+            raise ValueError("findings must match current audit snapshots and asset")
         try:
             with self._lock, self.connection:
                 for snapshot in (audit_input.recommendation, audit_input.outcome):
