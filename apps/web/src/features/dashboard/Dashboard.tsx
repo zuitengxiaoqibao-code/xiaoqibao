@@ -2,9 +2,11 @@ import { FormEvent, useState } from "react";
 import {
   Activity, Archive, BookOpenCheck, Boxes, BriefcaseBusiness, Building2,
   ChevronRight, CircleDollarSign, Database, Gauge, Landmark, Radar, Search,
-  ShieldAlert, ShieldCheck, Siren, Workflow,
+  RefreshCw, ShieldAlert, ShieldCheck, Siren, Workflow,
 } from "lucide-react";
 
+import { DataStatusPanel } from "../data-status/DataStatusPanel";
+import type { DataStatusState, SyncReport } from "../data-status/types";
 import type { ResearchCard } from "./types";
 
 type ViewState =
@@ -13,7 +15,10 @@ type ViewState =
   | { kind: "ready"; card: ResearchCard }
   | { kind: "error"; message: string };
 
-type Props = { loadSnapshot: (symbol: string) => Promise<ResearchCard> };
+type Props = {
+  loadSnapshot: (symbol: string) => Promise<ResearchCard>;
+  syncHistory?: (symbol: string, limit?: number) => Promise<SyncReport>;
+};
 
 const departments = [
   { name: "今日工作台", detail: "全域态势", icon: Gauge, active: true },
@@ -81,9 +86,10 @@ function ResearchPanel({ card }: { card: ResearchCard }) {
   );
 }
 
-export function Dashboard({ loadSnapshot }: Props) {
+export function Dashboard({ loadSnapshot, syncHistory }: Props) {
   const [state, setState] = useState<ViewState>({ kind: "idle" });
   const [symbol, setSymbol] = useState("600000");
+  const [dataState, setDataState] = useState<DataStatusState>({ kind: "idle" });
 
   async function inspect(requestedSymbol: string) {
     setState({ kind: "loading" });
@@ -97,6 +103,18 @@ export function Dashboard({ loadSnapshot }: Props) {
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     void inspect(symbol);
+  }
+
+  async function syncDailyBars() {
+    if (!syncHistory) return;
+    setDataState({ kind: "syncing" });
+    try {
+      const report = await syncHistory(symbol, 250);
+      if (report.state === "ready") setDataState({ kind: "ready", report });
+      else setDataState({ kind: "error", message: report.message });
+    } catch (error) {
+      setDataState({ kind: "error", message: error instanceof Error ? error.message : "未知错误" });
+    }
   }
 
   return (
@@ -159,6 +177,15 @@ export function Dashboard({ loadSnapshot }: Props) {
           </section>
 
           <aside className="right-rail">
+            <section className="rail-section">
+              <div className="rail-heading">
+                <span>历史数据仓</span>
+                <button className="rail-action" type="button" aria-label="同步历史日线" disabled={!syncHistory || dataState.kind === "syncing"} onClick={() => void syncDailyBars()}>
+                  <RefreshCw size={14} />
+                </button>
+              </div>
+              <DataStatusPanel state={dataState} />
+            </section>
             <section className="rail-section">
               <div className="rail-heading"><span>指令流</span><Archive size={15} /></div>
               <div className="event-line"><span className="event-node ready" /><div><b>工部</b><p>行情适配器待命</p></div><small>READY</small></div>
