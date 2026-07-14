@@ -35,6 +35,11 @@ def test_accepts_convertible_bond_with_decimal_inputs_and_fixed_asset() -> None:
     assert contract.remaining_size == Decimal("12.345678")
 
 
+@pytest.mark.parametrize("linked_stock", ["430001", "830001", "920001"])
+def test_accepts_beijing_stock_exchange_linked_stock(linked_stock: str) -> None:
+    assert valid_contract(linked_stock=linked_stock).linked_stock == linked_stock
+
+
 @pytest.mark.parametrize("bond_code", ["11300", "11300A", "600000", "100001"])
 def test_rejects_invalid_convertible_bond_codes(bond_code: str) -> None:
     with pytest.raises(ValidationError):

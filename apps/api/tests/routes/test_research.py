@@ -1,6 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 
+import pytest
 from fastapi.testclient import TestClient
 
 from qibao_api.contracts.market import AssetKind, DataQuality
@@ -29,6 +30,11 @@ class FakePipeline:
         )
 
 
+class UnexpectedPipeline:
+    async def run(self, symbol: str) -> ResearchCard:
+        raise AssertionError(f"pipeline must not receive invalid A-share code {symbol}")
+
+
 def make_client() -> TestClient:
     app.dependency_overrides[get_pipeline] = lambda: FakePipeline()
     return TestClient(app)
@@ -43,11 +49,21 @@ def test_a_share_snapshot_returns_evidence() -> None:
     assert response.json()["evidence"][0]["source"] == "tencent"
 
 
-def test_convertible_bond_is_not_routed_through_a_share_endpoint() -> None:
-    with make_client() as client:
-        response = client.get("/api/v1/a-shares/113001/snapshot")
+@pytest.mark.parametrize("symbol", ["113001", "123001"])
+def test_convertible_bond_is_not_routed_through_a_share_endpoint(symbol: str) -> None:
+    app.dependency_overrides[get_pipeline] = lambda: UnexpectedPipeline()
+    with TestClient(app) as client:
+        response = client.get(f"/api/v1/a-shares/{symbol}/snapshot")
 
     assert response.status_code == 422
+
+
+def test_beijing_stock_exchange_code_reaches_a_share_snapshot() -> None:
+    with make_client() as client:
+        response = client.get("/api/v1/a-shares/920001/snapshot")
+
+    assert response.status_code == 200
+    assert response.json()["symbol"] == "920001"
 
 
 def test_health_endpoint_reports_ready() -> None:

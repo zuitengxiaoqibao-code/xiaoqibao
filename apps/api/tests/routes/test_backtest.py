@@ -1,6 +1,7 @@
 from datetime import date, timedelta
 from decimal import Decimal
 
+import pytest
 from fastapi.testclient import TestClient
 
 from qibao_api.contracts.bars import DailyBar
@@ -19,6 +20,11 @@ class Repository:
 class Service:
     def __init__(self, bars) -> None:
         self.repository = Repository(bars)
+
+
+class UnexpectedRepository:
+    def latest(self, symbol: str, limit: int):
+        raise AssertionError(f"repository must not receive invalid A-share code {symbol}")
 
 
 def make_bars() -> list[DailyBar]:
@@ -51,3 +57,17 @@ def test_backtest_returns_costs_and_equity_curve() -> None:
     assert payload["strategy"] == "sma_cross"
     assert "total_cost" in payload
     assert len(payload["equity_curve"]) == 5
+
+
+@pytest.mark.parametrize("symbol", ["113001", "123001"])
+def test_backtest_rejects_bond_code_before_repository_call(symbol: str) -> None:
+    service = Service([])
+    service.repository = UnexpectedRepository()
+    app.dependency_overrides[get_market_data_service] = lambda: service
+    with TestClient(app) as client:
+        response = client.post(
+            f"/api/v1/a-shares/{symbol}/backtests",
+            json={"fast_window": 2, "slow_window": 3},
+        )
+
+    assert response.status_code == 422
