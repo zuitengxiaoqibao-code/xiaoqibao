@@ -4,7 +4,12 @@ import json
 import sqlite3
 from pathlib import Path
 
-from qibao_api.contracts.news import AIInterpretation, NewsArticle, NormalizedNewsEvent
+from qibao_api.contracts.news import (
+    AIInterpretation,
+    NewsArticle,
+    NewsCorrection,
+    NormalizedNewsEvent,
+)
 from qibao_api.gongbu.news_collection import NewsCluster
 
 
@@ -45,6 +50,13 @@ class NewsRepository:
           canonical_hash TEXT NOT NULL,
           payload TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS news_corrections (
+          sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+          correction_id TEXT NOT NULL UNIQUE,
+          event_id TEXT NOT NULL,
+          canonical_hash TEXT NOT NULL,
+          payload TEXT NOT NULL
+        );
         CREATE TRIGGER IF NOT EXISTS reject_update_news_articles
         BEFORE UPDATE ON news_articles
         BEGIN SELECT RAISE(ABORT, 'append-only news articles'); END;
@@ -69,6 +81,12 @@ class NewsRepository:
         CREATE TRIGGER IF NOT EXISTS reject_delete_news_interpretations
         BEFORE DELETE ON news_interpretations
         BEGIN SELECT RAISE(ABORT, 'append-only news interpretations'); END;
+        CREATE TRIGGER IF NOT EXISTS reject_update_news_corrections
+        BEFORE UPDATE ON news_corrections
+        BEGIN SELECT RAISE(ABORT, 'append-only news corrections'); END;
+        CREATE TRIGGER IF NOT EXISTS reject_delete_news_corrections
+        BEFORE DELETE ON news_corrections
+        BEGIN SELECT RAISE(ABORT, 'append-only news corrections'); END;
         """)
 
     def append_articles(self, articles: tuple[NewsArticle, ...]) -> int:
@@ -254,6 +272,56 @@ class NewsRepository:
                 )
             interpretations.append(AIInterpretation.model_validate_json(row["payload"]))
         return interpretations
+
+    def append_correction(self, correction: NewsCorrection) -> bool:
+        if self.connection.execute(
+            "SELECT 1 FROM news_events WHERE event_id=?", (correction.event_id,)
+        ).fetchone() is None:
+            raise NewsIntegrityError(
+                f"correction references missing event: {correction.event_id}"
+            )
+        payload = json.dumps(
+            correction.model_dump(mode="json"), ensure_ascii=False,
+            sort_keys=True, separators=(",", ":"),
+        )
+        canonical_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        existing = self.connection.execute(
+            "SELECT canonical_hash FROM news_corrections WHERE correction_id=?",
+            (correction.correction_id,),
+        ).fetchone()
+        if existing is not None:
+            if not hmac.compare_digest(existing["canonical_hash"], canonical_hash):
+                raise NewsIntegrityError(
+                    f"news correction id collision: {correction.correction_id}"
+                )
+            return False
+        with self.connection:
+            self.connection.execute(
+                """INSERT INTO news_corrections(
+                correction_id,event_id,canonical_hash,payload
+                ) VALUES(?,?,?,?)""",
+                (
+                    correction.correction_id,
+                    correction.event_id,
+                    canonical_hash,
+                    payload,
+                ),
+            )
+        return True
+
+    def corrections(self) -> list[NewsCorrection]:
+        rows = self.connection.execute(
+            "SELECT * FROM news_corrections ORDER BY sequence"
+        ).fetchall()
+        corrections = []
+        for row in rows:
+            computed = hashlib.sha256(row["payload"].encode("utf-8")).hexdigest()
+            if not hmac.compare_digest(computed, row["canonical_hash"]):
+                raise NewsIntegrityError(
+                    f"news correction {row['correction_id']} failed integrity check"
+                )
+            corrections.append(NewsCorrection.model_validate_json(row["payload"]))
+        return corrections
 
     def clusters(self) -> list[dict]:
         rows = self.connection.execute(

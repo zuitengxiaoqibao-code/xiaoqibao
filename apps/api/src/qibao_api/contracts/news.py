@@ -122,6 +122,12 @@ class AIInterpretation(BaseModel):
     prompt_version: NonBlank
     latency_ms: int = Field(default=0, ge=0)
     degraded: bool = False
+    impact_direction: Literal["positive", "negative", "neutral", "uncertain"] = "uncertain"
+    confidence: Decimal = Field(default=Decimal("0"), ge=0, le=1)
+    contrary_citation_ids: tuple[NonBlank, ...] = ()
+    provider_attempts: int = Field(default=0, ge=0)
+    invalid_output_count: int = Field(default=0, ge=0)
+    provider_error_count: int = Field(default=0, ge=0)
     statements: tuple[InterpretationStatement, ...] = Field(min_length=1)
     citations: tuple[EvidenceCitation, ...] = ()
 
@@ -143,4 +149,37 @@ class AIInterpretation(BaseModel):
             raise ValueError("statements reference unknown citations")
         if any(citation.published_at > self.generated_at for citation in self.citations):
             raise ValueError("interpretation cannot cite future news")
+        if not set(self.contrary_citation_ids).issubset(known_citations):
+            raise ValueError("contrary evidence references unknown citations")
+        if len(set(self.contrary_citation_ids)) != len(self.contrary_citation_ids):
+            raise ValueError("contrary evidence citations must be unique")
+        if self.invalid_output_count + self.provider_error_count > self.provider_attempts:
+            raise ValueError("provider failure counts cannot exceed attempts")
         return self
+
+
+class NewsCorrection(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    correction_id: NonBlank
+    event_id: NonBlank
+    corrected_at: AwareDatetime
+    reason: NonBlank
+    review_state: Literal["pending", "verified", "rejected"]
+    affected_instruments: tuple[tuple[AssetKind, str], ...] = ()
+    industries: tuple[NonBlank, ...] = ()
+    themes: tuple[NonBlank, ...] = ()
+
+    @field_validator("affected_instruments")
+    @classmethod
+    def validate_corrected_instruments(
+        cls, values: tuple[tuple[AssetKind, str], ...]
+    ) -> tuple[tuple[AssetKind, str], ...]:
+        for asset, symbol in values:
+            if asset is AssetKind.A_SHARE:
+                validate_a_share_code(symbol)
+            else:
+                validate_convertible_bond_code(symbol)
+        if len(set(values)) != len(values):
+            raise ValueError("corrected instruments must be unique")
+        return values

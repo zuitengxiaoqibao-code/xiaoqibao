@@ -15,6 +15,8 @@ import type { ResearchCard } from "./types";
 import { GovernanceView, type AuditStatus, type ComplianceStatus, type RiskStatus } from "../governance/GovernanceViews";
 import { ConvertibleBondView } from "../convertible-bonds/ConvertibleBondView";
 import type { BondCandidates, BondDashboard, BondDiagnosis } from "../convertible-bonds/types";
+import { NewsIntelligenceView } from "../news-intelligence/NewsIntelligenceView";
+import type { CorrectionInput, NewsIntelligenceBundle } from "../news-intelligence/types";
 
 type ViewState =
   | { kind: "idle" }
@@ -34,6 +36,9 @@ type Props = {
   loadBondDashboard?: () => Promise<BondDashboard>;
   loadBondDiagnosis?: (code: string) => Promise<BondDiagnosis>;
   loadBondCandidates?: (filters?: Record<string, string>) => Promise<BondCandidates>;
+  loadNewsIntelligence?: () => Promise<NewsIntelligenceBundle>;
+  syncNews?: () => Promise<Record<string, number>>;
+  createNewsCorrection?: (input: CorrectionInput) => Promise<unknown>;
 };
 
 const departments = [
@@ -102,21 +107,21 @@ function ResearchPanel({ card }: { card: ResearchCard }) {
   );
 }
 
-export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadPaperPortfolio, createPaperAccount, submitPaperOrder, loadRisk, loadCompliance, loadAudit, complianceAction, loadBondDashboard, loadBondDiagnosis, loadBondCandidates }: Props) {
+export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadPaperPortfolio, createPaperAccount, submitPaperOrder, loadRisk, loadCompliance, loadAudit, complianceAction, loadBondDashboard, loadBondDiagnosis, loadBondCandidates, loadNewsIntelligence, syncNews, createNewsCorrection }: Props) {
   const [state, setState] = useState<ViewState>({ kind: "idle" });
   const [symbol, setSymbol] = useState("600000");
   const [dataState, setDataState] = useState<DataStatusState>({ kind: "idle" });
   const [complianceAsset, setComplianceAsset] = useState<"a_share" | "convertible_bond">("a_share");
-  const [activeView, setActiveView] = useState<"dashboard" | "xingbu" | "libu" | "dongchang" | "bonds">(
-    window.location.pathname === "/convertible-bonds" ? "bonds" : "dashboard"
+  const [activeView, setActiveView] = useState<"dashboard" | "xingbu" | "libu" | "dongchang" | "bonds" | "news">(
+    window.location.pathname === "/convertible-bonds" ? "bonds" : window.location.pathname === "/news-intelligence" ? "news" : "dashboard"
   );
   useEffect(() => {
-    const syncPath = () => setActiveView(window.location.pathname === "/convertible-bonds" ? "bonds" : "dashboard");
+    const syncPath = () => setActiveView(window.location.pathname === "/convertible-bonds" ? "bonds" : window.location.pathname === "/news-intelligence" ? "news" : "dashboard");
     window.addEventListener("popstate", syncPath);
     return () => window.removeEventListener("popstate", syncPath);
   }, []);
-  function navigate(view: "dashboard" | "bonds") {
-    window.history.pushState({}, "", view === "bonds" ? "/convertible-bonds" : "/");
+  function navigate(view: "dashboard" | "bonds" | "news") {
+    window.history.pushState({}, "", view === "bonds" ? "/convertible-bonds" : view === "news" ? "/news-intelligence" : "/");
     setActiveView(view);
   }
 
@@ -160,8 +165,8 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadPaperPor
         </div>
         <nav aria-label="部门导航">
           <p className="nav-label">中央机构</p>
-          {departments.map(({ name, detail, icon: Icon }) => { const target = name === "刑部" ? "xingbu" : name === "礼部" ? "libu" : name === "东厂" ? "dongchang" : name === "今日工作台" ? "dashboard" : null; return (
-            <button className={target === activeView ? "nav-item active" : "nav-item"} key={name} type="button" onClick={() => target && (target === "dashboard" ? navigate("dashboard") : setActiveView(target))}>
+          {departments.map(({ name, detail, icon: Icon }) => { const target = name === "刑部" ? "xingbu" : name === "礼部" ? "libu" : name === "东厂" ? "dongchang" : name === "中书省" ? "news" : name === "今日工作台" ? "dashboard" : null; return (
+            <button className={target === activeView ? "nav-item active" : "nav-item"} key={name} type="button" onClick={() => target && (target === "dashboard" || target === "news" ? navigate(target) : setActiveView(target))}>
               <Icon size={16} strokeWidth={1.7} />
               <span><b>{name}</b><small>{detail}</small></span>
             </button>
@@ -173,9 +178,11 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadPaperPor
         <div className="sidebar-foot"><span className="pulse-dot" />系统本地运行</div>
       </aside>
 
-      {activeView !== "dashboard" && activeView !== "bonds" && <GovernanceView view={activeView} initialAsset={complianceAsset} loadRisk={loadRisk} loadCompliance={loadCompliance} loadAudit={loadAudit} complianceAction={complianceAction} />}
+      {activeView !== "dashboard" && activeView !== "bonds" && activeView !== "news" && <GovernanceView view={activeView} initialAsset={complianceAsset} loadRisk={loadRisk} loadCompliance={loadCompliance} loadAudit={loadAudit} complianceAction={complianceAction} />}
 
       {activeView === "bonds" && loadBondDashboard && loadBondDiagnosis && loadBondCandidates && <ConvertibleBondView loadDashboard={loadBondDashboard} loadDiagnosis={loadBondDiagnosis} loadCandidates={loadBondCandidates} openBondCompliance={() => { setComplianceAsset("convertible_bond"); setActiveView("libu"); }} />}
+
+      {activeView === "news" && loadNewsIntelligence && syncNews && createNewsCorrection && <NewsIntelligenceView loadBundle={loadNewsIntelligence} syncNews={syncNews} createCorrection={createNewsCorrection} openNewsCompliance={() => { setComplianceAsset("a_share"); setActiveView("libu"); }} />}
 
       {activeView === "dashboard" && <main className="command-center">
         <header className="topbar">

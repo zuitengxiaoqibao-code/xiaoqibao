@@ -5,7 +5,7 @@ import pytest
 from qibao_api.contracts.news import NewsArticle
 from qibao_api.gongbu.news_collection import NewsCluster
 from qibao_api.gongbu.news_linking import DeterministicNewsLinker
-from qibao_api.contracts.news import AIInterpretation, InterpretationStatement
+from qibao_api.contracts.news import AIInterpretation, InterpretationStatement, NewsCorrection
 from qibao_api.gongbu.news_repository import NewsIntegrityError, NewsRepository
 
 
@@ -64,6 +64,14 @@ def test_repository_persists_articles_and_clusters_append_only(tmp_path) -> None
     assert repository.append_interpretation(interpretation) is True
     assert repository.append_interpretation(interpretation) is False
     assert repository.interpretations() == [interpretation]
+    correction = NewsCorrection(
+        correction_id="correction-1", event_id=event.event_id, corrected_at=NOW,
+        reason="人工确认事件归属", review_state="verified",
+        industries=("高端制造",),
+    )
+    assert repository.append_correction(correction) is True
+    assert repository.append_correction(correction) is False
+    assert repository.corrections() == [correction]
 
     with pytest.raises(Exception, match="append-only"):
         repository.connection.execute(

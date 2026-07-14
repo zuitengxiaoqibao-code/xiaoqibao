@@ -24,6 +24,14 @@ class Service:
 
 
 class Repository:
+    saved_corrections = []
+
+    def articles(self):
+        return [object()]
+
+    def clusters(self):
+        return [{"cluster": object()}]
+
     def events(self):
         return [NormalizedNewsEvent(
             event_id="event-news-1", event_type="market_news", headline="政策发布",
@@ -48,6 +56,13 @@ class Repository:
                 citation_ids=(citation.citation_id,),
             ),), citations=(citation,),
         )]
+
+    def append_correction(self, correction):
+        self.saved_corrections.append(correction)
+        return True
+
+    def corrections(self):
+        return list(self.saved_corrections)
 
 
 def client() -> TestClient:
@@ -85,3 +100,18 @@ def test_news_sync_maps_missing_authorization_to_clear_403() -> None:
 
     assert response.status_code == 403
     assert response.json()["detail"] == "A 股新闻数据源尚未授权：eastmoney"
+
+
+def test_news_quality_and_human_correction_routes() -> None:
+    Repository.saved_corrections = []
+    with client() as test_client:
+        corrected = test_client.post("/api/v1/news/corrections", json={
+            "event_id": "event-news-1", "reason": "人工确认事件分类",
+            "review_state": "verified", "industries": ["高端制造"],
+        })
+        quality = test_client.get("/api/v1/news/quality")
+
+    assert corrected.status_code == 200
+    assert corrected.json()["correction_id"].startswith("correction-")
+    assert quality.status_code == 200
+    assert quality.json()["human_correction_rate"] == "1.0000"

@@ -59,6 +59,8 @@ async def test_gateway_accepts_schema_valid_evidence_bound_json() -> None:
     assert result.latency_ms == 125
     assert result.degraded is False
     assert result.statements[0].citation_ids == ("citation-1",)
+    assert result.provider_attempts == 1
+    assert result.invalid_output_count == 0
 
 
 @pytest.mark.asyncio
@@ -74,6 +76,8 @@ async def test_gateway_retries_invalid_json_once_then_accepts_valid_output() -> 
 
     assert provider.calls == 2
     assert result.degraded is False
+    assert result.provider_attempts == 2
+    assert result.invalid_output_count == 1
 
 
 @pytest.mark.asyncio
@@ -94,3 +98,6 @@ async def test_gateway_degrades_deterministically_without_leaking_provider_error
     assert result.statements[0].citation_ids == ("citation-1",)
     assert SECRET not in serialized
     assert SECRET not in repr(gateway)
+    assert result.provider_attempts == 2
+    assert result.provider_error_count == 1
+    assert result.invalid_output_count == 1

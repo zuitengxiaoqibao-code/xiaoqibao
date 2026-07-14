@@ -21,6 +21,24 @@ const freshCard = {
 };
 
 describe("Dashboard", () => {
+  it("navigates to the news intelligence deep link", async () => {
+    window.history.replaceState({}, "", "/");
+    render(<Dashboard
+      loadSnapshot={() => Promise.resolve(freshCard)}
+      loadNewsIntelligence={() => Promise.resolve({
+        events: [], interpretations: [], corrections: [], briefings: [],
+        quality: { article_count: 0, cluster_count: 0, event_count: 0, interpretation_count: 0, correction_count: 0, citation_coverage: "1", duplicate_rate: "0", invalid_json_rate: "0", provider_error_rate: "0", human_correction_rate: "0" },
+      })}
+      syncNews={() => Promise.resolve({ fetched: 0 })}
+      createNewsCorrection={() => Promise.resolve()}
+    />);
+
+    fireEvent.click(screen.getByRole("button", { name: /中书省/ }));
+
+    expect(await screen.findByRole("heading", { name: "每日情报流" })).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/news-intelligence");
+  });
+
   it("navigates to the independent convertible-bond domain", async () => {
     window.history.replaceState({}, "", "/");
     render(<Dashboard loadSnapshot={() => Promise.resolve(freshCard)}

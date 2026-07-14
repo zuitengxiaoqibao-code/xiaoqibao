@@ -5,6 +5,7 @@ import { createPaperAccount, loadPaperPortfolio, submitPaperOrder } from "../fea
 import { runBacktest } from "../features/backtest/api";
 import { complianceAction, loadAudit, loadCompliance, loadRisk } from "../features/governance/api";
 import { loadBondCandidates, loadBondDashboard, loadBondDiagnosis } from "../features/convertible-bonds/api";
+import { createNewsCorrection, loadNewsIntelligence, syncNews } from "../features/news-intelligence/api";
 
 export function App() {
   return <Dashboard
@@ -16,5 +17,6 @@ export function App() {
     submitPaperOrder={submitPaperOrder}
     loadRisk={loadRisk} loadCompliance={loadCompliance} loadAudit={loadAudit} complianceAction={complianceAction}
     loadBondDashboard={loadBondDashboard} loadBondDiagnosis={loadBondDiagnosis} loadBondCandidates={loadBondCandidates}
+    loadNewsIntelligence={loadNewsIntelligence} syncNews={syncNews} createNewsCorrection={createNewsCorrection}
   />;
 }
