@@ -29,11 +29,11 @@ type Props = {
   loadPaperPortfolio?: () => Promise<Portfolio>;
   createPaperAccount?: () => Promise<PaperAccount>;
   submitPaperOrder?: (symbol: string, side: "buy" | "sell", shares: number) => Promise<OrderResult>;
-  loadRisk?: () => Promise<RiskStatus>; loadCompliance?: () => Promise<ComplianceStatus>; loadAudit?: () => Promise<AuditStatus>;
-  complianceAction?: (source: string, action: "authorize" | "revoke" | "acknowledge", permissionReference?: string) => Promise<unknown>;
+  loadRisk?: () => Promise<RiskStatus>; loadCompliance?: (asset?: "a_share" | "convertible_bond") => Promise<ComplianceStatus>; loadAudit?: () => Promise<AuditStatus>;
+  complianceAction?: (source: string, action: "authorize" | "revoke" | "acknowledge", permissionReference?: string, asset?: "a_share" | "convertible_bond") => Promise<unknown>;
   loadBondDashboard?: () => Promise<BondDashboard>;
   loadBondDiagnosis?: (code: string) => Promise<BondDiagnosis>;
-  loadBondCandidates?: () => Promise<BondCandidates>;
+  loadBondCandidates?: (filters?: Record<string, string>) => Promise<BondCandidates>;
 };
 
 const departments = [
@@ -106,6 +106,7 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadPaperPor
   const [state, setState] = useState<ViewState>({ kind: "idle" });
   const [symbol, setSymbol] = useState("600000");
   const [dataState, setDataState] = useState<DataStatusState>({ kind: "idle" });
+  const [complianceAsset, setComplianceAsset] = useState<"a_share" | "convertible_bond">("a_share");
   const [activeView, setActiveView] = useState<"dashboard" | "xingbu" | "libu" | "dongchang" | "bonds">(
     window.location.pathname === "/convertible-bonds" ? "bonds" : "dashboard"
   );
@@ -172,9 +173,9 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadPaperPor
         <div className="sidebar-foot"><span className="pulse-dot" />系统本地运行</div>
       </aside>
 
-      {activeView !== "dashboard" && activeView !== "bonds" && <GovernanceView view={activeView} loadRisk={loadRisk} loadCompliance={loadCompliance} loadAudit={loadAudit} complianceAction={complianceAction} />}
+      {activeView !== "dashboard" && activeView !== "bonds" && <GovernanceView view={activeView} initialAsset={complianceAsset} loadRisk={loadRisk} loadCompliance={loadCompliance} loadAudit={loadAudit} complianceAction={complianceAction} />}
 
-      {activeView === "bonds" && loadBondDashboard && loadBondDiagnosis && loadBondCandidates && <ConvertibleBondView loadDashboard={loadBondDashboard} loadDiagnosis={loadBondDiagnosis} loadCandidates={loadBondCandidates} />}
+      {activeView === "bonds" && loadBondDashboard && loadBondDiagnosis && loadBondCandidates && <ConvertibleBondView loadDashboard={loadBondDashboard} loadDiagnosis={loadBondDiagnosis} loadCandidates={loadBondCandidates} openBondCompliance={() => { setComplianceAsset("convertible_bond"); setActiveView("libu"); }} />}
 
       {activeView === "dashboard" && <main className="command-center">
         <header className="topbar">

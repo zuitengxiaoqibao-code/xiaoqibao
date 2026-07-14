@@ -1,5 +1,5 @@
 import json
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from fastapi import FastAPI
@@ -9,7 +9,7 @@ from sqlalchemy import create_engine
 from qibao_api.contracts.convertible_bond import ClauseDates, ConvertibleBondContract
 from qibao_api.contracts.market import AssetKind, DataQuality
 from qibao_api.contracts.risk import ComplianceRecord
-from qibao_api.convertible_bonds.models import BondClauseSnapshot, BondQuote
+from qibao_api.convertible_bonds.models import BondClauseSnapshot, BondQuote, BondValuation
 from qibao_api.convertible_bonds.repository import ClauseRepository
 from qibao_api.dependencies import get_bond_service, get_compliance_repository
 from qibao_api.libu_compliance.repository import ComplianceRepository
@@ -23,7 +23,20 @@ class QuoteSource:
     async def fetch(self, code):
         return BondQuote(symbol=code, name="测试转债", price=Decimal("121.50"),
                          previous_close=Decimal("120"), observed_at=NOW, source="tencent",
-                         quality=DataQuality.FRESH, raw_identity="quote-1")
+                         quality=DataQuality.FRESH, raw_identity="quote-1",
+                         turnover_amount=Decimal("526680000"))
+
+
+class ValuationSource:
+    async def fetch(self, code):
+        return BondValuation(
+            bond_code=code, observed_at=NOW, pure_bond_value=Decimal("100.80"),
+            provider_conversion_value=Decimal("83.0632"),
+            provider_conversion_premium=Decimal("0.4627"),
+            provider_pure_bond_premium=Decimal("0.2054"),
+            close=Decimal("121.50"), conversion_price=Decimal("12.34"),
+            raw_identity="valuation-1",
+        )
 
 
 class StockSource:
@@ -64,8 +77,12 @@ def make_client(tmp_path):
     compliance = ComplianceRepository(tmp_path / "compliance.sqlite3")
     compliance.set_feature_sources("bond_quotes", AssetKind.CONVERTIBLE_BOND, ("tencent",))
     compliance.set_feature_sources("bond_clauses", AssetKind.CONVERTIBLE_BOND, ("eastmoney",))
+    compliance.set_feature_sources("bond_valuations", AssetKind.CONVERTIBLE_BOND, ("eastmoney",))
     diagnoses = BondDiagnosisRepository(tmp_path / "diagnoses.sqlite3")
-    service = ConvertibleBondService(QuoteSource(), ClauseSource(), StockSource(), clauses, compliance, diagnoses, clock=lambda: NOW)
+    service = ConvertibleBondService(
+        QuoteSource(), ClauseSource(), StockSource(), clauses, compliance, diagnoses,
+        ValuationSource(), clock=lambda: NOW,
+    )
     app = FastAPI()
     app.include_router(router)
     app.dependency_overrides[get_bond_service] = lambda: service
@@ -105,12 +122,16 @@ def test_diagnosis_fetches_and_appends_reproducible_snapshot(tmp_path):
     assert body["linked_stock"]["code"] == "600001"
     assert Decimal(body["metrics"]["conversion_value"]) == Decimal("100") / Decimal("12.34") * Decimal("10.25")
     assert Decimal(body["metrics"]["conversion_premium"]) == (Decimal("121.50") - Decimal(body["metrics"]["conversion_value"])) / Decimal(body["metrics"]["conversion_value"])
-    assert body["metrics"]["pure_bond_premium"] is None
-    assert body["risk"]["unknowns"] == ["pure_bond_value", "turnover_amount"]
+    assert Decimal(body["metrics"]["pure_bond_premium"]) == (
+        Decimal("121.50") - Decimal("100.80")
+    ) / Decimal("100.80")
+    assert body["risk"]["unknowns"] == []
     assert body["strong_redemption"]["state"] == "unknown"
     assert body["strong_redemption"]["evidence_fields"] == {}
-    assert body["metric_inputs"]["pure_bond_value"] is None
+    assert body["metric_inputs"]["pure_bond_value"] == "100.80"
     assert body["metric_inputs"]["bond_quote"]["source"] == "tencent"
+    assert body["metric_inputs"]["bond_quote"]["turnover_amount"] == "526680000"
+    assert body["metric_inputs"]["valuation"]["raw_identity"] == "valuation-1"
     assert body["metric_inputs"]["stock_quote"]["price"] == "10.25"
     assert body["metric_inputs"]["clause_snapshot"]["content_hash"]
     assert len(clauses.snapshots("113065")) == 1
@@ -147,3 +168,32 @@ def test_suspended_diagnosis_is_not_a_candidate(tmp_path):
     service.quote_source = Suspended()
     assert client.get("/api/v1/convertible-bonds/113065/diagnosis").status_code == 200
     assert client.get("/api/v1/convertible-bonds/candidates").json()["items"] == []
+
+
+def test_stale_diagnosis_is_not_a_candidate(tmp_path):
+    client, compliance, _ = make_client(tmp_path)
+    authorize(compliance, "tencent", AssetKind.CONVERTIBLE_BOND)
+    authorize(compliance, "eastmoney", AssetKind.CONVERTIBLE_BOND)
+    service = client.app.dependency_overrides[get_bond_service]()
+    service.clock = lambda: NOW + timedelta(minutes=4)
+
+    diagnosis = client.get("/api/v1/convertible-bonds/113065/diagnosis")
+
+    assert diagnosis.json()["status"] == "stale_quote"
+    assert client.get("/api/v1/convertible-bonds/candidates").json()["items"] == []
+
+
+def test_candidate_query_filters_are_applied(tmp_path):
+    client, compliance, _ = make_client(tmp_path)
+    authorize(compliance, "tencent", AssetKind.CONVERTIBLE_BOND)
+    authorize(compliance, "eastmoney", AssetKind.CONVERTIBLE_BOND)
+    assert client.get("/api/v1/convertible-bonds/113065/diagnosis").status_code == 200
+
+    included = client.get(
+        "/api/v1/convertible-bonds/candidates?min_turnover_amount=526680000"
+        "&min_remaining_size=18&min_days_to_maturity=700&max_conversion_premium=1"
+    )
+    excluded = client.get("/api/v1/convertible-bonds/candidates?min_turnover_amount=526680001")
+
+    assert [item["bond_code"] for item in included.json()["items"]] == ["113065"]
+    assert excluded.json()["items"] == []

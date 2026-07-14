@@ -79,4 +79,15 @@ describe("governance navigation", () => {
     expect(await screen.findByRole("heading", { name: "来源权限与声明" })).toBeInTheDocument();
     expect(loadCompliance).toHaveBeenCalledTimes(2);
   });
+
+  it("switches compliance records between A shares and convertible bonds", async () => {
+    const loadCompliance = vi.fn((asset?: string) => Promise.resolve({ policy_state: "current",
+      sources: [{ source: asset === "convertible_bond" ? "eastmoney" : "tencent", permission_state: "pending", disclaimer_version: "2026-07", user_acknowledged_at: null }], features: [] }));
+    const action = vi.fn(() => Promise.resolve());
+    render(<Dashboard loadSnapshot={snapshot} loadCompliance={loadCompliance} complianceAction={action} />);
+    fireEvent.click(screen.getByRole("button", { name: /礼部/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "可转债" }));
+    expect(await screen.findByText("eastmoney")).toBeInTheDocument();
+    expect(loadCompliance).toHaveBeenLastCalledWith("convertible_bond");
+  });
 });

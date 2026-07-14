@@ -9,7 +9,7 @@ from qibao_api.gongbu.data_service import FallbackHistorySource, MarketDataServi
 from qibao_api.gongbu.tdx_client import create_tdx_client
 from qibao_api.gongbu.tdx_history import TdxHistorySource
 from qibao_api.gongbu.tencent_quotes import TencentQuoteSource
-from qibao_api.convertible_bonds.adapters import EastmoneyClauseSource, TencentBondQuoteSource
+from qibao_api.convertible_bonds.adapters import EastmoneyBondValuationSource, EastmoneyClauseSource, TencentBondQuoteSource
 from qibao_api.convertible_bonds.repository import BondClauseRepository
 from qibao_api.convertible_bonds.service import ConvertibleBondService
 from qibao_api.convertible_bonds.diagnosis_repository import BondDiagnosisRepository
@@ -52,6 +52,7 @@ async def lifespan(application: FastAPI):
     compliance.set_feature_sources("history_sync.baidu", "a_share", ("baidu",))
     compliance.set_feature_sources("bond_quotes", "convertible_bond", ("tencent",))
     compliance.set_feature_sources("bond_clauses", "convertible_bond", ("eastmoney",))
+    compliance.set_feature_sources("bond_valuations", "convertible_bond", ("eastmoney",))
     bond_repository = BondClauseRepository(engine)
     bond_repository.initialize()
     diagnosis_repository = BondDiagnosisRepository(settings.data_dir / "bond-diagnoses.sqlite3")
@@ -101,6 +102,7 @@ async def lifespan(application: FastAPI):
                 TencentBondQuoteSource(client), EastmoneyClauseSource(client=client),
                 TencentQuoteSource(client), bond_repository, compliance,
                 diagnosis_repository,
+                EastmoneyBondValuationSource(client=client),
             )
             paper_repository = PaperRepository(settings.data_dir / "paper.sqlite3")
             application.state.paper_repository = paper_repository

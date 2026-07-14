@@ -11,4 +11,7 @@ async function request<T>(path: string): Promise<T> {
 
 export const loadBondDashboard = () => request<BondDashboard>("/api/v1/convertible-bonds/dashboard");
 export const loadBondDiagnosis = (code: string) => request<BondDiagnosis>(`/api/v1/convertible-bonds/${code}/diagnosis`);
-export const loadBondCandidates = () => request<BondCandidates>("/api/v1/convertible-bonds/candidates");
+export const loadBondCandidates = (filters?: Record<string, string>) => {
+  const query = new URLSearchParams(Object.entries(filters ?? {}).filter(([, value]) => value !== ""));
+  return request<BondCandidates>(`/api/v1/convertible-bonds/candidates${query.size ? `?${query}` : ""}`);
+};

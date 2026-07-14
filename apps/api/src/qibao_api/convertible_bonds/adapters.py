@@ -12,13 +12,14 @@ import httpx
 from qibao_api.contracts.convertible_bond import ClauseDates, ConvertibleBondContract
 from qibao_api.contracts.instruments import validate_convertible_bond_code
 from qibao_api.contracts.market import DataQuality
-from qibao_api.convertible_bonds.models import BondClauseSnapshot, BondQuote, StrongRedemptionEvidence
+from qibao_api.convertible_bonds.models import BondClauseSnapshot, BondQuote, BondValuation, StrongRedemptionEvidence
 
 CHINA_TZ = timezone(timedelta(hours=8))
 EASTMONEY_ENDPOINT = "https://datacenter-web.eastmoney.com/api/data/v1/get"
 CB_LIST_REPORT = "RPT_BOND_CB_LIST"
 BS_INFO_REPORT = "RPT_BOND_BS_INFO"
 EASTMONEY_PARSER_VERSION = "eastmoney-v2"
+VALUATION_REPORT = "RPTA_WEB_KZZ_LS"
 
 
 @dataclass(frozen=True)
@@ -72,7 +73,48 @@ class TencentBondQuoteSource:
             source="tencent",
             quality=DataQuality.UNAVAILABLE if suspended else DataQuality.FRESH,
             raw_identity=hashlib.sha256(raw).hexdigest(),
+            turnover_amount=(Decimal(fields[37]) * Decimal("10000"))
+            if len(fields) > 37 and fields[37].strip() else None,
         )
+
+
+class EastmoneyBondValuationSource:
+    def __init__(self, transport: ClauseTransport | None = None, *, client: httpx.AsyncClient | None = None) -> None:
+        self.transport = transport
+        self.client = client
+
+    async def fetch(self, bond_code: str) -> BondValuation:
+        validate_convertible_bond_code(bond_code)
+        params = {"reportName": VALUATION_REPORT, "columns": "ALL",
+                  "filter": f'(ZCODE="{bond_code}")', "sortColumns": "DATE",
+                  "sortTypes": "-1", "pageNumber": "1", "pageSize": "1"}
+        if self.transport:
+            response = await self.transport(EASTMONEY_ENDPOINT, params)
+        elif self.client is not None:
+            result = await self.client.get(EASTMONEY_ENDPOINT, params=params)
+            response = RawHttpResponse(result.status_code, result.content)
+        else:
+            async with httpx.AsyncClient(timeout=10) as client:
+                result = await client.get(EASTMONEY_ENDPOINT, params=params)
+                response = RawHttpResponse(result.status_code, result.content)
+        if response.status_code != 200:
+            raise ValueError(f"Eastmoney valuation status {response.status_code}")
+        row = _provider_row(response.body, VALUATION_REPORT)
+        if str(row.get("ZCODE")) != bond_code:
+            raise ValueError("Eastmoney valuation code does not match requested bond")
+        return BondValuation(
+            bond_code=bond_code, observed_at=datetime.fromisoformat(str(row["DATE"])).replace(tzinfo=CHINA_TZ),
+            pure_bond_value=Decimal(str(row["PUREBONDVALUE"])),
+            provider_conversion_value=_optional_decimal(row.get("SWAPVALUE")),
+            provider_conversion_premium=_optional_decimal(row.get("SWAPOR")),
+            provider_pure_bond_premium=_optional_decimal(row.get("PUREBONDOR")),
+            close=_optional_decimal(row.get("FCLOSE")), conversion_price=_optional_decimal(row.get("SWAPPRICE")),
+            raw_identity=hashlib.sha256(response.body).hexdigest(),
+        )
+
+
+def _optional_decimal(value) -> Decimal | None:
+    return Decimal(str(value)) if value not in (None, "") else None
 
 
 def pack_raw_reports(reports: dict[str, bytes]) -> bytes:

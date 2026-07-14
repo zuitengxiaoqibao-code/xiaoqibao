@@ -42,12 +42,13 @@ def eastmoney_capture(report: str, *, code: str = "113065", price: str = "12.34"
 
 
 def tencent_body(*, code: str = "113065", price: str = "121.50") -> bytes:
-    fields = [""] * 31
+    fields = [""] * 38
     fields[1] = "\u6d4b\u8bd5\u8f6c\u503a"
     fields[2] = code
     fields[3] = price
     fields[4] = "120.00"
     fields[30] = "20260714103000"
+    fields[37] = "52668"
     return ('v_sh113065="' + "~".join(fields) + '";').encode("gbk")
 
 
@@ -62,6 +63,7 @@ async def test_tencent_quote_metadata_suspension_and_code_validation() -> None:
     assert quote.price == Decimal("121.50")
     assert quote.observed_at == datetime(2026, 7, 14, 10, 30, tzinfo=timezone(timedelta(hours=8)))
     assert quote.quality is DataQuality.FRESH
+    assert quote.turnover_amount == Decimal("526680000")
 
     async def mismatch(_: httpx.Request) -> httpx.Response:
         return httpx.Response(200, content=tencent_body(code="113066"))
@@ -189,3 +191,16 @@ def test_strong_redemption_state_machine_does_not_infer_from_is_redeem_or_dates(
     assert announced.evidence_fields[f"{CB_LIST_REPORT}.NOTICE_DATE_SH"] == "2026-07-10"
     completed = parse({"EXECUTE_START_DATE": "2026-07-01", "EXECUTE_END_DATE": "2026-07-13", "EXECUTE_REASON_SH": "提前赎回"})
     assert completed.state == "completed"
+
+
+@pytest.mark.asyncio
+async def test_eastmoney_valuation_maps_raw_latest_record_without_using_provider_premium() -> None:
+    from qibao_api.convertible_bonds.adapters import EastmoneyBondValuationSource
+    payload = json.dumps({"result": {"data": [{"ZCODE": "113065", "DATE": "2026-07-14",
+        "PUREBONDVALUE": "98.50", "SWAPVALUE": "83.06", "SWAPOR": "46.27",
+        "PUREBONDOR": "23.35", "FCLOSE": "121.50", "SWAPPRICE": "12.34"}]}}).encode()
+    async def transport(_, __): return RawHttpResponse(200, payload)
+    value = await EastmoneyBondValuationSource(transport=transport).fetch("113065")
+    assert value.pure_bond_value == Decimal("98.50")
+    assert value.provider_conversion_premium == Decimal("46.27")
+    assert value.raw_identity

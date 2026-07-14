@@ -1,12 +1,14 @@
+from decimal import Decimal
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 import httpx
 
 from qibao_api.dependencies import get_bond_service
 from qibao_api.libu_compliance.repository import SourceAuthorizationError
 from qibao_api.convertible_bonds.adapters import ClauseDataUnavailable
 from qibao_api.convertible_bonds.diagnosis_repository import DataIntegrityError
+from qibao_api.convertible_bonds.candidates import BondCandidateFilter
 
 
 router = APIRouter(prefix="/api/v1/convertible-bonds", tags=["可转债"])
@@ -25,9 +27,19 @@ def dashboard(service: Annotated[object, Depends(get_bond_service)]):
 
 
 @router.get("/candidates")
-def candidates(service: Annotated[object, Depends(get_bond_service)]):
+def candidates(service: Annotated[object, Depends(get_bond_service)],
+               max_conversion_premium: Decimal | None = None,
+               min_turnover_amount: Annotated[Decimal | None, Query(ge=0)] = None,
+               min_remaining_size: Annotated[Decimal | None, Query(ge=0)] = None,
+               min_days_to_maturity: Annotated[int | None, Query(ge=0)] = None):
     try:
-        return service.candidates()
+        filters = BondCandidateFilter(
+            max_conversion_premium=max_conversion_premium,
+            min_turnover_amount=min_turnover_amount,
+            min_remaining_size=min_remaining_size,
+            min_remaining_days=min_days_to_maturity,
+        )
+        return service.candidates(filters)
     except DataIntegrityError as error:
         raise HTTPException(status_code=503, detail={"code": "diagnosis_integrity_error", "message": "转债诊断存档校验失败"}) from error
 
