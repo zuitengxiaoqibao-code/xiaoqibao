@@ -77,7 +77,7 @@ def test_display_boundary_rounds_without_changing_calculation_value() -> None:
     value = conversion_value(Decimal("100"), Decimal("9.87"), Decimal("10.25"))
 
     assert format_decimal(value, places=2) == "103.85"
-    assert value == Decimal("100") / Decimal("9.87") * Decimal("10.25")
+    assert value == Decimal("103.8500506585612968591691996")
 
 
 def test_remaining_term_uses_exact_days_and_declares_actual_365() -> None:
