@@ -33,7 +33,7 @@
 - Consumes: `DailyBar` 按交易日升序排列的不可变序列。
 - Produces: `FactorSnapshot`、`CandidateEntry`、`CandidateBoard`，以及 `build_factor_snapshot(bars, as_of)` 和 `rank_candidates(snapshots, horizon, limit)`。
 
-- [ ] **Step 1: 写失败测试，固定因子口径和时间边界**
+- [x] **Step 1: 写失败测试，固定因子口径和时间边界**
 
 ```python
 def test_factor_snapshot_uses_only_bars_on_or_before_as_of() -> None:
@@ -48,13 +48,13 @@ def test_factor_snapshot_rejects_less_than_sixty_bars() -> None:
         build_factor_snapshot(make_bars(59), as_of=date(2026, 7, 14))
 ```
 
-- [ ] **Step 2: 运行测试并确认因缺少模块而失败**
+- [x] **Step 2: 运行测试并确认因缺少模块而失败**
 
 Run: `.venv/Scripts/python.exe -m pytest apps/api/tests/a_shares/test_factors.py -q`
 
 Expected: FAIL，错误指向 `qibao_api.a_shares.factors` 不存在。
 
-- [ ] **Step 3: 实现无未来数据的因子快照**
+- [x] **Step 3: 实现无未来数据的因子快照**
 
 ```python
 class FactorSnapshot(BaseModel):
@@ -78,7 +78,7 @@ def build_factor_snapshot(bars: Sequence[DailyBar], as_of: date) -> FactorSnapsh
     return calculate_from(eligible[-60:])
 ```
 
-- [ ] **Step 4: 写失败测试，固定短线和波段榜排序及剔除规则**
+- [x] **Step 4: 写失败测试，固定短线和波段榜排序及剔除规则**
 
 ```python
 def test_short_term_and_swing_boards_rank_differently() -> None:
@@ -95,11 +95,11 @@ def test_candidate_board_excludes_insufficient_liquidity() -> None:
     assert board.exclusions[0].reason_code == "insufficient_liquidity"
 ```
 
-- [ ] **Step 5: 实现透明分数明细与稳定排序**
+- [x] **Step 5: 实现透明分数明细与稳定排序**
 
 短线权重固定为 `5 日动量 30% + 量比 25% + MA20 趋势 20% + 流动性 15% - 波动惩罚 10%`；波段权重固定为 `20 日动量 25% + MA20 趋势 30% + 流动性 15% - 波动惩罚 10% - 60 日回撤惩罚 20%`。所有横截面输入用 winsorize 后的百分位分数，分数相同时按股票代码升序，保证重复运行一致。
 
-- [ ] **Step 6: 运行任务测试并提交**
+- [x] **Step 6: 运行任务测试并提交**
 
 Run: `.venv/Scripts/python.exe -m pytest apps/api/tests/a_shares -q`
 
@@ -312,4 +312,3 @@ Expected: exit 0。
 git add apps/web/src apps/api README.md
 git commit -m "feat(a-shares): add candidate and diagnosis workspace"
 ```
-
