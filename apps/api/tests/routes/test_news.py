@@ -4,7 +4,12 @@ from decimal import Decimal
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from qibao_api.contracts.news import EvidenceCitation, NormalizedNewsEvent
+from qibao_api.contracts.news import (
+    AIInterpretation,
+    EvidenceCitation,
+    InterpretationStatement,
+    NormalizedNewsEvent,
+)
 from qibao_api.dependencies import get_news_repository, get_news_service
 from qibao_api.routes.news import router
 from qibao_api.libu_compliance.repository import SourceAuthorizationError
@@ -32,6 +37,18 @@ class Repository:
             association_confidence=Decimal("0.60"), review_state="pending",
         )]
 
+    def interpretations(self):
+        citation = self.events()[0].citations[0]
+        return [AIInterpretation(
+            interpretation_id="interpretation-1", event_id="event-news-1",
+            generated_at=NOW, provider="deterministic", model="evidence-summary-v1",
+            prompt_version="news-v1", latency_ms=2, degraded=True,
+            statements=(InterpretationStatement(
+                statement_id="s1", kind="fact", text="政策发布",
+                citation_ids=(citation.citation_id,),
+            ),), citations=(citation,),
+        )]
+
 
 def client() -> TestClient:
     app = FastAPI()
@@ -45,11 +62,14 @@ def test_news_sync_and_event_routes_expose_auditable_results() -> None:
     with client() as test_client:
         synced = test_client.post("/api/v1/news/sync")
         events = test_client.get("/api/v1/news/events")
+        interpretations = test_client.get("/api/v1/news/interpretations")
 
     assert synced.status_code == 200
     assert synced.json()["inserted"] == 2
     assert events.status_code == 200
     assert events.json()[0]["citations"][0]["article_id"] == "news-1"
+    assert interpretations.status_code == 200
+    assert interpretations.json()[0]["degraded"] is True
 
 
 def test_news_sync_maps_missing_authorization_to_clear_403() -> None:

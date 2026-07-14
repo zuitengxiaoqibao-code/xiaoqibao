@@ -3,7 +3,7 @@ from typing import Annotated
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 
-from qibao_api.contracts.news import NormalizedNewsEvent
+from qibao_api.contracts.news import AIInterpretation, NormalizedNewsEvent
 from qibao_api.dependencies import get_news_repository, get_news_service
 from qibao_api.gongbu.news_repository import NewsIntegrityError
 from qibao_api.libu_compliance.repository import SourceAuthorizationError
@@ -40,4 +40,15 @@ def news_events(repository: Annotated[object, Depends(get_news_repository)]):
         raise HTTPException(
             status_code=503,
             detail={"code": "news_integrity_error", "message": "新闻证据存档校验失败"},
+        ) from error
+
+
+@router.get("/interpretations", response_model=list[AIInterpretation])
+def news_interpretations(repository: Annotated[object, Depends(get_news_repository)]):
+    try:
+        return repository.interpretations()
+    except NewsIntegrityError as error:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "news_integrity_error", "message": "新闻解释存档校验失败"},
         ) from error

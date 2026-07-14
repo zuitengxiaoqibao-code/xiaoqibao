@@ -5,6 +5,7 @@ import pytest
 from qibao_api.contracts.news import NewsArticle
 from qibao_api.gongbu.news_collection import NewsCluster
 from qibao_api.gongbu.news_linking import DeterministicNewsLinker
+from qibao_api.contracts.news import AIInterpretation, InterpretationStatement
 from qibao_api.gongbu.news_repository import NewsIntegrityError, NewsRepository
 
 
@@ -51,6 +52,18 @@ def test_repository_persists_articles_and_clusters_append_only(tmp_path) -> None
     assert repository.append_event(event) is True
     assert repository.append_event(event) is False
     assert repository.events() == [event]
+    interpretation = AIInterpretation(
+        interpretation_id="interpretation-1", event_id=event.event_id,
+        generated_at=NOW, provider="deterministic", model="evidence-summary-v1",
+        prompt_version="news-v1", latency_ms=12, degraded=True,
+        statements=(InterpretationStatement(
+            statement_id="s1", kind="fact", text=item.title,
+            citation_ids=(event.citations[0].citation_id,),
+        ),), citations=event.citations,
+    )
+    assert repository.append_interpretation(interpretation) is True
+    assert repository.append_interpretation(interpretation) is False
+    assert repository.interpretations() == [interpretation]
 
     with pytest.raises(Exception, match="append-only"):
         repository.connection.execute(

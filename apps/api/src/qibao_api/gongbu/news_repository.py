@@ -4,7 +4,7 @@ import json
 import sqlite3
 from pathlib import Path
 
-from qibao_api.contracts.news import NewsArticle, NormalizedNewsEvent
+from qibao_api.contracts.news import AIInterpretation, NewsArticle, NormalizedNewsEvent
 from qibao_api.gongbu.news_collection import NewsCluster
 
 
@@ -38,6 +38,13 @@ class NewsRepository:
           canonical_hash TEXT NOT NULL,
           payload TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS news_interpretations (
+          sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+          interpretation_id TEXT NOT NULL UNIQUE,
+          event_id TEXT NOT NULL,
+          canonical_hash TEXT NOT NULL,
+          payload TEXT NOT NULL
+        );
         CREATE TRIGGER IF NOT EXISTS reject_update_news_articles
         BEFORE UPDATE ON news_articles
         BEGIN SELECT RAISE(ABORT, 'append-only news articles'); END;
@@ -56,6 +63,12 @@ class NewsRepository:
         CREATE TRIGGER IF NOT EXISTS reject_delete_news_events
         BEFORE DELETE ON news_events
         BEGIN SELECT RAISE(ABORT, 'append-only news events'); END;
+        CREATE TRIGGER IF NOT EXISTS reject_update_news_interpretations
+        BEFORE UPDATE ON news_interpretations
+        BEGIN SELECT RAISE(ABORT, 'append-only news interpretations'); END;
+        CREATE TRIGGER IF NOT EXISTS reject_delete_news_interpretations
+        BEFORE DELETE ON news_interpretations
+        BEGIN SELECT RAISE(ABORT, 'append-only news interpretations'); END;
         """)
 
     def append_articles(self, articles: tuple[NewsArticle, ...]) -> int:
@@ -182,6 +195,65 @@ class NewsRepository:
                 )
             events.append(NormalizedNewsEvent.model_validate_json(row["payload"]))
         return events
+
+    def append_interpretation(self, interpretation: AIInterpretation) -> bool:
+        event_row = self.connection.execute(
+            "SELECT payload FROM news_events WHERE event_id=?",
+            (interpretation.event_id,),
+        ).fetchone()
+        if event_row is None:
+            raise NewsIntegrityError(
+                f"interpretation references missing event: {interpretation.event_id}"
+            )
+        event = NormalizedNewsEvent.model_validate_json(event_row["payload"])
+        allowed = {citation.citation_id for citation in event.citations}
+        supplied = {citation.citation_id for citation in interpretation.citations}
+        if not supplied.issubset(allowed):
+            raise NewsIntegrityError("interpretation citations differ from frozen event")
+        payload = json.dumps(
+            interpretation.model_dump(mode="json"),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        canonical_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        existing = self.connection.execute(
+            "SELECT canonical_hash FROM news_interpretations WHERE interpretation_id=?",
+            (interpretation.interpretation_id,),
+        ).fetchone()
+        if existing is not None:
+            if not hmac.compare_digest(existing["canonical_hash"], canonical_hash):
+                raise NewsIntegrityError(
+                    f"news interpretation id collision: {interpretation.interpretation_id}"
+                )
+            return False
+        with self.connection:
+            self.connection.execute(
+                """INSERT INTO news_interpretations(
+                interpretation_id,event_id,canonical_hash,payload
+                ) VALUES(?,?,?,?)""",
+                (
+                    interpretation.interpretation_id,
+                    interpretation.event_id,
+                    canonical_hash,
+                    payload,
+                ),
+            )
+        return True
+
+    def interpretations(self) -> list[AIInterpretation]:
+        rows = self.connection.execute(
+            "SELECT * FROM news_interpretations ORDER BY sequence"
+        ).fetchall()
+        interpretations = []
+        for row in rows:
+            computed = hashlib.sha256(row["payload"].encode("utf-8")).hexdigest()
+            if not hmac.compare_digest(computed, row["canonical_hash"]):
+                raise NewsIntegrityError(
+                    f"news interpretation {row['interpretation_id']} failed integrity check"
+                )
+            interpretations.append(AIInterpretation.model_validate_json(row["payload"]))
+        return interpretations
 
     def clusters(self) -> list[dict]:
         rows = self.connection.execute(

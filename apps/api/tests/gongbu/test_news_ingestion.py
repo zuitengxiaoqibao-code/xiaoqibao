@@ -9,6 +9,7 @@ from qibao_api.gongbu.news_linking import DeterministicNewsLinker
 from qibao_api.gongbu.news_repository import NewsRepository
 from qibao_api.libu_compliance.repository import ComplianceRepository
 from qibao_api.contracts.risk import ComplianceRecord
+from qibao_api.zhongshu.news_ai import NewsAIGateway
 
 
 NOW = datetime(2026, 7, 14, 1, 0, tzinfo=UTC)
@@ -26,6 +27,11 @@ class Source:
             content_hash=hashlib.sha256(raw).hexdigest(), raw_snapshot=raw,
             source_verified=True,
         )]
+
+
+class UnavailableProvider:
+    async def complete(self, _request):
+        raise OSError("model offline")
 
 
 def authorize(repository: ComplianceRepository) -> None:
@@ -49,6 +55,10 @@ async def test_ingestion_requires_authorization_and_persists_complete_chain(tmp_
             theme_keywords={"政策支持": ("支持政策", "专项政策")},
         ),
         compliance,
+        NewsAIGateway(
+            UnavailableProvider(), provider_name="unconfigured", model="none",
+            prompt_version="news-v1", clock=lambda: NOW,
+        ),
     )
 
     with pytest.raises(Exception, match="eastmoney"):
@@ -57,11 +67,16 @@ async def test_ingestion_requires_authorization_and_persists_complete_chain(tmp_
     authorize(compliance)
     result = await service.sync()
 
-    assert result == {"fetched": 1, "inserted": 1, "clusters": 1, "events": 1}
+    assert result == {
+        "fetched": 1, "inserted": 1, "clusters": 1, "events": 1,
+        "interpretations": 1,
+    }
     assert repository.articles()[0].article_id == "news-1"
     assert repository.events()[0].affected_instruments == (
         (AssetKind.A_SHARE, "600000"),
     )
+    assert repository.interpretations()[0].degraded is True
     assert (await service.sync())["inserted"] == 0
+    assert len(repository.interpretations()) == 1
     repository.close()
     compliance.close()

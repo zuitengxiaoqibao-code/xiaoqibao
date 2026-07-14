@@ -39,6 +39,7 @@ from qibao_api.routes.libu import router as libu_router
 from qibao_api.routes.dongchang import router as dongchang_router
 from qibao_api.routes.convertible_bonds import router as convertible_bonds_router
 from qibao_api.routes.news import router as news_router
+from qibao_api.zhongshu.news_ai import NewsAIGateway, UnavailableNewsAIProvider
 
 
 @asynccontextmanager
@@ -133,6 +134,12 @@ async def lifespan(application: FastAPI):
                     },
                 ),
                 compliance,
+                NewsAIGateway(
+                    UnavailableNewsAIProvider(),
+                    provider_name="unconfigured",
+                    model="none",
+                    prompt_version="news-v1",
+                ),
             )
             paper_repository = PaperRepository(settings.data_dir / "paper.sqlite3")
             application.state.paper_repository = paper_repository

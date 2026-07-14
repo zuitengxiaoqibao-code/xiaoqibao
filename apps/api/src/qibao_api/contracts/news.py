@@ -120,6 +120,8 @@ class AIInterpretation(BaseModel):
     provider: NonBlank
     model: NonBlank
     prompt_version: NonBlank
+    latency_ms: int = Field(default=0, ge=0)
+    degraded: bool = False
     statements: tuple[InterpretationStatement, ...] = Field(min_length=1)
     citations: tuple[EvidenceCitation, ...] = ()
 
