@@ -135,6 +135,7 @@ class EastmoneyGlobalNewsSource:
             article_id = str(row.get("code") or content_hash[:24])
             url = str(row.get("url") or f"{EASTMONEY_GLOBAL_NEWS_URL}#{article_id}")
             title = str(row.get("title") or row.get("summary") or "").strip()
+            summary = str(row.get("summary") or "").strip() or None
             published_at = _parse_eastmoney_time(row.get("showTime"))
             articles.append(
                 NewsArticle(
@@ -142,6 +143,7 @@ class EastmoneyGlobalNewsSource:
                     canonical_url=url,
                     publisher="东方财富",
                     title=title,
+                    summary=summary,
                     published_at=published_at,
                     fetched_at=fetched_at,
                     content_hash=content_hash,

@@ -30,6 +30,7 @@ class NewsArticle(BaseModel):
     canonical_url: WebUrl
     publisher: NonBlank
     title: NonBlank
+    summary: str | None = None
     published_at: AwareDatetime
     fetched_at: AwareDatetime
     content_hash: Sha256

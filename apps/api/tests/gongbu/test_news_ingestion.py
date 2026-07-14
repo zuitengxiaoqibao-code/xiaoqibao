@@ -1,0 +1,67 @@
+from datetime import UTC, datetime
+
+import pytest
+
+from qibao_api.contracts.market import AssetKind
+from qibao_api.contracts.news import NewsArticle
+from qibao_api.gongbu.news_ingestion import NewsIngestionService
+from qibao_api.gongbu.news_linking import DeterministicNewsLinker
+from qibao_api.gongbu.news_repository import NewsRepository
+from qibao_api.libu_compliance.repository import ComplianceRepository
+from qibao_api.contracts.risk import ComplianceRecord
+
+
+NOW = datetime(2026, 7, 14, 1, 0, tzinfo=UTC)
+
+
+class Source:
+    async def fetch(self):
+        import hashlib
+
+        raw = b"600000 policy news"
+        return [NewsArticle(
+            article_id="news-1", canonical_url="https://news.example/1",
+            publisher="测试来源", title="600000获得支持政策",
+            summary="先进制造专项政策。", published_at=NOW, fetched_at=NOW,
+            content_hash=hashlib.sha256(raw).hexdigest(), raw_snapshot=raw,
+            source_verified=True,
+        )]
+
+
+def authorize(repository: ComplianceRepository) -> None:
+    repository.append_record(ComplianceRecord(
+        record_id="news-eastmoney", asset=AssetKind.A_SHARE, source="eastmoney",
+        permission_state="authorized", permission_reference="test",
+        disclaimer_version="2026-07", user_acknowledged_at=NOW, recorded_at=NOW,
+    ))
+
+
+@pytest.mark.asyncio
+async def test_ingestion_requires_authorization_and_persists_complete_chain(tmp_path) -> None:
+    compliance = ComplianceRepository(tmp_path / "compliance.sqlite3")
+    compliance.set_feature_sources("market_news", AssetKind.A_SHARE, ("eastmoney",))
+    repository = NewsRepository(tmp_path / "news.sqlite3")
+    service = NewsIngestionService(
+        Source(), repository,
+        DeterministicNewsLinker(
+            instrument_aliases={},
+            industry_keywords={"高端制造": ("先进制造",)},
+            theme_keywords={"政策支持": ("支持政策", "专项政策")},
+        ),
+        compliance,
+    )
+
+    with pytest.raises(Exception, match="eastmoney"):
+        await service.sync()
+
+    authorize(compliance)
+    result = await service.sync()
+
+    assert result == {"fetched": 1, "inserted": 1, "clusters": 1, "events": 1}
+    assert repository.articles()[0].article_id == "news-1"
+    assert repository.events()[0].affected_instruments == (
+        (AssetKind.A_SHARE, "600000"),
+    )
+    assert (await service.sync())["inserted"] == 0
+    repository.close()
+    compliance.close()

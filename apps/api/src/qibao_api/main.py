@@ -13,6 +13,10 @@ from qibao_api.convertible_bonds.adapters import EastmoneyBondValuationSource, E
 from qibao_api.convertible_bonds.repository import BondClauseRepository
 from qibao_api.convertible_bonds.service import ConvertibleBondService
 from qibao_api.convertible_bonds.diagnosis_repository import BondDiagnosisRepository
+from qibao_api.gongbu.news_collection import EastmoneyGlobalNewsSource
+from qibao_api.gongbu.news_ingestion import NewsIngestionService
+from qibao_api.gongbu.news_linking import DeterministicNewsLinker
+from qibao_api.gongbu.news_repository import NewsRepository
 from qibao_api.bingbu.paper_broker import PaperBroker
 from qibao_api.bingbu.paper_service import PaperTradingService
 from qibao_api.hubu.repository import PaperRepository
@@ -34,6 +38,7 @@ from qibao_api.routes.xingbu import router as xingbu_router
 from qibao_api.routes.libu import router as libu_router
 from qibao_api.routes.dongchang import router as dongchang_router
 from qibao_api.routes.convertible_bonds import router as convertible_bonds_router
+from qibao_api.routes.news import router as news_router
 
 
 @asynccontextmanager
@@ -53,9 +58,12 @@ async def lifespan(application: FastAPI):
     compliance.set_feature_sources("bond_quotes", "convertible_bond", ("tencent",))
     compliance.set_feature_sources("bond_clauses", "convertible_bond", ("eastmoney",))
     compliance.set_feature_sources("bond_valuations", "convertible_bond", ("eastmoney",))
+    compliance.set_feature_sources("market_news", "a_share", ("eastmoney",))
     bond_repository = BondClauseRepository(engine)
     bond_repository.initialize()
     diagnosis_repository = BondDiagnosisRepository(settings.data_dir / "bond-diagnoses.sqlite3")
+    news_repository = NewsRepository(settings.data_dir / "news.sqlite3")
+    application.state.news_repository = news_repository
     async with httpx.AsyncClient(timeout=10) as client:
         with httpx.Client(timeout=10) as history_client:
             history_sources = []
@@ -104,6 +112,28 @@ async def lifespan(application: FastAPI):
                 diagnosis_repository,
                 EastmoneyBondValuationSource(client=client),
             )
+            application.state.news_service = NewsIngestionService(
+                EastmoneyGlobalNewsSource(client=client),
+                news_repository,
+                DeterministicNewsLinker(
+                    instrument_aliases={},
+                    industry_keywords={
+                        "半导体": ("半导体", "芯片"),
+                        "人工智能": ("人工智能", "AI算力", "大模型"),
+                        "新能源": ("新能源", "光伏", "锂电"),
+                        "医药生物": ("创新药", "医疗器械", "医药"),
+                        "高端制造": ("先进制造", "工业母机", "机器人"),
+                    },
+                    theme_keywords={
+                        "政策支持": ("支持政策", "专项政策", "政策支持"),
+                        "业绩变化": ("业绩预增", "业绩预减", "业绩快报"),
+                        "并购重组": ("并购", "重组", "资产收购"),
+                        "股份回购": ("股份回购", "回购方案"),
+                        "风险事件": ("立案调查", "风险提示", "退市风险"),
+                    },
+                ),
+                compliance,
+            )
             paper_repository = PaperRepository(settings.data_dir / "paper.sqlite3")
             application.state.paper_repository = paper_repository
             application.state.paper_service = PaperTradingService(
@@ -116,6 +146,7 @@ async def lifespan(application: FastAPI):
                 paper_repository.close()
                 bond_repository.close()
                 diagnosis_repository.close()
+                news_repository.close()
                 compliance.close()
                 audit_repository.close()
     engine.dispose()
@@ -131,3 +162,4 @@ app.include_router(xingbu_router)
 app.include_router(libu_router)
 app.include_router(dongchang_router)
 app.include_router(convertible_bonds_router)
+app.include_router(news_router)

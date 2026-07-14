@@ -39,6 +39,7 @@ async def test_eastmoney_global_news_preserves_article_evidence() -> None:
 
     assert len(articles) == 1
     assert articles[0].publisher == "东方财富"
+    assert articles[0].summary == "有关部门发布支持政策。"
     assert articles[0].raw_snapshot
     assert articles[0].content_hash
     assert articles[0].source_verified is True

@@ -34,3 +34,11 @@ def get_audit_repository(request: Request) -> AuditFindingRepository:
 
 def get_bond_service(request: Request):
     return request.app.state.bond_service
+
+
+def get_news_service(request: Request):
+    return request.app.state.news_service
+
+
+def get_news_repository(request: Request):
+    return request.app.state.news_repository
