@@ -144,6 +144,34 @@ def test_forward_and_reverse_arrival_publish_identical_latest_revision() -> None
     assert revisions[0] != revisions[1]
 
 
+def test_source_none_returns_each_sources_latest_revision() -> None:
+    def licensed(raw: bytes, bond_code: str, fetched_at: datetime):
+        return parse_eastmoney_clause_bundle(
+            raw, requested_bond_code=bond_code, fetched_at=fetched_at
+        ).model_copy(update={"source": "licensed-feed"})
+
+    repository = ClauseRepository(
+        create_engine("sqlite+pysqlite:///:memory:"),
+        verifiers={("licensed-feed", "eastmoney-v2"): licensed},
+    )
+    repository.initialize()
+    repository.append(snapshot("9.87", 1))
+    repository.append(snapshot("9.66", 2))
+    repository.append(snapshot("8.50", 1, source="licensed-feed"))
+
+    assert {event.current_value for event in repository.list_events("113065")} == {
+        Decimal("9.87"),
+        Decimal("9.66"),
+        Decimal("8.50"),
+    }
+    revisions = repository.list_event_revisions("113065")
+    assert {(item.source, item.revision) for item in revisions} == {
+        ("eastmoney", 1),
+        ("eastmoney", 2),
+        ("licensed-feed", 1),
+    }
+
+
 def test_changed_conversion_price_appends_normalized_event() -> None:
     repository = ClauseRepository(create_engine("sqlite+pysqlite:///:memory:"))
     repository.initialize()
@@ -372,6 +400,12 @@ def test_initialize_migrates_218_schema_and_backfills_source(tmp_path) -> None:
         event_columns = connection.execute(text("PRAGMA table_info(bond_clause_events)")).all()
         assert {row[1]: row[3] for row in snapshot_columns}["parser_version"] == 1
         assert {row[1]: row[3] for row in event_columns}["source"] == 1
+
+    public = restarted.list_events("113065", source="eastmoney")
+    audit = restarted.list_event_revisions("113065", source="eastmoney")
+    assert len(public) == 1
+    assert any(revision.projection_kind == "legacy" for revision in audit)
+    assert audit[-1].projection_kind == "canonical"
 
 
 def test_two_repositories_can_initialize_same_legacy_database_concurrently(tmp_path) -> None:

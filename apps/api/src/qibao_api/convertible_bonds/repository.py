@@ -56,6 +56,7 @@ clause_events = Table(
     Column("bond_code", String(6), nullable=False, index=True),
     Column("source", String(32), nullable=False, index=True),
     Column("revision", Integer, nullable=False, index=True),
+    Column("projection_kind", String(16), nullable=False),
     Column("snapshot_id", ForeignKey("bond_clause_snapshots.id"), nullable=False),
     Column("from_snapshot_id", Integer),
     Column("event_key", String(128), nullable=False, unique=True),
@@ -75,6 +76,14 @@ class ClauseEvent(BaseModel):
     observed_at: datetime
 
 
+class EventRevision(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    source: str
+    revision: int
+    projection_kind: Literal["legacy", "canonical"]
+    events: tuple[ClauseEvent, ...]
+
+
 class ClauseRepository:
     def __init__(self, engine, *, verifiers=None) -> None:
         self.engine = engine
@@ -90,8 +99,14 @@ class ClauseRepository:
         with lock, self.engine.connect() as connection:
             connection.exec_driver_sql("BEGIN IMMEDIATE")
             metadata.create_all(connection)
-            self._migrate_legacy_schema(connection)
-            connection.exec_driver_sql("PRAGMA user_version = 5")
+            migrated = self._migrate_legacy_schema(connection)
+            if migrated:
+                groups = connection.execute(
+                    select(clause_snapshots.c.bond_code, clause_snapshots.c.source).distinct()
+                ).all()
+                for bond_code, source in groups:
+                    self._project_event_revision(connection, bond_code, source)
+            connection.exec_driver_sql("PRAGMA user_version = 6")
             for table_name in ("bond_clause_snapshots", "bond_clause_events"):
                 for operation in ("UPDATE", "DELETE"):
                     trigger = f"reject_{operation.lower()}_{table_name}"
@@ -106,14 +121,14 @@ class ClauseRepository:
                     )
             connection.commit()
 
-    def _migrate_legacy_schema(self, connection) -> None:
+    def _migrate_legacy_schema(self, connection) -> bool:
         for table_name in ("bond_clause_snapshots", "bond_clause_events"):
             for operation in ("update", "delete"):
                 connection.exec_driver_sql(
                     f"DROP TRIGGER IF EXISTS reject_{operation}_{table_name}"
                 )
-        if connection.exec_driver_sql("PRAGMA user_version").scalar() >= 5:
-            return
+        if connection.exec_driver_sql("PRAGMA user_version").scalar() >= 6:
+            return False
         snapshot_columns = {
             row[1] for row in connection.exec_driver_sql("PRAGMA table_info(bond_clause_snapshots)")
         }
@@ -158,13 +173,14 @@ class ClauseRepository:
         )
         connection.exec_driver_sql(f"""
             INSERT INTO bond_clause_events
-            (id,bond_code,source,revision,snapshot_id,from_snapshot_id,event_key,event_type,
+            (id,bond_code,source,revision,projection_kind,snapshot_id,from_snapshot_id,event_key,event_type,
              previous_value,current_value,observed_at)
-            SELECT id,bond_code,{source_expr},1,snapshot_id,NULL,'legacy:'||id,event_type,
+            SELECT id,bond_code,{source_expr},1,'legacy',snapshot_id,NULL,'legacy:'||id,event_type,
                    previous_value,current_value,observed_at FROM events_v3
         """)
         connection.exec_driver_sql("DROP TABLE events_v3")
         connection.exec_driver_sql("DROP TABLE snapshots_v3")
+        return True
 
     def append(self, snapshot: BondClauseSnapshot) -> int:
         computed_hash = hashlib.sha256(snapshot.raw_payload).hexdigest()
@@ -267,6 +283,7 @@ class ClauseRepository:
                     bond_code=bond_code,
                     source=source,
                     revision=revision,
+                    projection_kind="canonical",
                     snapshot_id=current["id"],
                     from_snapshot_id=previous["id"] if changed else None,
                     event_key=event_key,
@@ -303,9 +320,30 @@ class ClauseRepository:
         return self.list_events(bond_code, source=source)
 
     def list_events(self, bond_code: str, *, source: str | None = None) -> list[ClauseEvent]:
-        statement = select(clause_events).where(clause_events.c.bond_code == bond_code)
-        if source is not None:
-            statement = statement.where(clause_events.c.source == source)
+        if source is None:
+            with self.engine.connect() as connection:
+                sources = (
+                    connection.execute(
+                        select(clause_events.c.source)
+                        .where(
+                            clause_events.c.bond_code == bond_code,
+                            clause_events.c.projection_kind == "canonical",
+                        )
+                        .distinct()
+                    )
+                    .scalars()
+                    .all()
+                )
+            return [
+                event
+                for item_source in sorted(sources)
+                for event in self.list_events(bond_code, source=item_source)
+            ]
+        statement = select(clause_events).where(
+            clause_events.c.bond_code == bond_code,
+            clause_events.c.source == source,
+            clause_events.c.projection_kind == "canonical",
+        )
         with self.engine.connect() as connection:
             revision = connection.execute(
                 select(clause_events.c.revision)
@@ -331,22 +369,37 @@ class ClauseRepository:
 
     def list_event_revisions(
         self, bond_code: str, *, source: str | None = None
-    ) -> list[list[ClauseEvent]]:
-        statement = select(clause_events.c.revision).where(clause_events.c.bond_code == bond_code)
+    ) -> list[EventRevision]:
+        statement = select(
+            clause_events.c.source,
+            clause_events.c.revision,
+            clause_events.c.projection_kind,
+        ).where(clause_events.c.bond_code == bond_code)
         if source is not None:
             statement = statement.where(clause_events.c.source == source)
         with self.engine.connect() as connection:
-            revisions = (
-                connection.execute(statement.distinct().order_by(clause_events.c.revision))
-                .scalars()
-                .all()
+            revisions = connection.execute(
+                statement.distinct().order_by(
+                    clause_events.c.source,
+                    clause_events.c.revision,
+                    clause_events.c.projection_kind,
+                )
+            ).all()
+        return [
+            EventRevision(
+                source=item_source,
+                revision=revision,
+                projection_kind=kind,
+                events=tuple(self._events_for_revision(bond_code, item_source, revision, kind)),
             )
-        return [self._events_for_revision(bond_code, source, revision) for revision in revisions]
+            for item_source, revision, kind in revisions
+        ]
 
-    def _events_for_revision(self, bond_code, source, revision):
+    def _events_for_revision(self, bond_code, source, revision, kind):
         statement = select(clause_events).where(
             clause_events.c.bond_code == bond_code,
             clause_events.c.revision == revision,
+            clause_events.c.projection_kind == kind,
         )
         if source is not None:
             statement = statement.where(clause_events.c.source == source)
