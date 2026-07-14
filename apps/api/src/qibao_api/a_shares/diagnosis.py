@@ -149,6 +149,8 @@ class AShareDiagnosisService:
     ) -> tuple[TencentMarketSnapshot | None, str | None]:
         try:
             snapshot = await self.market_source.fetch_snapshot(symbol)
+            if snapshot.symbol != symbol:
+                return None, "market snapshot symbol differs from requested symbol"
             if snapshot.observed_at.date() > as_of:
                 return None, "market snapshot is later than diagnosis as_of"
             return snapshot, None
@@ -160,8 +162,12 @@ class AShareDiagnosisService:
     ) -> tuple[FundamentalSnapshot | None, str | None]:
         try:
             snapshot = await asyncio.to_thread(self.finance_source.fetch, symbol)
+            if snapshot.symbol != symbol:
+                return None, "finance snapshot symbol differs from requested symbol"
             if snapshot.observed_at.date() > as_of:
                 return None, "finance snapshot is later than diagnosis as_of"
+            if snapshot.report_period is not None and snapshot.report_period > as_of:
+                return None, "finance report period is later than diagnosis as_of"
             return snapshot, None
         except Exception as error:
             return None, str(error)
@@ -195,7 +201,7 @@ class AShareDiagnosisService:
         sections: dict[str, DiagnosisSection] = {}
         sections["market"] = self._market_section(market, market_error)
         sections["valuation"] = self._valuation_section(market, market_error)
-        sections.update(self._bar_sections(bars, as_of))
+        sections.update(self._bar_sections(symbol, bars, as_of))
         sections["fundamentals"] = self._fundamental_section(finance, finance_error)
         sections.update(self._event_sections(events, news_error))
         risk_missing = [name for name, section in sections.items() if section.status == "unavailable"]
@@ -249,27 +255,47 @@ class AShareDiagnosisService:
         )
 
     @staticmethod
-    def _bar_sections(bars: list[DailyBar], as_of: date) -> dict[str, DiagnosisSection]:
-        if len(bars) < 20:
+    def _bar_sections(
+        symbol: str, bars: list[DailyBar], as_of: date
+    ) -> dict[str, DiagnosisSection]:
+        eligible = sorted(
+            (bar for bar in bars if bar.trade_date <= as_of),
+            key=lambda bar: bar.trade_date,
+        )
+        if len(eligible) < 20:
             unavailable = _unavailable("local-daily-bars", "本地日线不足 20 根。")
             return {"price_volume": unavailable, "trend": unavailable}
-        latest = bars[-1]
+        if {bar.symbol for bar in eligible} != {symbol}:
+            unavailable = _unavailable("local-daily-bars", "本地日线股票代码不一致。")
+            return {"price_volume": unavailable, "trend": unavailable}
+        if len({bar.trade_date for bar in eligible}) != len(eligible):
+            unavailable = _unavailable("local-daily-bars", "本地日线包含重复交易日。")
+            return {"price_volume": unavailable, "trend": unavailable}
+        if len({bar.source for bar in eligible}) != 1:
+            unavailable = _unavailable("local-daily-bars", "本地日线来源不一致。")
+            return {"price_volume": unavailable, "trend": unavailable}
+        latest = eligible[-1]
         average_amount = sum(
-            (bar.amount for bar in bars[-20:]), start=Decimal("0")
+            (bar.amount for bar in eligible[-20:]), start=Decimal("0")
         ) / Decimal("20")
-        average_volume = sum(bar.volume for bar in bars[-20:]) / 20
+        average_volume = sum(
+            (Decimal(bar.volume) for bar in eligible[-20:]), start=Decimal("0")
+        ) / Decimal("20")
+        volume_ratio = (
+            Decimal(latest.volume) / average_volume if average_volume > 0 else None
+        )
         price_volume = DiagnosisSection(
             status="ready", observed_at=latest.trade_date, source=latest.source,
             metrics={
                 "close": latest.close,
-                "return_5d": latest.close / bars[-6].close - Decimal("1"),
+                "return_5d": latest.close / eligible[-6].close - Decimal("1"),
                 "average_amount_20d": average_amount,
-                "volume_ratio": Decimal(str(latest.volume / average_volume)),
+                "volume_ratio": volume_ratio,
             },
             explanation="量价指标来自本地已冻结日线。",
         )
         try:
-            factor = build_factor_snapshot(bars, as_of)
+            factor = build_factor_snapshot(eligible, as_of)
         except (InsufficientHistoryError, ValueError) as error:
             trend = _unavailable("local-daily-bars", f"趋势计算不可用：{error}")
         else:
@@ -291,9 +317,20 @@ class AShareDiagnosisService:
     ) -> DiagnosisSection:
         if finance is None:
             return _unavailable("mootdx-finance", f"基本面数据不可用：{error}")
+        financial_values = [
+            finance.eps, finance.roe, finance.net_profit, finance.revenue,
+            finance.book_value_per_share, finance.total_shares,
+        ]
+        if not any(value is not None for value in financial_values):
+            return _unavailable("mootdx-finance", "通达信未返回可用基本面字段。")
         return DiagnosisSection(
             status="ready", observed_at=finance.observed_at, source=finance.source,
             metrics={
+                "report_period": (
+                    finance.report_period.isoformat()
+                    if finance.report_period is not None else None
+                ),
+                "industry": finance.industry,
                 "eps": finance.eps, "roe": finance.roe,
                 "net_profit": finance.net_profit, "revenue": finance.revenue,
                 "book_value_per_share": finance.book_value_per_share,

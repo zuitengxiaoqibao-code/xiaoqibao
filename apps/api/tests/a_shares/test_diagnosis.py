@@ -109,6 +109,12 @@ class FutureMarket(FakeMarket):
         return current.model_copy(update={"observed_at": datetime(2026, 7, 15, 10, 30)})
 
 
+class WrongSymbolMarket(FakeMarket):
+    async def fetch_snapshot(self, symbol: str) -> TencentMarketSnapshot:
+        current = await super().fetch_snapshot(symbol)
+        return current.model_copy(update={"symbol": "000001"})
+
+
 @pytest.mark.asyncio
 async def test_diagnosis_keeps_local_analysis_when_fundamentals_fail() -> None:
     service = AShareDiagnosisService(
@@ -181,3 +187,49 @@ def test_candidates_expose_invalid_history_without_failing_other_symbols() -> No
     assert [item.symbol for item in board.short_term] == ["600000"]
     assert board.exclusions[0].symbol == "000001"
     assert board.exclusions[0].reason_code == "invalid_history"
+
+
+@pytest.mark.asyncio
+async def test_zero_volume_history_does_not_abort_other_diagnosis_sections() -> None:
+    zero_volume = [
+        bar.model_copy(update={"volume": 0, "amount": Decimal("0")})
+        for bar in bars()
+    ]
+    service = AShareDiagnosisService(
+        bar_repository=FakeBars({"600000": zero_volume}), market_source=FakeMarket(),
+        finance_source=FailingFinance(), news_repository=EmptyNews(),
+    )
+
+    result = await service.diagnose("600000", AS_OF)
+
+    assert result.sections["market"].status == "ready"
+    assert result.sections["trend"].status == "ready"
+    assert result.sections["price_volume"].status == "ready"
+    assert result.sections["price_volume"].metrics["volume_ratio"] is None
+
+
+@pytest.mark.asyncio
+async def test_market_snapshot_must_match_requested_symbol() -> None:
+    service = AShareDiagnosisService(
+        bar_repository=FakeBars({"600000": bars()}), market_source=WrongSymbolMarket(),
+        finance_source=FailingFinance(), news_repository=EmptyNews(),
+    )
+
+    result = await service.diagnose("600000", AS_OF)
+
+    assert result.sections["market"].status == "unavailable"
+    assert result.sections["valuation"].status == "unavailable"
+
+
+@pytest.mark.asyncio
+async def test_price_volume_sorts_and_validates_repository_bars() -> None:
+    descending = list(reversed(bars()))
+    service = AShareDiagnosisService(
+        bar_repository=FakeBars({"600000": descending}), market_source=FakeMarket(),
+        finance_source=FailingFinance(), news_repository=EmptyNews(),
+    )
+
+    result = await service.diagnose("600000", AS_OF)
+
+    assert result.sections["price_volume"].metrics["close"] == bars()[-1].close
+    assert result.sections["trend"].status == "ready"

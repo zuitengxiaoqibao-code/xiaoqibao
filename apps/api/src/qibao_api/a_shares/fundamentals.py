@@ -1,5 +1,5 @@
 from collections.abc import Callable, Mapping
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from math import isfinite
 from typing import Any
@@ -14,6 +14,8 @@ class FundamentalSnapshot(BaseModel):
 
     symbol: str = Field(pattern=r"^\d{6}$")
     observed_at: datetime
+    report_period: date | None = None
+    industry: str | None = None
     eps: Decimal | None = None
     roe: Decimal | None = None
     net_profit: Decimal | None = None
@@ -35,20 +37,46 @@ def _decimal_or_none(value: Any) -> Decimal | None:
     return parsed if parsed.is_finite() else None
 
 
+def _date_or_none(value: Any) -> date | None:
+    text = str(value or "").strip()
+    if len(text) != 8 or not text.isdigit() or text == "00000000":
+        return None
+    try:
+        return datetime.strptime(text, "%Y%m%d").date()
+    except ValueError:
+        return None
+
+
 def parse_tdx_finance(
     payload: Mapping[str, Any],
     symbol: str,
     observed_at: datetime,
 ) -> FundamentalSnapshot:
+    net_profit = _decimal_or_none(payload.get("jinglirun"))
+    revenue = _decimal_or_none(payload.get("zhuyingshouru"))
+    net_assets = _decimal_or_none(payload.get("jingzichan"))
+    total_shares = _decimal_or_none(payload.get("zongguben"))
+    eps = (
+        net_profit / total_shares
+        if net_profit is not None and total_shares is not None and total_shares > 0
+        else None
+    )
+    roe = (
+        net_profit / net_assets * Decimal("100")
+        if net_profit is not None and net_assets is not None and net_assets > 0
+        else None
+    )
     return FundamentalSnapshot(
         symbol=symbol,
         observed_at=observed_at,
-        eps=_decimal_or_none(payload.get("eps")),
-        roe=_decimal_or_none(payload.get("roe")),
-        net_profit=_decimal_or_none(payload.get("profit")),
-        revenue=_decimal_or_none(payload.get("income")),
-        book_value_per_share=_decimal_or_none(payload.get("bvps")),
-        total_shares=_decimal_or_none(payload.get("zongguben")),
+        report_period=_date_or_none(payload.get("updated_date")),
+        industry=str(payload.get("industry") or "").strip() or None,
+        eps=eps,
+        roe=roe,
+        net_profit=net_profit,
+        revenue=revenue,
+        book_value_per_share=_decimal_or_none(payload.get("meigujingzichan")),
+        total_shares=total_shares,
         source="mootdx-finance",
     )
 
