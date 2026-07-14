@@ -18,7 +18,7 @@ CHINA_TZ = timezone(timedelta(hours=8))
 EASTMONEY_ENDPOINT = "https://datacenter-web.eastmoney.com/api/data/v1/get"
 CB_LIST_REPORT = "RPT_BOND_CB_LIST"
 BS_INFO_REPORT = "RPT_BOND_BS_INFO"
-EASTMONEY_PARSER_VERSION = "eastmoney-dual-v1"
+EASTMONEY_PARSER_VERSION = "eastmoney-v2"
 
 
 @dataclass(frozen=True)

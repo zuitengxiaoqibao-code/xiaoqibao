@@ -1,5 +1,4 @@
 import hashlib
-import json
 import threading
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -41,7 +40,13 @@ clause_snapshots = Table(
     Column("raw_payload", LargeBinary, nullable=False),
     Column("normalized_payload", JSON, nullable=False),
     Column("parser_version", String(64), nullable=False),
-    UniqueConstraint("bond_code", "source", "content_hash", name="uq_bond_clause_content"),
+    UniqueConstraint(
+        "bond_code",
+        "source",
+        "content_hash",
+        "parser_version",
+        name="uq_bond_clause_content_parser",
+    ),
 )
 
 clause_events = Table(
@@ -50,7 +55,9 @@ clause_events = Table(
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("bond_code", String(6), nullable=False, index=True),
     Column("source", String(32), nullable=False, index=True),
-    Column("snapshot_id", ForeignKey("bond_clause_snapshots.id"), nullable=False, unique=True),
+    Column("snapshot_id", ForeignKey("bond_clause_snapshots.id"), nullable=False),
+    Column("from_snapshot_id", Integer),
+    Column("event_key", String(128), nullable=False, unique=True),
     Column("event_type", String(32), nullable=False),
     Column("previous_value", String(64)),
     Column("current_value", String(64), nullable=False),
@@ -69,13 +76,22 @@ class ClauseEvent(BaseModel):
 
 
 class ClauseRepository:
-    def __init__(self, engine) -> None:
+    def __init__(self, engine, *, verifiers=None) -> None:
         self.engine = engine
+        self.verifiers = {
+            ("eastmoney", "eastmoney-v2"): lambda raw, code, when: (
+                parse_eastmoney_clause_bundle(raw, requested_bond_code=code, fetched_at=when)
+            )
+        }
+        self.verifiers.update(verifiers or {})
 
     def initialize(self) -> None:
-        metadata.create_all(self.engine)
-        with self.engine.begin() as connection:
+        lock = _database_lock(str(self.engine.url))
+        with lock, self.engine.connect() as connection:
+            connection.exec_driver_sql("BEGIN IMMEDIATE")
+            metadata.create_all(connection)
             self._migrate_legacy_schema(connection)
+            connection.exec_driver_sql("PRAGMA user_version = 4")
             for table_name in ("bond_clause_snapshots", "bond_clause_events"):
                 for operation in ("UPDATE", "DELETE"):
                     trigger = f"reject_{operation.lower()}_{table_name}"
@@ -88,58 +104,77 @@ class ClauseRepository:
                         END
                     """)
                     )
+            connection.commit()
 
     def _migrate_legacy_schema(self, connection) -> None:
+        for table_name in ("bond_clause_snapshots", "bond_clause_events"):
+            for operation in ("update", "delete"):
+                connection.exec_driver_sql(
+                    f"DROP TRIGGER IF EXISTS reject_{operation}_{table_name}"
+                )
+        if connection.exec_driver_sql("PRAGMA user_version").scalar() >= 4:
+            return
         snapshot_columns = {
             row[1] for row in connection.exec_driver_sql("PRAGMA table_info(bond_clause_snapshots)")
         }
         event_columns = {
             row[1] for row in connection.exec_driver_sql("PRAGMA table_info(bond_clause_events)")
         }
-        for table_name in ("bond_clause_snapshots", "bond_clause_events"):
-            for operation in ("update", "delete"):
-                connection.exec_driver_sql(
-                    f"DROP TRIGGER IF EXISTS reject_{operation}_{table_name}"
-                )
-        if "parser_version" not in snapshot_columns:
-            connection.exec_driver_sql(
-                "ALTER TABLE bond_clause_snapshots "
-                "ADD COLUMN parser_version VARCHAR(64) NOT NULL DEFAULT 'legacy-v1'"
-            )
-        if "source" not in event_columns:
-            connection.exec_driver_sql(
-                "ALTER TABLE bond_clause_events ADD COLUMN source VARCHAR(32)"
-            )
-            connection.exec_driver_sql("""
-                UPDATE bond_clause_events
-                SET source = (
-                    SELECT source FROM bond_clause_snapshots
-                    WHERE bond_clause_snapshots.id = bond_clause_events.snapshot_id
-                )
-            """)
-        legacy_rows = connection.exec_driver_sql(
-            "SELECT id, raw_payload FROM bond_clause_snapshots WHERE typeof(raw_payload) != 'blob'"
+        connection.exec_driver_sql("ALTER TABLE bond_clause_snapshots RENAME TO snapshots_v3")
+        connection.exec_driver_sql("ALTER TABLE bond_clause_events RENAME TO events_v3")
+        for index_name in (
+            "ix_bond_clause_snapshots_bond_code",
+            "ix_bond_clause_snapshots_fetched_at",
+            "ix_bond_clause_events_bond_code",
+            "ix_bond_clause_events_source",
+        ):
+            connection.exec_driver_sql(f"DROP INDEX IF EXISTS {index_name}")
+        metadata.create_all(connection)
+        parser_expr = "parser_version" if "parser_version" in snapshot_columns else "'legacy-v1'"
+        rows = connection.exec_driver_sql(
+            f"SELECT id,bond_code,source,fetched_at,raw_payload,normalized_payload,{parser_expr} "
+            "FROM snapshots_v3"
         ).all()
-        for row_id, raw_payload in legacy_rows:
-            raw_bytes = (
-                raw_payload.encode("utf-8")
-                if isinstance(raw_payload, str)
-                else json.dumps(raw_payload, sort_keys=True).encode("utf-8")
-            )
+        for row in rows:
+            raw = row[4] if isinstance(row[4], bytes) else str(row[4]).encode("utf-8")
             connection.exec_driver_sql(
-                "UPDATE bond_clause_snapshots SET raw_payload=?, content_hash=? WHERE id=?",
-                (raw_bytes, hashlib.sha256(raw_bytes).hexdigest(), row_id),
+                "INSERT INTO bond_clause_snapshots VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    row[0],
+                    row[1],
+                    row[2],
+                    row[3],
+                    hashlib.sha256(raw).hexdigest(),
+                    raw,
+                    row[5],
+                    row[6],
+                ),
             )
+        source_expr = (
+            "source"
+            if "source" in event_columns
+            else "(SELECT source FROM snapshots_v3 WHERE snapshots_v3.id=events_v3.snapshot_id)"
+        )
+        connection.exec_driver_sql(f"""
+            INSERT INTO bond_clause_events
+            (id,bond_code,source,snapshot_id,from_snapshot_id,event_key,event_type,
+             previous_value,current_value,observed_at)
+            SELECT id,bond_code,{source_expr},snapshot_id,NULL,'legacy:'||id,event_type,
+                   previous_value,current_value,observed_at FROM events_v3
+        """)
+        connection.exec_driver_sql("DROP TABLE events_v3")
+        connection.exec_driver_sql("DROP TABLE snapshots_v3")
 
     def append(self, snapshot: BondClauseSnapshot) -> int:
         computed_hash = hashlib.sha256(snapshot.raw_payload).hexdigest()
         if snapshot.content_hash != computed_hash:
             raise ValueError("clause snapshot content hash does not match raw payload")
         if snapshot.parser_version != "legacy-v1":
-            reparsed = parse_eastmoney_clause_bundle(
-                snapshot.raw_payload,
-                requested_bond_code=snapshot.contract.bond_code,
-                fetched_at=snapshot.fetched_at,
+            verifier = self.verifiers.get((snapshot.source, snapshot.parser_version))
+            if verifier is None:
+                raise ValueError("no verifier registered for source/parser version")
+            reparsed = verifier(
+                snapshot.raw_payload, snapshot.contract.bond_code, snapshot.fetched_at
             )
             if _contract_identity(reparsed.contract) != _contract_identity(snapshot.contract):
                 raise ValueError("normalized contract does not match raw clause reports")
@@ -162,24 +197,7 @@ class ClauseRepository:
     def _append_in_transaction(
         self, connection, snapshot, computed_hash, observed_at, contract_payload
     ) -> int:
-        previous = (
-            connection.execute(
-                select(
-                    clause_snapshots.c.fetched_at,
-                    clause_snapshots.c.normalized_payload,
-                )
-                .where(
-                    clause_snapshots.c.bond_code == snapshot.contract.bond_code,
-                    clause_snapshots.c.source == snapshot.source,
-                )
-                .order_by(clause_snapshots.c.fetched_at.desc(), clause_snapshots.c.id.desc())
-                .limit(1)
-            )
-            .mappings()
-            .one_or_none()
-        )
-
-        result = connection.execute(
+        connection.execute(
             sqlite_insert(clause_snapshots)
             .values(
                 bond_code=snapshot.contract.bond_code,
@@ -190,46 +208,61 @@ class ClauseRepository:
                 normalized_payload=contract_payload,
                 parser_version=snapshot.parser_version,
             )
-            .on_conflict_do_nothing(index_elements=["bond_code", "source", "content_hash"])
+            .on_conflict_do_nothing(
+                index_elements=["bond_code", "source", "content_hash", "parser_version"]
+            )
         )
         snapshot_id = connection.execute(
             select(clause_snapshots.c.id).where(
                 clause_snapshots.c.bond_code == snapshot.contract.bond_code,
                 clause_snapshots.c.source == snapshot.source,
                 clause_snapshots.c.content_hash == computed_hash,
+                clause_snapshots.c.parser_version == snapshot.parser_version,
             )
         ).scalar_one()
-        if result.rowcount == 0:
-            return snapshot_id
-
-        if previous is not None and previous["fetched_at"] > observed_at:
-            return snapshot_id
-
-        previous_price = (
-            Decimal(previous["normalized_payload"]["conversion_price"])
-            if previous is not None
-            else None
-        )
-        current_price = snapshot.contract.conversion_price
-        event_type = (
-            "conversion_price_changed"
-            if previous_price is not None and previous_price != current_price
-            else "terms_observed"
-        )
-        connection.execute(
-            sqlite_insert(clause_events)
-            .values(
-                bond_code=snapshot.contract.bond_code,
-                source=snapshot.source,
-                snapshot_id=snapshot_id,
-                event_type=event_type,
-                previous_value=_decimal_text(previous_price),
-                current_value=_decimal_text(current_price),
-                observed_at=observed_at,
-            )
-            .on_conflict_do_nothing(index_elements=["snapshot_id"])
-        )
+        self._derive_missing_events(connection, snapshot.contract.bond_code, snapshot.source)
         return snapshot_id
+
+    def _derive_missing_events(self, connection, bond_code: str, source: str) -> None:
+        rows = (
+            connection.execute(
+                select(clause_snapshots)
+                .where(
+                    clause_snapshots.c.bond_code == bond_code,
+                    clause_snapshots.c.source == source,
+                )
+                .order_by(clause_snapshots.c.fetched_at, clause_snapshots.c.id)
+            )
+            .mappings()
+            .all()
+        )
+        for index, current in enumerate(rows):
+            previous = rows[index - 1] if index else None
+            previous_price = (
+                Decimal(previous["normalized_payload"]["conversion_price"]) if previous else None
+            )
+            current_price = Decimal(current["normalized_payload"]["conversion_price"])
+            changed = previous_price is not None and previous_price != current_price
+            event_key = (
+                f"change:{previous['id']}:{current['id']}"
+                if changed
+                else f"observed:{current['id']}"
+            )
+            connection.execute(
+                sqlite_insert(clause_events)
+                .values(
+                    bond_code=bond_code,
+                    source=source,
+                    snapshot_id=current["id"],
+                    from_snapshot_id=previous["id"] if changed else None,
+                    event_key=event_key,
+                    event_type="conversion_price_changed" if changed else "terms_observed",
+                    previous_value=_decimal_text(previous_price),
+                    current_value=_decimal_text(current_price),
+                    observed_at=current["fetched_at"],
+                )
+                .on_conflict_do_nothing(index_elements=["event_key"])
+            )
 
     def snapshots(self, bond_code: str) -> list[BondClauseSnapshot]:
         statement = (
