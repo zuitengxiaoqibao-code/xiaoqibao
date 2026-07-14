@@ -6,7 +6,7 @@ export type BondDiagnosis = {
   clause_snapshot: { source: string; fetched_at: string; conversion_price: string; maturity: string; remaining_size: string };
   metrics: { conversion_value: string | null; conversion_premium: string | null; pure_bond_premium: string | null; remaining_term: { days: number } };
   risk: { outcome: string; unknowns: string[]; explanations: string[] };
-  strong_redemption: { state: string; clause_text: string; source: string; observed_at: string };
+  strong_redemption: { state: string; clause_text: string | null; source: string; observed_at: string };
 };
 
 export type BondDashboard = { status: "ready" | "empty"; bond_count: number; bond_codes: string[] };

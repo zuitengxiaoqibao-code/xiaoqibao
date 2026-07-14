@@ -12,6 +12,7 @@ from qibao_api.gongbu.tencent_quotes import TencentQuoteSource
 from qibao_api.convertible_bonds.adapters import EastmoneyClauseSource, TencentBondQuoteSource
 from qibao_api.convertible_bonds.repository import BondClauseRepository
 from qibao_api.convertible_bonds.service import ConvertibleBondService
+from qibao_api.convertible_bonds.diagnosis_repository import BondDiagnosisRepository
 from qibao_api.bingbu.paper_broker import PaperBroker
 from qibao_api.bingbu.paper_service import PaperTradingService
 from qibao_api.hubu.repository import PaperRepository
@@ -53,6 +54,7 @@ async def lifespan(application: FastAPI):
     compliance.set_feature_sources("bond_clauses", "convertible_bond", ("eastmoney",))
     bond_repository = BondClauseRepository(engine)
     bond_repository.initialize()
+    diagnosis_repository = BondDiagnosisRepository(settings.data_dir / "bond-diagnoses.sqlite3")
     async with httpx.AsyncClient(timeout=10) as client:
         with httpx.Client(timeout=10) as history_client:
             history_sources = []
@@ -98,6 +100,7 @@ async def lifespan(application: FastAPI):
             application.state.bond_service = ConvertibleBondService(
                 TencentBondQuoteSource(client), EastmoneyClauseSource(client=client),
                 TencentQuoteSource(client), bond_repository, compliance,
+                diagnosis_repository,
             )
             paper_repository = PaperRepository(settings.data_dir / "paper.sqlite3")
             application.state.paper_repository = paper_repository
@@ -110,6 +113,7 @@ async def lifespan(application: FastAPI):
             finally:
                 paper_repository.close()
                 bond_repository.close()
+                diagnosis_repository.close()
                 compliance.close()
                 audit_repository.close()
     engine.dispose()

@@ -1,9 +1,11 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
+import httpx
 
 from qibao_api.dependencies import get_bond_service
 from qibao_api.libu_compliance.repository import SourceAuthorizationError
+from qibao_api.convertible_bonds.adapters import ClauseDataUnavailable
 
 
 router = APIRouter(prefix="/api/v1/convertible-bonds", tags=["可转债"])
@@ -32,3 +34,9 @@ async def diagnosis(bond_code: str, service: Annotated[object, Depends(get_bond_
         return await service.diagnose(bond_code)
     except SourceAuthorizationError as error:
         raise HTTPException(status_code=403, detail=_authorization_detail(error)) from error
+    except ClauseDataUnavailable as error:
+        raise HTTPException(status_code=404, detail={"code": "clauses_unavailable", "message": "未查询到可转债条款数据"}) from error
+    except httpx.HTTPError as error:
+        raise HTTPException(status_code=502, detail={"code": "upstream_unavailable", "message": "上游数据源暂不可用"}) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail={"code": "invalid_provider_data", "message": "上游数据格式无法验证"}) from error

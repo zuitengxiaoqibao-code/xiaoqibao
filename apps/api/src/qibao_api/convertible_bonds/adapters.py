@@ -12,7 +12,7 @@ import httpx
 from qibao_api.contracts.convertible_bond import ClauseDates, ConvertibleBondContract
 from qibao_api.contracts.instruments import validate_convertible_bond_code
 from qibao_api.contracts.market import DataQuality
-from qibao_api.convertible_bonds.models import BondClauseSnapshot, BondQuote
+from qibao_api.convertible_bonds.models import BondClauseSnapshot, BondQuote, StrongRedemptionEvidence
 
 CHINA_TZ = timezone(timedelta(hours=8))
 EASTMONEY_ENDPOINT = "https://datacenter-web.eastmoney.com/api/data/v1/get"
@@ -28,6 +28,10 @@ class RawHttpResponse:
 
 
 ClauseTransport = Callable[[str, dict[str, str]], Awaitable[RawHttpResponse]]
+
+
+class ClauseDataUnavailable(LookupError):
+    pass
 
 
 def _bond_market_prefix(code: str) -> str:
@@ -115,6 +119,7 @@ def parse_eastmoney_clause_payloads(
         as_of=fetched_at,
     )
     raw_payload = pack_raw_reports(reports)
+    evidence = _strong_redemption_evidence(cb_row, bs_row, fetched_at)
     return BondClauseSnapshot(
         contract=contract,
         raw_payload=raw_payload,
@@ -122,6 +127,7 @@ def parse_eastmoney_clause_payloads(
         source="eastmoney",
         fetched_at=fetched_at,
         parser_version=EASTMONEY_PARSER_VERSION,
+        strong_redemption=evidence,
     )
 
 
@@ -139,9 +145,40 @@ def _provider_row(raw_payload: bytes, report: str) -> dict[str, Any]:
     try:
         response = json.loads(raw_payload.decode("utf-8"))
         rows = response["result"]["data"]
+        if not rows:
+            raise ClauseDataUnavailable(f"Eastmoney {report} has no clause rows")
         return rows[0]
+    except ClauseDataUnavailable:
+        raise
     except (UnicodeDecodeError, json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
         raise ValueError(f"Eastmoney {report} response is incomplete") from exc
+
+
+def _strong_redemption_evidence(cb_row: dict[str, Any], bs_row: dict[str, Any], fetched_at: datetime) -> StrongRedemptionEvidence:
+    fields = {}
+    for row in (cb_row, bs_row):
+        for key, raw in row.items():
+            if key == "IS_REDEEM" or key.startswith(("NOTICE_DATE_", "EXECUTE_START_DATE", "EXECUTE_END_DATE", "EXECUTE_REASON_")):
+                if raw not in (None, "", "0"):
+                    fields[key] = str(raw)
+    clause_present = bool(cb_row.get("REDEEM_CLAUSE") or bs_row.get("REDEEM_CLAUSE"))
+    enabled = str(cb_row.get("IS_REDEEM") or bs_row.get("IS_REDEEM") or "0") in {"1", "Y", "true", "True"}
+    notice = any(key.startswith("NOTICE_DATE_") for key in fields)
+    starts = [value for key, value in fields.items() if key.startswith("EXECUTE_START_DATE")]
+    ends = [value for key, value in fields.items() if key.startswith("EXECUTE_END_DATE")]
+    today = fetched_at.date()
+    if enabled and ends and date.fromisoformat(ends[0].split(" ")[0]) < today:
+        state = "completed"
+    elif enabled and notice:
+        state = "announced"
+    elif enabled and (starts or any(key.startswith("EXECUTE_REASON_") for key in fields)):
+        state = "triggered"
+    else:
+        state = "unknown"
+        fields = {}
+    clause_text = cb_row.get("REDEEM_CLAUSE") or bs_row.get("REDEEM_CLAUSE")
+    return StrongRedemptionEvidence(state=state, clause_present=clause_present,
+                                    evidence_fields=fields, clause_text=clause_text)
 
 
 def _required(payload: dict[str, Any], field: str) -> str:

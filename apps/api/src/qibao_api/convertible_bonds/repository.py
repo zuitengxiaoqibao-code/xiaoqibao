@@ -198,6 +198,7 @@ class ClauseRepository:
 
         observed_at = _utc_iso(snapshot.fetched_at)
         contract_payload = snapshot.contract.model_dump(mode="json")
+        contract_payload["__strong_redemption"] = snapshot.strong_redemption.model_dump(mode="json")
         lock = _database_lock(str(self.engine.url))
         with lock, self.engine.connect() as connection:
             connection.exec_driver_sql("BEGIN IMMEDIATE")
@@ -433,13 +434,16 @@ class ClauseRepository:
 
     @staticmethod
     def _snapshot_from_row(row) -> BondClauseSnapshot:
+        payload = dict(row["normalized_payload"])
+        evidence = payload.pop("__strong_redemption", {})
         return BondClauseSnapshot(
-            contract=ConvertibleBondContract.model_validate(row["normalized_payload"]),
+            contract=ConvertibleBondContract.model_validate(payload),
             raw_payload=bytes(row["raw_payload"]),
             content_hash=row["content_hash"],
             source=row["source"],
             fetched_at=datetime.fromisoformat(row["fetched_at"]),
             parser_version=row["parser_version"],
+            strong_redemption=evidence,
         )
 
 

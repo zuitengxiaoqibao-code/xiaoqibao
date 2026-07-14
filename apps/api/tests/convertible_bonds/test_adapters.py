@@ -13,6 +13,7 @@ from qibao_api.convertible_bonds.adapters import (
     RawHttpResponse,
     TencentBondQuoteSource,
     unpack_raw_reports,
+    ClauseDataUnavailable,
 )
 
 
@@ -139,3 +140,34 @@ async def test_eastmoney_rejects_status_missing_fields_and_code_mismatch() -> No
 
     with pytest.raises(ValueError, match="CONVERT_STOCK_CODE"):
         await EastmoneyClauseSource(transport=missing).fetch("113065")
+
+
+@pytest.mark.asyncio
+async def test_eastmoney_empty_rows_raise_typed_unavailable() -> None:
+    async def empty(_: str, __: dict[str, str]) -> RawHttpResponse:
+        return RawHttpResponse(200, b'{"result":{"data":[]}}')
+    with pytest.raises(ClauseDataUnavailable):
+        await EastmoneyClauseSource(transport=empty).fetch("113065")
+
+
+def test_strong_redemption_requires_status_and_dated_evidence() -> None:
+    reports = {
+        CB_LIST_REPORT: eastmoney_capture(CB_LIST_REPORT),
+        BS_INFO_REPORT: eastmoney_capture(BS_INFO_REPORT),
+    }
+    ordinary = json.loads(reports[CB_LIST_REPORT])
+    ordinary["result"]["data"][0]["IS_REDEEM"] = "0"
+    reports[CB_LIST_REPORT] = json.dumps(ordinary).encode()
+    from qibao_api.convertible_bonds.adapters import parse_eastmoney_clause_payloads
+    snapshot = parse_eastmoney_clause_payloads(reports, requested_bond_code="113065", fetched_at=datetime(2026, 7, 14, tzinfo=timezone.utc))
+    assert snapshot.strong_redemption.state == "unknown"
+    assert snapshot.strong_redemption.clause_present is True
+    assert snapshot.strong_redemption.evidence_fields == {}
+
+    announced = json.loads(reports[CB_LIST_REPORT])
+    row = announced["result"]["data"][0]
+    row.update({"IS_REDEEM": "1", "NOTICE_DATE_SH": "2026-07-10", "EXECUTE_START_DATE": "2026-07-20", "EXECUTE_REASON_SH": "提前赎回"})
+    reports[CB_LIST_REPORT] = json.dumps(announced).encode()
+    snapshot = parse_eastmoney_clause_payloads(reports, requested_bond_code="113065", fetched_at=datetime(2026, 7, 14, tzinfo=timezone.utc))
+    assert snapshot.strong_redemption.state == "announced"
+    assert snapshot.strong_redemption.evidence_fields["NOTICE_DATE_SH"] == "2026-07-10"

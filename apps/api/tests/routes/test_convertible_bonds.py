@@ -57,13 +57,15 @@ def authorize(repository, source, asset):
 
 def make_client(tmp_path):
     from qibao_api.convertible_bonds.service import ConvertibleBondService
+    from qibao_api.convertible_bonds.diagnosis_repository import BondDiagnosisRepository
     engine = create_engine(f"sqlite:///{tmp_path / 'bond.sqlite3'}")
     clauses = ClauseRepository(engine, verifiers={("eastmoney", "test-v1"): lambda raw, code, when: ClauseSourceSnapshot(raw, code, when)})
     clauses.initialize()
     compliance = ComplianceRepository(tmp_path / "compliance.sqlite3")
     compliance.set_feature_sources("bond_quotes", AssetKind.CONVERTIBLE_BOND, ("tencent",))
     compliance.set_feature_sources("bond_clauses", AssetKind.CONVERTIBLE_BOND, ("eastmoney",))
-    service = ConvertibleBondService(QuoteSource(), ClauseSource(), StockSource(), clauses, compliance, clock=lambda: NOW)
+    diagnoses = BondDiagnosisRepository(tmp_path / "diagnoses.sqlite3")
+    service = ConvertibleBondService(QuoteSource(), ClauseSource(), StockSource(), clauses, compliance, diagnoses, clock=lambda: NOW)
     app = FastAPI()
     app.include_router(router)
     app.dependency_overrides[get_bond_service] = lambda: service
@@ -111,3 +113,32 @@ def test_diagnosis_fetches_and_appends_reproducible_snapshot(tmp_path):
     candidates = client.get("/api/v1/convertible-bonds/candidates")
     assert candidates.status_code == 200
     assert candidates.json()["items"][0]["bond_code"] == "113065"
+
+
+def test_route_maps_empty_upstream_and_parse_errors_without_500():
+    from qibao_api.convertible_bonds.adapters import ClauseDataUnavailable
+    class Broken:
+        def dashboard(self): return {}
+        def candidates(self): return {}
+        async def diagnose(self, _): raise ClauseDataUnavailable("empty")
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_bond_service] = lambda: Broken()
+    response = TestClient(app).get("/api/v1/convertible-bonds/113065/diagnosis")
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "clauses_unavailable"
+
+
+def test_suspended_diagnosis_is_not_a_candidate(tmp_path):
+    client, compliance, _ = make_client(tmp_path)
+    authorize(compliance, "tencent", AssetKind.CONVERTIBLE_BOND)
+    authorize(compliance, "eastmoney", AssetKind.CONVERTIBLE_BOND)
+    service = client.app.dependency_overrides[get_bond_service]()
+    original = service.quote_source
+    class Suspended:
+        async def fetch(self, code):
+            quote = await original.fetch(code)
+            return quote.model_copy(update={"price": None, "suspended": True, "quality": DataQuality.UNAVAILABLE})
+    service.quote_source = Suspended()
+    assert client.get("/api/v1/convertible-bonds/113065/diagnosis").status_code == 200
+    assert client.get("/api/v1/convertible-bonds/candidates").json()["items"] == []

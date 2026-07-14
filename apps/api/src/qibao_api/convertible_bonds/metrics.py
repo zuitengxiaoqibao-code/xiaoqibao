@@ -2,7 +2,7 @@ from datetime import date, datetime
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from qibao_api.contracts.instruments import validate_convertible_bond_code
 
@@ -32,7 +32,7 @@ class EvidenceBackedClauseState(BaseModel):
 
     bond_code: str
     state: Literal["unknown", "not_triggered", "triggered", "announced", "completed"]
-    clause_text: str = Field(min_length=1)
+    clause_text: str | None = None
     source: str = Field(min_length=1)
     observed_at: datetime
 
@@ -43,8 +43,8 @@ class EvidenceBackedClauseState(BaseModel):
 
     @field_validator("clause_text", "source")
     @classmethod
-    def reject_blank_evidence(cls, value: str) -> str:
-        if not value.strip():
+    def reject_blank_evidence(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
             raise ValueError("clause evidence must not be blank")
         return value
 
@@ -54,6 +54,12 @@ class EvidenceBackedClauseState(BaseModel):
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("observed_at must include a timezone")
         return value
+
+    @model_validator(mode="after")
+    def require_text_for_known_state(self):
+        if self.state != "unknown" and self.clause_text is None:
+            raise ValueError("known strong-redemption state requires clause evidence")
+        return self
 
 
 def _require_positive(value: Decimal, name: str) -> None:

@@ -12,14 +12,15 @@ from qibao_api.convertible_bonds.risk import BondRiskInput, BondRiskPolicy, eval
 
 class ConvertibleBondService:
     def __init__(self, quote_source, clause_source, linked_stock_source, repository, compliance,
+                 diagnosis_repository,
                  *, clock=lambda: datetime.now(timezone.utc)) -> None:
         self.quote_source = quote_source
         self.clause_source = clause_source
         self.linked_stock_source = linked_stock_source
         self.repository = repository
         self.compliance = compliance
+        self.diagnosis_repository = diagnosis_repository
         self.clock = clock
-        self._diagnoses: dict[str, dict] = {}
 
     def dashboard(self) -> dict:
         codes = sorted({item.contract.bond_code for item in self.repository.all_latest()})
@@ -30,8 +31,11 @@ class ConvertibleBondService:
         self.compliance.require_feature_sources("bond_quotes", asset)
         quote = await self.quote_source.fetch(bond_code)
         self.compliance.require_feature_sources("bond_clauses", asset)
-        previous = self.repository.latest(bond_code)
         snapshot = await self.clause_source.fetch(bond_code)
+        latest_by_source = {
+            item.source: item for item in self.repository.snapshots(bond_code)
+            if item.source != snapshot.source
+        }
         self.repository.append(snapshot)
         stock = await self.linked_stock_source.fetch(snapshot.contract.linked_stock)
 
@@ -43,8 +47,8 @@ class ConvertibleBondService:
             stock_suspended=getattr(stock, "suspended", False),
         )
         evidence = EvidenceBackedClauseState(
-            bond_code=bond_code, state="unknown",
-            clause_text="当前仅有普通赎回条件条款，未发现强赎公告证据",
+            bond_code=bond_code, state=snapshot.strong_redemption.state,
+            clause_text=snapshot.strong_redemption.clause_text,
             source=snapshot.source, observed_at=snapshot.fetched_at,
         )
         risk_input = BondRiskInput(
@@ -54,10 +58,11 @@ class ConvertibleBondService:
             strong_redemption=evidence,
         )
         risk = evaluate_bond_risk(risk_input, BondRiskPolicy())
-        source_conflict = bool(previous and (
-            previous.contract.linked_stock != snapshot.contract.linked_stock
-            or previous.contract.conversion_price != snapshot.contract.conversion_price
-        ))
+        source_conflict = any(
+            item.contract.linked_stock != snapshot.contract.linked_stock
+            or item.contract.conversion_price != snapshot.contract.conversion_price
+            for item in latest_by_source.values()
+        )
         stale = self.clock() - quote.observed_at.astimezone(timezone.utc) > timedelta(minutes=3)
         status = "source_conflict" if source_conflict else "stale_quote" if stale else "ready"
         result = {
@@ -82,12 +87,15 @@ class ConvertibleBondService:
                      "explanations": [risk.reason_code]},
             "strong_redemption": evidence.model_dump(mode="json"),
         }
-        self._diagnoses[bond_code] = result
+        result["diagnosis_id"] = self.diagnosis_repository.append(bond_code, result)
         return result
 
     def candidates(self) -> dict:
         items = []
-        for diagnosis in self._diagnoses.values():
+        for stored in self.diagnosis_repository.latest_by_bond():
+            diagnosis = stored["payload"]
+            if diagnosis["bond"]["suspended"] or diagnosis["bond"]["price"] is None:
+                continue
             metrics = diagnosis["metrics"]
             evidence = EvidenceBackedClauseState.model_validate(diagnosis["strong_redemption"])
             risk_input = BondRiskInput(

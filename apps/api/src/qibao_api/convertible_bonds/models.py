@@ -45,6 +45,7 @@ class BondClauseSnapshot(BaseModel):
     source: str
     fetched_at: datetime
     parser_version: str
+    strong_redemption: "StrongRedemptionEvidence" = Field(default_factory=lambda: StrongRedemptionEvidence())
 
     @field_validator("fetched_at")
     @classmethod
@@ -52,3 +53,11 @@ class BondClauseSnapshot(BaseModel):
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("fetched_at must include a timezone")
         return value
+
+
+class StrongRedemptionEvidence(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    state: Literal["unknown", "triggered", "announced", "completed"] = "unknown"
+    clause_present: bool = False
+    evidence_fields: dict[str, str] = Field(default_factory=dict)
+    clause_text: str | None = None

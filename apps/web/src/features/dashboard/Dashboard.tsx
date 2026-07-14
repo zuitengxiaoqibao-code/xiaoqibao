@@ -1,4 +1,4 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import {
   Activity, Archive, BookOpenCheck, Boxes, BriefcaseBusiness, Building2,
   ChevronRight, CircleDollarSign, Database, Gauge, Landmark, Radar, Search,
@@ -106,7 +106,18 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadPaperPor
   const [state, setState] = useState<ViewState>({ kind: "idle" });
   const [symbol, setSymbol] = useState("600000");
   const [dataState, setDataState] = useState<DataStatusState>({ kind: "idle" });
-  const [activeView, setActiveView] = useState<"dashboard" | "xingbu" | "libu" | "dongchang" | "bonds">("dashboard");
+  const [activeView, setActiveView] = useState<"dashboard" | "xingbu" | "libu" | "dongchang" | "bonds">(
+    window.location.pathname === "/convertible-bonds" ? "bonds" : "dashboard"
+  );
+  useEffect(() => {
+    const syncPath = () => setActiveView(window.location.pathname === "/convertible-bonds" ? "bonds" : "dashboard");
+    window.addEventListener("popstate", syncPath);
+    return () => window.removeEventListener("popstate", syncPath);
+  }, []);
+  function navigate(view: "dashboard" | "bonds") {
+    window.history.pushState({}, "", view === "bonds" ? "/convertible-bonds" : "/");
+    setActiveView(view);
+  }
 
   async function inspect(requestedSymbol: string) {
     setState({ kind: "loading" });
@@ -149,13 +160,13 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadPaperPor
         <nav aria-label="部门导航">
           <p className="nav-label">中央机构</p>
           {departments.map(({ name, detail, icon: Icon }) => { const target = name === "刑部" ? "xingbu" : name === "礼部" ? "libu" : name === "东厂" ? "dongchang" : name === "今日工作台" ? "dashboard" : null; return (
-            <button className={target === activeView ? "nav-item active" : "nav-item"} key={name} type="button" onClick={() => target && setActiveView(target)}>
+            <button className={target === activeView ? "nav-item active" : "nav-item"} key={name} type="button" onClick={() => target && (target === "dashboard" ? navigate("dashboard") : setActiveView(target))}>
               <Icon size={16} strokeWidth={1.7} />
               <span><b>{name}</b><small>{detail}</small></span>
             </button>
           )})}
         </nav>
-        <button className={activeView === "bonds" ? "bond-entry active" : "bond-entry"} type="button" onClick={() => setActiveView("bonds")}>
+        <button className={activeView === "bonds" ? "bond-entry active" : "bond-entry"} type="button" onClick={() => navigate("bonds")}>
           <Boxes size={16} /><span><b>可转债专区</b><small>独立资产域</small></span><ChevronRight size={15} />
         </button>
         <div className="sidebar-foot"><span className="pulse-dot" />系统本地运行</div>
