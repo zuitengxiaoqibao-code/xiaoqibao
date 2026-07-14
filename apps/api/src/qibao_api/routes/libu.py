@@ -27,7 +27,11 @@ def status(repository: Annotated[ComplianceRepository, Depends(get_compliance_re
     pending_sources = sorted({item.source for item in dependencies} - known)
     now = datetime.now(timezone.utc)
     stale = bool(records) and any(now - item.recorded_at > timedelta(days=90) for item in records)
-    features = [repository.check_feature_sources("paper_orders", AssetKind.A_SHARE)]
+    feature_names = sorted({item.feature for item in dependencies})
+    features = [
+        repository.check_feature_sources(feature, AssetKind.A_SHARE)
+        for feature in feature_names
+    ]
     sources = [item.model_dump(mode="json") for item in records] + [
         {"source": source, "asset": "a_share", "permission_state": "pending",
          "permission_reference": "unregistered", "disclaimer_version": CURRENT_DISCLAIMER_VERSION,

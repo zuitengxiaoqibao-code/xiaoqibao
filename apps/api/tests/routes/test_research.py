@@ -7,6 +7,7 @@ from qibao_api.contracts.market import AssetKind, DataQuality
 from qibao_api.contracts.research import Evidence, ResearchCard
 from qibao_api.dependencies import get_pipeline
 from qibao_api.main import app
+from qibao_api.libu_compliance.repository import SourceAuthorizationError
 
 
 class FakePipeline:
@@ -55,3 +56,22 @@ def test_health_endpoint_reports_ready() -> None:
 
     assert response.status_code == 200
     assert response.json() == {"status": "ready"}
+
+
+class BlockedPipeline:
+    async def run(self, symbol: str) -> ResearchCard:
+        raise SourceAuthorizationError("tencent:missing")
+
+
+def test_snapshot_explains_missing_compliance_authorization() -> None:
+    app.dependency_overrides[get_pipeline] = lambda: BlockedPipeline()
+    with TestClient(app) as client:
+        response = client.get("/api/v1/a-shares/600000/snapshot")
+
+    assert response.status_code == 403
+    assert response.json() == {
+        "detail": {
+            "code": "source_authorization_required",
+            "message": "请先在礼部完成腾讯行情授权并确认免责声明",
+        }
+    }
