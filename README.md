@@ -53,4 +53,20 @@ pnpm.cmd --filter @qibao/web test
 pnpm.cmd --filter @qibao/web build
 ```
 
+## 本地调度与备份
+
+工部运维中心位于 `http://127.0.0.1:5173/operations`。尚书省会在已确认交易日按北京时间 09:20、10:30、13:30、14:30、15:30 自动运行每日简报；失败任务最多尝试三次，重启后会补查最近七天到期但未完成的槽位。
+
+备份会在单进程写入闸门内冻结当前运行时，分别生成 SQLite 在线快照、DuckDB checkpoint 和 Parquet 副本，并写入 SHA-256 清单与外部追加式注册表。当前部署必须保持单个 API 进程，不要使用多个 Uvicorn worker。
+
+恢复必须在新目录进行，不能在线覆盖正在使用的 `.runtime`：
+
+```powershell
+..venv\Scripts\python.exe .\scripts\restore_backup.py `
+  backup-20260714T133107Z-e1148658 `
+  .\.runtime-restored
+```
+
+工具会先完成清单校验和关键仓储恢复演练，再原子发布目标目录。确认新目录可用后，可通过 `QIBAO_DATA_DIR` 指向该目录启动 API 进行人工验收。
+
 腾讯行情属于免费数据源，可能改变格式、限流或暂时不可用。系统会明确暴露错误，不会用虚构数据替代真实结果。

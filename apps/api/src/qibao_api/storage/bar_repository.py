@@ -1,4 +1,6 @@
 from pathlib import Path
+import shutil
+import threading
 
 import duckdb
 
@@ -11,13 +13,14 @@ class BarRepository:
         self.parquet_dir = parquet_dir
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         self.parquet_dir.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.RLock()
         self._create_schema()
 
     def _connect(self):
         return duckdb.connect(str(self.database_path))
 
     def _create_schema(self) -> None:
-        with self._connect() as connection:
+        with self._lock, self._connect() as connection:
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS daily_bars (
@@ -53,7 +56,7 @@ class BarRepository:
         ]
         if not rows:
             return
-        with self._connect() as connection:
+        with self._lock, self._connect() as connection:
             connection.executemany(
                 """
                 INSERT OR REPLACE INTO daily_bars
@@ -64,7 +67,7 @@ class BarRepository:
             )
 
     def latest(self, symbol: str, limit: int = 250) -> list[DailyBar]:
-        with self._connect() as connection:
+        with self._lock, self._connect() as connection:
             rows = connection.execute(
                 """
                 SELECT symbol, trade_date, open, high, low, close, volume, amount, source
@@ -81,7 +84,7 @@ class BarRepository:
         ]
 
     def trade_dates(self, limit: int = 1000) -> list:
-        with self._connect() as connection:
+        with self._lock, self._connect() as connection:
             rows = connection.execute(
                 """SELECT DISTINCT trade_date FROM daily_bars
                 ORDER BY trade_date DESC LIMIT ?""",
@@ -94,7 +97,7 @@ class BarRepository:
             raise ValueError("symbol must be six digits")
         path = self.parquet_dir / f"{symbol}.parquet"
         escaped_path = path.as_posix().replace("'", "''")
-        with self._connect() as connection:
+        with self._lock, self._connect() as connection:
             connection.execute(
                 f"""
                 COPY (
@@ -104,3 +107,19 @@ class BarRepository:
                 """
             )
         return path
+
+    def backup_to(self, target_dir: Path) -> None:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        with self._lock:
+            connection = self._connect()
+            try:
+                connection.execute("CHECKPOINT")
+            finally:
+                connection.close()
+            shutil.copy2(self.database_path, target_dir / self.database_path.name)
+            if self.parquet_dir.is_dir():
+                shutil.copytree(
+                    self.parquet_dir,
+                    target_dir / "parquet" / self.parquet_dir.name,
+                    dirs_exist_ok=True,
+                )

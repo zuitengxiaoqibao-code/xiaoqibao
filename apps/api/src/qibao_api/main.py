@@ -1,7 +1,10 @@
-from contextlib import asynccontextmanager
+import asyncio
+import logging
+from contextlib import asynccontextmanager, suppress
+from datetime import datetime, timezone
 
 import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from sqlalchemy import create_engine
 
 from qibao_api.gongbu.baidu_history import BaiduHistorySource
@@ -45,12 +48,33 @@ from qibao_api.shangshu.daily_briefing import DailyBriefingWorkflow
 from qibao_api.shangshu.trading_calendar import StoredTradingCalendar
 from qibao_api.routes.briefings import router as briefings_router
 from qibao_api.shangshu.postclose_context import RepositoryPostcloseContextSource
+from qibao_api.shangshu.operations_repository import OperationsRepository
+from qibao_api.shangshu.scheduler import DailyBriefingScheduler
+from qibao_api.gongbu.backup_service import BackupService
+from qibao_api.routes.operations import router as operations_router
+
+
+logger = logging.getLogger(__name__)
+
+
+async def _scheduler_loop(
+    scheduler, write_gate: asyncio.Lock, interval_seconds: int
+) -> None:
+    while True:
+        await asyncio.sleep(interval_seconds)
+        try:
+            async with write_gate:
+                await asyncio.to_thread(scheduler.tick, datetime.now(timezone.utc))
+        except Exception:
+            logger.exception("scheduled briefing tick failed")
 
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     settings = Settings()
     settings.data_dir.mkdir(parents=True, exist_ok=True)
+    write_gate = asyncio.Lock()
+    application.state.write_gate = write_gate
     engine = create_engine(settings.database_url)
     create_schema(engine)
     compliance = ComplianceRepository(settings.data_dir / "compliance.sqlite3")
@@ -162,9 +186,33 @@ async def lifespan(application: FastAPI):
                 application.state.pipeline,
                 PaperBroker(paper_repository),
             )
+            operations_repository = OperationsRepository(
+                settings.data_dir / "operations.sqlite3"
+            )
+            application.state.operations_repository = operations_repository
+            application.state.scheduler = DailyBriefingScheduler(
+                application.state.briefing_workflow,
+                StoredTradingCalendar(bar_repository),
+                operations_repository,
+            )
+            application.state.backup_service = BackupService(
+                settings.data_dir, bar_repository
+            )
+            scheduler_task = (
+                asyncio.create_task(_scheduler_loop(
+                    application.state.scheduler,
+                    write_gate,
+                    settings.scheduler_interval_seconds,
+                ))
+                if getattr(settings, "scheduler_enabled", False) else None
+            )
             try:
                 yield
             finally:
+                if scheduler_task is not None:
+                    scheduler_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await scheduler_task
                 paper_repository.close()
                 bond_repository.close()
                 diagnosis_repository.close()
@@ -172,10 +220,20 @@ async def lifespan(application: FastAPI):
                 briefing_repository.close()
                 compliance.close()
                 audit_repository.close()
+                operations_repository.close()
     engine.dispose()
 
 
 app = FastAPI(title="小七宝量化决策台", version="0.1.0", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def serialize_runtime_access(request: Request, call_next):
+    write_gate = getattr(request.app.state, "write_gate", None)
+    if write_gate is None:
+        return await call_next(request)
+    async with write_gate:
+        return await call_next(request)
 app.include_router(health_router)
 app.include_router(research_router)
 app.include_router(data_router)
@@ -187,3 +245,4 @@ app.include_router(dongchang_router)
 app.include_router(convertible_bonds_router)
 app.include_router(news_router)
 app.include_router(briefings_router)
+app.include_router(operations_router)

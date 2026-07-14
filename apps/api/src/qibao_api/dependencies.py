@@ -50,3 +50,11 @@ def get_briefing_workflow(request: Request):
 
 def get_briefing_repository(request: Request):
     return request.app.state.briefing_repository
+
+
+def get_scheduler(request: Request):
+    return request.app.state.scheduler
+
+
+def get_backup_service(request: Request):
+    return request.app.state.backup_service
