@@ -19,6 +19,8 @@ import { NewsIntelligenceView } from "../news-intelligence/NewsIntelligenceView"
 import type { CorrectionInput, NewsIntelligenceBundle } from "../news-intelligence/types";
 import { OperationsView } from "../operations/OperationsView";
 import type { BackupRecord, BackupVerification, OperationsStatus } from "../operations/types";
+import { AShareResearchView } from "../a-shares/AShareResearchView";
+import type { AShareDiagnosis, CandidateBoard } from "../a-shares/types";
 
 type ViewState =
   | { kind: "idle" }
@@ -46,7 +48,19 @@ type Props = {
   createBackup?: () => Promise<BackupRecord>;
   verifyBackup?: (backupId: string) => Promise<BackupVerification>;
   runManualJob?: (phase: string, tradingDate: string) => Promise<{ report_id: string }>;
+  loadAShareCandidates?: () => Promise<CandidateBoard>;
+  loadAShareDiagnosis?: (symbol: string, asOf?: string) => Promise<AShareDiagnosis>;
 };
+
+type ActiveView = "dashboard" | "a_shares" | "xingbu" | "libu" | "dongchang" | "bonds" | "news" | "operations";
+
+function viewFromPath(path: string): ActiveView {
+  if (path === "/a-shares") return "a_shares";
+  if (path === "/convertible-bonds") return "bonds";
+  if (path === "/news-intelligence") return "news";
+  if (path === "/operations") return "operations";
+  return "dashboard";
+}
 
 const departments = [
   { name: "今日工作台", detail: "全域态势", icon: Gauge, active: true },
@@ -114,21 +128,20 @@ function ResearchPanel({ card }: { card: ResearchCard }) {
   );
 }
 
-export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadPaperPortfolio, createPaperAccount, submitPaperOrder, loadRisk, loadCompliance, loadAudit, complianceAction, loadBondDashboard, loadBondDiagnosis, loadBondCandidates, loadNewsIntelligence, syncNews, createNewsCorrection, loadOperationsStatus, setSchedulerPaused, createBackup, verifyBackup, runManualJob }: Props) {
+export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadPaperPortfolio, createPaperAccount, submitPaperOrder, loadRisk, loadCompliance, loadAudit, complianceAction, loadBondDashboard, loadBondDiagnosis, loadBondCandidates, loadNewsIntelligence, syncNews, createNewsCorrection, loadOperationsStatus, setSchedulerPaused, createBackup, verifyBackup, runManualJob, loadAShareCandidates, loadAShareDiagnosis }: Props) {
   const [state, setState] = useState<ViewState>({ kind: "idle" });
   const [symbol, setSymbol] = useState("600000");
   const [dataState, setDataState] = useState<DataStatusState>({ kind: "idle" });
   const [complianceAsset, setComplianceAsset] = useState<"a_share" | "convertible_bond">("a_share");
-  const [activeView, setActiveView] = useState<"dashboard" | "xingbu" | "libu" | "dongchang" | "bonds" | "news" | "operations">(
-    window.location.pathname === "/convertible-bonds" ? "bonds" : window.location.pathname === "/news-intelligence" ? "news" : window.location.pathname === "/operations" ? "operations" : "dashboard"
-  );
+  const [activeView, setActiveView] = useState<ActiveView>(viewFromPath(window.location.pathname));
   useEffect(() => {
-    const syncPath = () => setActiveView(window.location.pathname === "/convertible-bonds" ? "bonds" : window.location.pathname === "/news-intelligence" ? "news" : window.location.pathname === "/operations" ? "operations" : "dashboard");
+    const syncPath = () => setActiveView(viewFromPath(window.location.pathname));
     window.addEventListener("popstate", syncPath);
     return () => window.removeEventListener("popstate", syncPath);
   }, []);
-  function navigate(view: "dashboard" | "bonds" | "news" | "operations") {
-    window.history.pushState({}, "", view === "bonds" ? "/convertible-bonds" : view === "news" ? "/news-intelligence" : view === "operations" ? "/operations" : "/");
+  function navigate(view: "dashboard" | "a_shares" | "bonds" | "news" | "operations") {
+    const paths = { dashboard: "/", a_shares: "/a-shares", bonds: "/convertible-bonds", news: "/news-intelligence", operations: "/operations" };
+    window.history.pushState({}, "", paths[view]);
     setActiveView(view);
   }
 
@@ -165,11 +178,11 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadPaperPor
           <div className="brand-sigil"><Building2 size={18} /></div>
           <div><strong>小七宝</strong><span>量化决策台</span></div>
         </div>
-        <div className="domain-switcher">
+        <button className={activeView === "a_shares" ? "domain-switcher active" : "domain-switcher"} type="button" onClick={() => navigate("a_shares")}>
           <span className="domain-dot" />
           <div><b>A 股主域</b><small>ASHARE COMMAND</small></div>
           <ChevronRight size={15} />
-        </div>
+        </button>
         <nav aria-label="部门导航">
           <p className="nav-label">中央机构</p>
           {departments.map(({ name, detail, icon: Icon }) => { const target = name === "刑部" ? "xingbu" : name === "礼部" ? "libu" : name === "东厂" ? "dongchang" : name === "中书省" ? "news" : name === "工部" ? "operations" : name === "今日工作台" ? "dashboard" : null; return (
@@ -185,7 +198,9 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadPaperPor
         <div className="sidebar-foot"><span className="pulse-dot" />系统本地运行</div>
       </aside>
 
-      {activeView !== "dashboard" && activeView !== "bonds" && activeView !== "news" && activeView !== "operations" && <GovernanceView view={activeView} initialAsset={complianceAsset} loadRisk={loadRisk} loadCompliance={loadCompliance} loadAudit={loadAudit} complianceAction={complianceAction} />}
+      {activeView !== "dashboard" && activeView !== "a_shares" && activeView !== "bonds" && activeView !== "news" && activeView !== "operations" && <GovernanceView view={activeView} initialAsset={complianceAsset} loadRisk={loadRisk} loadCompliance={loadCompliance} loadAudit={loadAudit} complianceAction={complianceAction} />}
+
+      {activeView === "a_shares" && loadAShareCandidates && loadAShareDiagnosis && <AShareResearchView loadCandidates={loadAShareCandidates} loadDiagnosis={loadAShareDiagnosis} />}
 
       {activeView === "bonds" && loadBondDashboard && loadBondDiagnosis && loadBondCandidates && <ConvertibleBondView loadDashboard={loadBondDashboard} loadDiagnosis={loadBondDiagnosis} loadCandidates={loadBondCandidates} openBondCompliance={() => { setComplianceAsset("convertible_bond"); setActiveView("libu"); }} />}
 

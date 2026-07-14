@@ -7,6 +7,7 @@ import { complianceAction, loadAudit, loadCompliance, loadRisk } from "../featur
 import { loadBondCandidates, loadBondDashboard, loadBondDiagnosis } from "../features/convertible-bonds/api";
 import { createNewsCorrection, loadNewsIntelligence, syncNews } from "../features/news-intelligence/api";
 import { createBackup, loadOperationsStatus, runManualJob, setSchedulerPaused, verifyBackup } from "../features/operations/api";
+import { loadAShareCandidates, loadAShareDiagnosis } from "../features/a-shares/api";
 
 export function App() {
   return <Dashboard
@@ -20,5 +21,6 @@ export function App() {
     loadBondDashboard={loadBondDashboard} loadBondDiagnosis={loadBondDiagnosis} loadBondCandidates={loadBondCandidates}
     loadNewsIntelligence={loadNewsIntelligence} syncNews={syncNews} createNewsCorrection={createNewsCorrection}
     loadOperationsStatus={loadOperationsStatus} setSchedulerPaused={setSchedulerPaused} createBackup={createBackup} verifyBackup={verifyBackup} runManualJob={runManualJob}
+    loadAShareCandidates={loadAShareCandidates} loadAShareDiagnosis={loadAShareDiagnosis}
   />;
 }

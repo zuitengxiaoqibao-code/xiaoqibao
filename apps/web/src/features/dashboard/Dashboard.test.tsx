@@ -21,6 +21,41 @@ const freshCard = {
 };
 
 describe("Dashboard", () => {
+  it("opens the independent A-share research workspace", async () => {
+    window.history.replaceState({}, "", "/");
+    render(<Dashboard
+      loadSnapshot={() => Promise.resolve(freshCard)}
+      loadAShareCandidates={() => Promise.resolve({
+        asset: "a_share", snapshot_id: null, input_snapshot_hash: null,
+        universe_status: "empty",
+        as_of: "2026-07-14", factor_version: "a-share-factors-v1",
+        short_term: [], swing: [], exclusions: [],
+      })}
+      loadAShareDiagnosis={() => Promise.reject(new Error("unused"))}
+    />);
+
+    fireEvent.click(screen.getByRole("button", { name: /A 股主域/ }));
+
+    expect(await screen.findByRole("heading", { name: "A 股研究工作区" })).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/a-shares");
+  });
+
+  it("restores the A-share research deep link", async () => {
+    window.history.replaceState({}, "", "/a-shares");
+    render(<Dashboard
+      loadSnapshot={() => Promise.resolve(freshCard)}
+      loadAShareCandidates={() => Promise.resolve({
+        asset: "a_share", snapshot_id: null, input_snapshot_hash: null,
+        universe_status: "empty",
+        as_of: "2026-07-14", factor_version: "a-share-factors-v1",
+        short_term: [], swing: [], exclusions: [],
+      })}
+      loadAShareDiagnosis={() => Promise.reject(new Error("unused"))}
+    />);
+
+    expect(await screen.findByRole("heading", { name: "A 股研究工作区" })).toBeInTheDocument();
+  });
+
   it("navigates to the news intelligence deep link", async () => {
     window.history.replaceState({}, "", "/");
     render(<Dashboard

@@ -253,7 +253,7 @@ git commit -m "feat(a-shares): expose audited research workspace APIs"
 - Consumes: 候选池和诊断 API。
 - Produces: 深链 `/a-shares`，短线榜/波段榜页签，点击候选后打开同页诊断工作区。
 
-- [ ] **Step 1: 写失败组件测试，覆盖榜单、证据和降级**
+- [x] **Step 1: 写失败组件测试，覆盖榜单、证据和降级**
 
 ```tsx
 it("keeps short-term and swing candidates separate", async () => {
@@ -272,21 +272,21 @@ it("shows unavailable fundamentals without hiding trend evidence", async () => {
 });
 ```
 
-- [ ] **Step 2: 运行测试并确认组件不存在而失败**
+- [x] **Step 2: 运行测试并确认组件不存在而失败**
 
 Run: `pnpm --filter @qibao/web test -- AShareResearchView.test.tsx`
 
 Expected: FAIL，错误指向组件模块不存在。
 
-- [ ] **Step 3: 实现独立工作区与稳定布局**
+- [x] **Step 3: 实现独立工作区与稳定布局**
 
 顶部使用紧凑的 A 股主域状态栏；主体左侧为可扫描榜单，右侧为诊断详情。移动端改为榜单后接诊断的单列流，不使用横向表格。分数必须可展开查看因子贡献；每个诊断分区显示来源和时间；空数据、加载、局部降级与完全错误分别呈现。
 
-- [ ] **Step 4: 接入导航和深链**
+- [x] **Step 4: 接入导航和深链**
 
 新增侧栏 `A 股研究` 入口并映射 `/a-shares`；保留今日工作台，且可转债入口仍指向 `/convertible-bonds`。浏览器前进后退必须恢复正确工作区。
 
-- [ ] **Step 5: 运行前端测试、构建和浏览器验收**
+- [x] **Step 5: 运行前端测试、构建和浏览器验收**
 
 Run: `pnpm --filter @qibao/web test`
 
@@ -298,7 +298,7 @@ Expected: exit 0。
 
 浏览器验收：在 `1440x900` 与 `390x844` 检查 `/a-shares`，确认无水平溢出、中文不截断、短线/波段切换稳定、部分来源失败不清空其他诊断分区。
 
-- [ ] **Step 6: 编码扫描、全量验证并提交**
+- [x] **Step 6: 编码扫描、全量验证并提交**
 
 Run: `rg -n '�|锟|烫烫|\?\?\?' apps/api/src/qibao_api apps/api/tests apps/web/src README.md`
 
