@@ -170,4 +170,22 @@ def test_strong_redemption_requires_status_and_dated_evidence() -> None:
     reports[CB_LIST_REPORT] = json.dumps(announced).encode()
     snapshot = parse_eastmoney_clause_payloads(reports, requested_bond_code="113065", fetched_at=datetime(2026, 7, 14, tzinfo=timezone.utc))
     assert snapshot.strong_redemption.state == "announced"
-    assert snapshot.strong_redemption.evidence_fields["NOTICE_DATE_SH"] == "2026-07-10"
+    assert snapshot.strong_redemption.evidence_fields[f"{CB_LIST_REPORT}.NOTICE_DATE_SH"] == "2026-07-10"
+
+
+def test_strong_redemption_state_machine_does_not_infer_from_is_redeem_or_dates() -> None:
+    from qibao_api.convertible_bonds.adapters import parse_eastmoney_clause_payloads
+    def parse(fields):
+        cb = json.loads(eastmoney_capture(CB_LIST_REPORT))
+        cb["result"]["data"][0].update(fields)
+        return parse_eastmoney_clause_payloads(
+            {CB_LIST_REPORT: json.dumps(cb).encode(), BS_INFO_REPORT: eastmoney_capture(BS_INFO_REPORT)},
+            requested_bond_code="113065", fetched_at=datetime(2026, 7, 14, tzinfo=timezone.utc),
+        ).strong_redemption
+    assert parse({"IS_REDEEM": "1"}).state == "unknown"
+    assert parse({"IS_REDEEM": "1", "EXECUTE_START_DATE": "2026-07-01"}).state == "unknown"
+    announced = parse({"NOTICE_DATE_SH": "2026-07-10", "EXECUTE_REASON_SH": "提前赎回"})
+    assert announced.state == "announced"
+    assert announced.evidence_fields[f"{CB_LIST_REPORT}.NOTICE_DATE_SH"] == "2026-07-10"
+    completed = parse({"EXECUTE_START_DATE": "2026-07-01", "EXECUTE_END_DATE": "2026-07-13", "EXECUTE_REASON_SH": "提前赎回"})
+    assert completed.state == "completed"

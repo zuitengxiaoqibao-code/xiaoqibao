@@ -156,26 +156,33 @@ def _provider_row(raw_payload: bytes, report: str) -> dict[str, Any]:
 
 def _strong_redemption_evidence(cb_row: dict[str, Any], bs_row: dict[str, Any], fetched_at: datetime) -> StrongRedemptionEvidence:
     fields = {}
-    for row in (cb_row, bs_row):
+    for report, row in ((CB_LIST_REPORT, cb_row), (BS_INFO_REPORT, bs_row)):
         for key, raw in row.items():
-            if key == "IS_REDEEM" or key.startswith(("NOTICE_DATE_", "EXECUTE_START_DATE", "EXECUTE_END_DATE", "EXECUTE_REASON_")):
+            if (key == "IS_REDEEM" or "TRIGGER" in key or "REDEEM_STATUS" in key
+                    or "ANNOUNCEMENT_TYPE" in key
+                    or key.startswith(("NOTICE_DATE_", "EXECUTE_START_DATE", "EXECUTE_END_DATE",
+                                       "ACTUAL_EXECUTE_DATE", "EXECUTE_REASON_"))):
                 if raw not in (None, "", "0"):
-                    fields[key] = str(raw)
+                    fields[f"{report}.{key}"] = str(raw)
     clause_present = bool(cb_row.get("REDEEM_CLAUSE") or bs_row.get("REDEEM_CLAUSE"))
-    enabled = str(cb_row.get("IS_REDEEM") or bs_row.get("IS_REDEEM") or "0") in {"1", "Y", "true", "True"}
-    notice = any(key.startswith("NOTICE_DATE_") for key in fields)
-    starts = [value for key, value in fields.items() if key.startswith("EXECUTE_START_DATE")]
-    ends = [value for key, value in fields.items() if key.startswith("EXECUTE_END_DATE")]
+    notice = any(".NOTICE_DATE_" in key for key in fields)
+    reason = any(".EXECUTE_REASON_" in key for key in fields)
+    announcement_type = any("ANNOUNCEMENT_TYPE" in key for key in fields)
+    starts = [value for key, value in fields.items() if ".EXECUTE_START_DATE" in key]
+    ends = [value for key, value in fields.items()
+            if ".EXECUTE_END_DATE" in key or ".ACTUAL_EXECUTE_DATE" in key]
+    triggered = any(("TRIGGER" in key or "REDEEM_STATUS" in key)
+                    and value.lower() not in {"0", "false", "n", "unknown"}
+                    for key, value in fields.items())
     today = fetched_at.date()
-    if enabled and ends and date.fromisoformat(ends[0].split(" ")[0]) < today:
+    if starts and ends and reason and date.fromisoformat(ends[0].split(" ")[0]) <= today:
         state = "completed"
-    elif enabled and notice:
+    elif notice and (reason or announcement_type):
         state = "announced"
-    elif enabled and (starts or any(key.startswith("EXECUTE_REASON_") for key in fields)):
+    elif triggered:
         state = "triggered"
     else:
         state = "unknown"
-        fields = {}
     clause_text = cb_row.get("REDEEM_CLAUSE") or bs_row.get("REDEEM_CLAUSE")
     return StrongRedemptionEvidence(state=state, clause_present=clause_present,
                                     evidence_fields=fields, clause_text=clause_text)

@@ -35,6 +35,7 @@ class EvidenceBackedClauseState(BaseModel):
     clause_text: str | None = None
     source: str = Field(min_length=1)
     observed_at: datetime
+    evidence_fields: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("bond_code")
     @classmethod

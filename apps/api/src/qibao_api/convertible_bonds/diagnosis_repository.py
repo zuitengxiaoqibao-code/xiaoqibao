@@ -1,9 +1,14 @@
 import hashlib
+import hmac
 import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
+
+
+class DataIntegrityError(RuntimeError):
+    pass
 
 
 class BondDiagnosisRepository:
@@ -40,9 +45,16 @@ class BondDiagnosisRepository:
             SELECT bond_code, MAX(sequence) sequence FROM bond_diagnoses GROUP BY bond_code
           ) latest ON d.sequence=latest.sequence ORDER BY d.bond_code
         """).fetchall()
-        return [{"diagnosis_id": row["diagnosis_id"], "bond_code": row["bond_code"],
-                 "canonical_hash": row["canonical_hash"], "payload": json.loads(row["payload"]),
-                 "recorded_at": row["recorded_at"]} for row in rows]
+        return [self._validated(row) for row in rows]
+
+    @staticmethod
+    def _validated(row) -> dict:
+        computed = hashlib.sha256(row["payload"].encode("utf-8")).hexdigest()
+        if not hmac.compare_digest(computed, row["canonical_hash"]):
+            raise DataIntegrityError(f"bond diagnosis {row['diagnosis_id']} failed integrity check")
+        return {"diagnosis_id": row["diagnosis_id"], "bond_code": row["bond_code"],
+                "canonical_hash": row["canonical_hash"], "payload": json.loads(row["payload"]),
+                "recorded_at": row["recorded_at"]}
 
     def close(self) -> None:
         self.connection.close()

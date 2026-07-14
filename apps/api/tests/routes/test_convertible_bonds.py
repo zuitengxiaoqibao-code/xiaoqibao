@@ -108,6 +108,11 @@ def test_diagnosis_fetches_and_appends_reproducible_snapshot(tmp_path):
     assert body["metrics"]["pure_bond_premium"] is None
     assert body["risk"]["unknowns"] == ["pure_bond_value", "turnover_amount"]
     assert body["strong_redemption"]["state"] == "unknown"
+    assert body["strong_redemption"]["evidence_fields"] == {}
+    assert body["metric_inputs"]["pure_bond_value"] is None
+    assert body["metric_inputs"]["bond_quote"]["source"] == "tencent"
+    assert body["metric_inputs"]["stock_quote"]["price"] == "10.25"
+    assert body["metric_inputs"]["clause_snapshot"]["content_hash"]
     assert len(clauses.snapshots("113065")) == 1
 
     candidates = client.get("/api/v1/convertible-bonds/candidates")

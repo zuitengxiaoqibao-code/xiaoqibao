@@ -81,6 +81,15 @@ def _canonical_instant(value: datetime) -> str:
 
 def risk_input_fingerprint(value: BondRiskInput, rule_version: str) -> str:
     evidence = value.strong_redemption
+    evidence_payload = {
+        "bond_code": evidence.bond_code,
+        "clause_text": evidence.clause_text,
+        "observed_at": _canonical_instant(evidence.observed_at),
+        "source": evidence.source,
+        "state": evidence.state,
+    }
+    if evidence.evidence_fields:
+        evidence_payload["evidence_fields"] = dict(sorted(evidence.evidence_fields.items()))
     payload = {
         "asset": value.asset.value,
         "bond_code": value.bond_code,
@@ -88,13 +97,7 @@ def risk_input_fingerprint(value: BondRiskInput, rule_version: str) -> str:
         "remaining_days": value.remaining_days,
         "remaining_size": _canonical_decimal(value.remaining_size),
         "rule_version": rule_version,
-        "strong_redemption": {
-            "bond_code": evidence.bond_code,
-            "clause_text": evidence.clause_text,
-            "observed_at": _canonical_instant(evidence.observed_at),
-            "source": evidence.source,
-            "state": evidence.state,
-        },
+        "strong_redemption": evidence_payload,
         "turnover_amount": _canonical_decimal(value.turnover_amount),
     }
     encoded = json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)

@@ -6,6 +6,7 @@ import httpx
 from qibao_api.dependencies import get_bond_service
 from qibao_api.libu_compliance.repository import SourceAuthorizationError
 from qibao_api.convertible_bonds.adapters import ClauseDataUnavailable
+from qibao_api.convertible_bonds.diagnosis_repository import DataIntegrityError
 
 
 router = APIRouter(prefix="/api/v1/convertible-bonds", tags=["可转债"])
@@ -25,7 +26,10 @@ def dashboard(service: Annotated[object, Depends(get_bond_service)]):
 
 @router.get("/candidates")
 def candidates(service: Annotated[object, Depends(get_bond_service)]):
-    return service.candidates()
+    try:
+        return service.candidates()
+    except DataIntegrityError as error:
+        raise HTTPException(status_code=503, detail={"code": "diagnosis_integrity_error", "message": "转债诊断存档校验失败"}) from error
 
 
 @router.get("/{bond_code}/diagnosis")

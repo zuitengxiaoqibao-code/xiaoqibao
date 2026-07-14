@@ -36,7 +36,7 @@ class ConvertibleBondService:
             item.source: item for item in self.repository.snapshots(bond_code)
             if item.source != snapshot.source
         }
-        self.repository.append(snapshot)
+        snapshot_id = self.repository.append(snapshot)
         stock = await self.linked_stock_source.fetch(snapshot.contract.linked_stock)
 
         metrics = calculate_metrics(
@@ -50,6 +50,7 @@ class ConvertibleBondService:
             bond_code=bond_code, state=snapshot.strong_redemption.state,
             clause_text=snapshot.strong_redemption.clause_text,
             source=snapshot.source, observed_at=snapshot.fetched_at,
+            evidence_fields=snapshot.strong_redemption.evidence_fields,
         )
         risk_input = BondRiskInput(
             bond_code=bond_code, turnover_amount=None,
@@ -78,9 +79,24 @@ class ConvertibleBondService:
                                 "conversion_price": snapshot.contract.conversion_price,
                                 "maturity": snapshot.contract.maturity,
                                 "remaining_size": snapshot.contract.remaining_size},
-            "metric_inputs": {"par_value": Decimal("100"), "bond_price": quote.price,
-                              "stock_price": stock.price,
-                              "conversion_price": snapshot.contract.conversion_price},
+            "metric_inputs": {
+                "par_value": "100", "pure_bond_value": None,
+                "as_of": self.clock().date(), "maturity": snapshot.contract.maturity,
+                "remaining_size": str(snapshot.contract.remaining_size),
+                "conversion_price": str(snapshot.contract.conversion_price),
+                "bond_quote": {"price": str(quote.price) if quote.price is not None else None,
+                               "suspended": quote.suspended,
+                               "quality": quote.quality, "source": quote.source,
+                               "observed_at": quote.observed_at, "raw_identity": quote.raw_identity},
+                "stock_quote": {"price": str(stock.price) if stock.price is not None else None,
+                                "suspended": getattr(stock, "suspended", False),
+                                "quality": stock.quality, "source": stock.source,
+                                "observed_at": stock.observed_at},
+                "clause_snapshot": {"snapshot_id": snapshot_id,
+                                    "content_hash": snapshot.content_hash,
+                                    "parser_version": snapshot.parser_version,
+                                    "source": snapshot.source, "fetched_at": snapshot.fetched_at},
+            },
             "metrics": metrics.model_dump(mode="json"),
             "risk": {**risk.model_dump(mode="json"),
                      "unknowns": ["pure_bond_value", "turnover_amount"],
