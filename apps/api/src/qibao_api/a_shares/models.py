@@ -39,9 +39,10 @@ class CandidateExclusion(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     symbol: str = Field(pattern=r"^\d{6}$")
-    reason_code: Literal["insufficient_liquidity"]
-    observed_value: Decimal
-    threshold: Decimal
+    reason_code: Literal["insufficient_liquidity", "invalid_history"]
+    observed_value: Decimal | None = None
+    threshold: Decimal | None = None
+    detail: str | None = None
 
 
 class CandidateBoard(BaseModel):

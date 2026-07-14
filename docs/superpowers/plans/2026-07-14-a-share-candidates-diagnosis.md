@@ -125,7 +125,7 @@ git commit -m "feat(a-shares): add deterministic candidate factors"
 - Consumes: `BarRepository.symbols_with_history(minimum_bars, as_of)`、腾讯扩展行情、mootdx 财务快照、`NewsRepository.events()`。
 - Produces: `AShareDiagnosisService.candidates(as_of, limit)` 和异步 `diagnose(symbol, as_of)`。
 
-- [ ] **Step 1: 写失败测试，要求仓储一次查询候选宇宙和批量日线**
+- [x] **Step 1: 写失败测试，要求仓储一次查询候选宇宙和批量日线**
 
 ```python
 def test_repository_returns_only_symbols_with_enough_history(tmp_path: Path) -> None:
@@ -135,11 +135,11 @@ def test_repository_returns_only_symbols_with_enough_history(tmp_path: Path) -> 
     assert len(repository.latest_many(["600000"], 60, date(2026, 7, 14))["600000"]) == 60
 ```
 
-- [ ] **Step 2: 实现参数化 DuckDB 查询，禁止拼接股票代码**
+- [x] **Step 2: 实现参数化 DuckDB 查询，禁止拼接股票代码**
 
 新增 `symbols_with_history()` 和 `latest_many()`；查询统一持有仓储锁，`as_of` 作为 SQL 参数，并验证输入全为合法 A 股代码。
 
-- [ ] **Step 3: 写失败测试并扩展腾讯估值字段解析**
+- [x] **Step 3: 写失败测试并扩展腾讯估值字段解析**
 
 ```python
 def test_tencent_snapshot_parses_valuation_without_field_guessing() -> None:
@@ -152,7 +152,7 @@ def test_tencent_snapshot_parses_valuation_without_field_guessing() -> None:
 
 解析器继续严格按 GBK 解码；空字符串和 `--` 映射为 `None`，字段 46 才是 PB。保留现有 `Quote` 接口，新增 `TencentMarketSnapshot`，避免破坏实时管线。
 
-- [ ] **Step 4: 写失败测试，覆盖部分来源失败的诊断**
+- [x] **Step 4: 写失败测试，覆盖部分来源失败的诊断**
 
 ```python
 async def test_diagnosis_keeps_local_analysis_when_fundamentals_fail() -> None:
@@ -164,11 +164,11 @@ async def test_diagnosis_keeps_local_analysis_when_fundamentals_fail() -> None:
     assert result.action == "observe"
 ```
 
-- [ ] **Step 5: 实现分区诊断与确定性风险结论**
+- [x] **Step 5: 实现分区诊断与确定性风险结论**
 
 诊断分区固定为 `market`、`price_volume`、`trend`、`valuation`、`fundamentals`、`events`、`industry`、`risk`。每个分区包含 `status`、`observed_at`、`source`、`metrics`、`evidence_ids` 和新手解释；强制保留空值，不把 `0` 当成缺失。新闻只使用冻结事件中明确关联 `(a_share, symbol)` 的引用。
 
-- [ ] **Step 6: 运行任务测试并提交**
+- [x] **Step 6: 运行任务测试并提交**
 
 Run: `.venv/Scripts/python.exe -m pytest apps/api/tests/storage/test_bar_repository.py apps/api/tests/gongbu/test_tencent_quotes.py apps/api/tests/a_shares -q`
 

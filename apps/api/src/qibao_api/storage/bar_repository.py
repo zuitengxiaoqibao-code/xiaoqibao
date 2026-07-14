@@ -1,10 +1,12 @@
 from pathlib import Path
 import shutil
 import threading
+from datetime import date
 
 import duckdb
 
 from qibao_api.contracts.bars import DailyBar
+from qibao_api.contracts.instruments import validate_a_share_code
 
 
 class BarRepository:
@@ -91,6 +93,67 @@ class BarRepository:
                 [limit],
             ).fetchall()
         return [row[0] for row in rows]
+
+    def symbols_with_history(self, minimum_bars: int, as_of: date) -> list[str]:
+        if minimum_bars < 1:
+            raise ValueError("minimum_bars must be positive")
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT symbol
+                FROM daily_bars
+                WHERE trade_date <= ?
+                GROUP BY symbol
+                HAVING count(DISTINCT trade_date) >= ?
+                ORDER BY symbol
+                """,
+                [as_of, minimum_bars],
+            ).fetchall()
+        symbols = []
+        for row in rows:
+            try:
+                symbols.append(validate_a_share_code(row[0]))
+            except ValueError:
+                continue
+        return symbols
+
+    def latest_many(
+        self,
+        symbols: list[str],
+        limit: int,
+        as_of: date,
+    ) -> dict[str, list[DailyBar]]:
+        if limit < 1:
+            raise ValueError("limit must be positive")
+        validated = [validate_a_share_code(symbol) for symbol in symbols]
+        if len(set(validated)) != len(validated):
+            raise ValueError("A-share symbols must be unique")
+        if not validated:
+            return {}
+        placeholders = ", ".join("?" for _ in validated)
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT symbol, trade_date, open, high, low, close, volume, amount, source
+                FROM (
+                    SELECT *, row_number() OVER (
+                        PARTITION BY symbol ORDER BY trade_date DESC
+                    ) AS row_number
+                    FROM daily_bars
+                    WHERE symbol IN ({placeholders}) AND trade_date <= ?
+                ) ranked
+                WHERE row_number <= ?
+                ORDER BY symbol, trade_date
+                """,
+                [*validated, as_of, limit],
+            ).fetchall()
+        result = {symbol: [] for symbol in validated}
+        for row in rows:
+            result[row[0]].append(DailyBar(
+                symbol=row[0], trade_date=row[1], open=row[2], high=row[3], low=row[4],
+                close=row[5], volume=row[6], amount=row[7], source=row[8],
+            ))
+        return result
 
     def export_parquet(self, symbol: str) -> Path:
         if not symbol.isdigit() or len(symbol) != 6:

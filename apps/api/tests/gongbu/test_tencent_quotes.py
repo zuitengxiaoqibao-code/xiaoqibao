@@ -8,6 +8,7 @@ from qibao_api.gongbu.tencent_quotes import (
     TencentQuoteSource,
     market_prefix,
     parse_tencent_quote,
+    parse_tencent_snapshot,
 )
 
 
@@ -31,7 +32,13 @@ def test_parse_rejects_incomplete_payload() -> None:
         parse_tencent_quote("short~payload", source="tencent")
 
 
-@pytest.mark.parametrize(("symbol", "expected"), [("600000", "sh"), ("000001", "sz")])
+@pytest.mark.parametrize(
+    ("symbol", "expected"),
+    [
+        ("600000", "sh"), ("000001", "sz"),
+        ("920001", "bj"), ("832000", "bj"), ("430001", "bj"),
+    ],
+)
 def test_market_prefix_uses_exchange_rules(symbol: str, expected: str) -> None:
     assert market_prefix(symbol) == expected
 
@@ -51,3 +58,38 @@ async def test_source_decodes_gbk_response_and_requests_exchange_symbol() -> Non
         quote = await TencentQuoteSource(client).fetch("600000")
 
     assert quote.name == "浦发银行"
+
+
+def test_tencent_snapshot_parses_valuation_without_field_guessing() -> None:
+    fields = [""] * 50
+    fields[1] = "浦发银行"
+    fields[2] = "600000"
+    fields[3] = "10.25"
+    fields[4] = "10.10"
+    fields[30] = "20260713103000"
+    fields[38] = "0.42"
+    fields[39] = "6.32"
+    fields[44] = "3120.50"
+    fields[46] = "0.58"
+
+    snapshot = parse_tencent_snapshot("~".join(fields), source="tencent")
+
+    assert snapshot.pe_ttm == Decimal("6.32")
+    assert snapshot.pb == Decimal("0.58")
+    assert snapshot.turnover_rate == Decimal("0.42")
+    assert snapshot.market_cap_yi == Decimal("3120.50")
+    assert snapshot.observed_at == datetime(2026, 7, 13, 10, 30)
+
+
+def test_tencent_snapshot_preserves_missing_valuation_fields() -> None:
+    fields = [""] * 50
+    fields[1:5] = ["浦发银行", "600000", "10.25", "10.10"]
+    fields[30] = "20260713103000"
+    fields[38] = "--"
+
+    snapshot = parse_tencent_snapshot("~".join(fields), source="tencent")
+
+    assert snapshot.pe_ttm is None
+    assert snapshot.pb is None
+    assert snapshot.turnover_rate is None
+    assert snapshot.market_cap_yi is None

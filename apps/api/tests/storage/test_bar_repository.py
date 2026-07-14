@@ -1,7 +1,8 @@
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 import duckdb
+import pytest
 
 from qibao_api.contracts.bars import DailyBar
 from qibao_api.storage.bar_repository import BarRepository
@@ -49,3 +50,44 @@ def test_trade_dates_are_distinct_and_descending(tmp_path) -> None:
     repository.upsert([make_bar()])
 
     assert repository.trade_dates(limit=10) == [date(2026, 7, 13)]
+
+
+def make_history(symbol: str, count: int, start: date = date(2026, 1, 1)) -> list[DailyBar]:
+    bars = []
+    for index in range(count):
+        close = Decimal("10") + Decimal(index) / Decimal("100")
+        bars.append(DailyBar(
+            symbol=symbol, trade_date=start + timedelta(days=index), open=close,
+            high=close + Decimal("0.1"), low=close - Decimal("0.1"), close=close,
+            volume=100_000, amount=close * Decimal("100000"), source="fixture",
+        ))
+    return bars
+
+
+def test_repository_returns_only_symbols_with_enough_history(tmp_path) -> None:
+    repository = BarRepository(tmp_path / "market.duckdb", tmp_path / "parquet")
+    repository.upsert(make_history("600000", 80) + make_history("000001", 40))
+    as_of = date(2026, 3, 31)
+
+    assert repository.symbols_with_history(60, as_of) == ["600000"]
+
+
+def test_latest_many_respects_as_of_and_returns_chronological_bars(tmp_path) -> None:
+    repository = BarRepository(tmp_path / "market.duckdb", tmp_path / "parquet")
+    bars = make_history("600000", 80)
+    repository.upsert(bars)
+    as_of = bars[-2].trade_date
+
+    result = repository.latest_many(["600000"], limit=60, as_of=as_of)
+
+    assert list(result) == ["600000"]
+    assert len(result["600000"]) == 60
+    assert result["600000"][0].trade_date < result["600000"][-1].trade_date
+    assert result["600000"][-1].trade_date == as_of
+
+
+def test_latest_many_rejects_non_a_share_symbols(tmp_path) -> None:
+    repository = BarRepository(tmp_path / "market.duckdb", tmp_path / "parquet")
+
+    with pytest.raises(ValueError, match="A-share"):
+        repository.latest_many(["113001"], limit=60, as_of=date(2026, 7, 14))
