@@ -12,6 +12,7 @@ from qibao_api.a_shares.diagnosis import (
     DiagnosisUnavailableError,
 )
 from qibao_api.a_shares.models import CandidateBoard
+from qibao_api.a_shares.repository import AShareResearchStoreError
 from qibao_api.dependencies import get_a_share_diagnosis_service, get_pipeline
 from qibao_api.main import app
 from qibao_api.libu_compliance.repository import SourceAuthorizationError
@@ -125,6 +126,16 @@ class UnavailableDiagnosisService(FakeDiagnosisService):
         raise DiagnosisUnavailableError("market and local history are unavailable")
 
 
+class UnauthorizedDiagnosisService(FakeDiagnosisService):
+    async def diagnose(self, symbol: str, as_of: date) -> AShareDiagnosis:
+        raise SourceAuthorizationError("tencent:missing")
+
+
+class CorruptResearchService(FakeDiagnosisService):
+    def candidates(self, as_of: date, limit: int) -> CandidateBoard:
+        raise AShareResearchStoreError("database malformed")
+
+
 def diagnosis_client(service=None) -> TestClient:
     app.dependency_overrides[get_a_share_diagnosis_service] = lambda: (
         service or FakeDiagnosisService()
@@ -142,6 +153,7 @@ def test_a_share_candidates_return_separate_empty_boards() -> None:
     assert response.json()["short_term"] == []
     assert response.json()["swing"] == []
     assert response.json()["factor_version"] == "a-share-factors-v1"
+    assert response.json()["universe_status"] == "empty"
 
 
 def test_a_share_diagnosis_returns_all_eight_sections() -> None:
@@ -169,3 +181,27 @@ def test_a_share_diagnosis_maps_missing_core_data_to_503() -> None:
 
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "a_share_diagnosis_unavailable"
+
+
+def test_a_share_diagnosis_keeps_compliance_denial_explicit() -> None:
+    with diagnosis_client(UnauthorizedDiagnosisService()) as client:
+        response = client.get("/api/v1/a-shares/600000/diagnosis?as_of=2026-07-14")
+
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "source_authorization_required"
+
+
+def test_a_share_store_corruption_maps_to_503() -> None:
+    with diagnosis_client(CorruptResearchService()) as client:
+        response = client.get("/api/v1/a-shares/candidates?as_of=2026-07-14")
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "a_share_research_store_error"
+
+
+def test_future_research_cutoff_is_rejected() -> None:
+    with diagnosis_client() as client:
+        response = client.get("/api/v1/a-shares/candidates?as_of=2999-01-01")
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "future_as_of_not_allowed"

@@ -49,6 +49,7 @@ class CandidateBoard(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     asset: Literal["a_share"] = "a_share"
+    universe_status: Literal["ready", "empty"] = "ready"
     snapshot_id: str | None = None
     input_snapshot_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     as_of: date
@@ -56,6 +57,16 @@ class CandidateBoard(BaseModel):
     short_term: list[CandidateEntry]
     swing: list[CandidateEntry]
     exclusions: list[CandidateExclusion] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def derive_empty_universe(cls, value):
+        if isinstance(value, dict) and "universe_status" not in value:
+            value = dict(value)
+            value["universe_status"] = (
+                "empty" if not value.get("short_term") and not value.get("swing") else "ready"
+            )
+        return value
 
     @model_validator(mode="after")
     def require_one_frozen_factor_date(self) -> "CandidateBoard":

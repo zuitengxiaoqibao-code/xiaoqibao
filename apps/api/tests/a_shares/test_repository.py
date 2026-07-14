@@ -1,3 +1,5 @@
+import hashlib
+import json
 import sqlite3
 from datetime import date
 from decimal import Decimal
@@ -106,3 +108,27 @@ def test_repository_verifies_every_snapshot_for_recovery_drill(tmp_path) -> None
     repository.append_diagnosis(diagnosis())
 
     assert repository.verify_all() == 2
+
+
+def test_input_hash_binds_canonical_source_payload(tmp_path) -> None:
+    repository = AShareResearchRepository(tmp_path / "research.sqlite3")
+    inputs = {
+        "bars": [{"symbol": "600000", "close": "10.25"}],
+        "market": {"source": "tencent"},
+    }
+
+    snapshot_id = repository.append_diagnosis(diagnosis(), input_payload=inputs)
+    stored = repository.get_diagnosis(snapshot_id)
+    encoded = json.dumps(
+        inputs, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+
+    assert stored.input_snapshot_hash == hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+    repository.connection.execute("DROP TRIGGER reject_update_diagnosis_snapshots")
+    repository.connection.execute(
+        "UPDATE diagnosis_snapshots SET input_payload='{}' WHERE snapshot_id=?",
+        (snapshot_id,),
+    )
+    repository.connection.commit()
+    with pytest.raises(AShareResearchIntegrityError, match="input"):
+        repository.get_diagnosis(snapshot_id)

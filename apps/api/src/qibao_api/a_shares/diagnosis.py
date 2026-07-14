@@ -18,6 +18,7 @@ from qibao_api.contracts.bars import DailyBar
 from qibao_api.contracts.market import AssetKind
 from qibao_api.contracts.news import NormalizedNewsEvent
 from qibao_api.gongbu.tencent_quotes import TencentMarketSnapshot
+from qibao_api.libu_compliance.repository import SourceAuthorizationError
 
 
 SECTION_NAMES = {
@@ -82,9 +83,13 @@ class NewsRepositoryPort(Protocol):
 
 
 class ResearchSnapshotRepositoryPort(Protocol):
-    def append_candidate_board(self, board: CandidateBoard) -> str: ...
+    def append_candidate_board(
+        self, board: CandidateBoard, input_payload: dict | None = None
+    ) -> str: ...
     def get_candidate_board(self, snapshot_id: str) -> CandidateBoard: ...
-    def append_diagnosis(self, diagnosis: AShareDiagnosis) -> str: ...
+    def append_diagnosis(
+        self, diagnosis: AShareDiagnosis, input_payload: dict | None = None
+    ) -> str: ...
     def get_diagnosis(self, snapshot_id: str) -> AShareDiagnosis: ...
 
 
@@ -134,7 +139,17 @@ class AShareDiagnosisService:
             })
         if self.research_repository is None:
             return board
-        snapshot_id = self.research_repository.append_candidate_board(board)
+        input_payload = {
+            "as_of": as_of.isoformat(),
+            "factor_version": FACTOR_VERSION,
+            "histories": {
+                symbol: [bar.model_dump(mode="json") for bar in histories.get(symbol, [])]
+                for symbol in symbols
+            },
+        }
+        snapshot_id = self.research_repository.append_candidate_board(
+            board, input_payload=input_payload
+        )
         return self.research_repository.get_candidate_board(snapshot_id)
 
     async def diagnose(self, symbol: str, as_of: date) -> AShareDiagnosis:
@@ -161,7 +176,21 @@ class AShareDiagnosisService:
         )
         if self.research_repository is None:
             return diagnosis
-        snapshot_id = self.research_repository.append_diagnosis(diagnosis)
+        input_payload = {
+            "symbol": symbol,
+            "as_of": as_of.isoformat(),
+            "bars": [bar.model_dump(mode="json") for bar in bars],
+            "market": market.model_dump(mode="json") if market is not None else None,
+            "market_error": market_error,
+            "finance": finance.model_dump(mode="json") if finance is not None else None,
+            "finance_error": finance_error,
+            "events": [event.model_dump(mode="json") for event in events],
+            "news_error": news_error,
+            "factor_version": FACTOR_VERSION,
+        }
+        snapshot_id = self.research_repository.append_diagnosis(
+            diagnosis, input_payload=input_payload
+        )
         return self.research_repository.get_diagnosis(snapshot_id)
 
     async def _market(
@@ -174,6 +203,8 @@ class AShareDiagnosisService:
             if snapshot.observed_at.date() > as_of:
                 return None, "market snapshot is later than diagnosis as_of"
             return snapshot, None
+        except SourceAuthorizationError:
+            raise
         except Exception as error:
             return None, str(error)
 
@@ -189,6 +220,8 @@ class AShareDiagnosisService:
             if snapshot.report_period is not None and snapshot.report_period > as_of:
                 return None, "finance report period is later than diagnosis as_of"
             return snapshot, None
+        except SourceAuthorizationError:
+            raise
         except Exception as error:
             return None, str(error)
 

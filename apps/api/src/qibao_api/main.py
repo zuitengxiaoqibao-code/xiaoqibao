@@ -260,6 +260,12 @@ async def serialize_runtime_access(request: Request, call_next):
     write_gate = getattr(request.app.state, "write_gate", None)
     if write_gate is None:
         return await call_next(request)
+    path = request.url.path
+    if request.method == "GET" and (
+        path == "/api/v1/a-shares/candidates"
+        or (path.startswith("/api/v1/a-shares/") and path.endswith("/diagnosis"))
+    ):
+        return await call_next(request)
     async with write_gate:
         return await call_next(request)
 app.include_router(health_router)

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 
 from qibao_api.a_shares.diagnosis import AShareDiagnosis, DiagnosisUnavailableError
 from qibao_api.a_shares.models import CandidateBoard
-from qibao_api.a_shares.repository import AShareResearchIntegrityError
+from qibao_api.a_shares.repository import AShareResearchStoreError
 from qibao_api.contracts.instruments import AShareCode
 from qibao_api.contracts.research import ResearchCard
 from qibao_api.dependencies import get_a_share_diagnosis_service, get_pipeline
@@ -20,6 +20,30 @@ def _beijing_today() -> date:
     return datetime.now(ZoneInfo("Asia/Shanghai")).date()
 
 
+def _research_date(value: date | None) -> date:
+    today = _beijing_today()
+    result = value or today
+    if result > today:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "future_as_of_not_allowed",
+                "message": "研究截止日期不能晚于北京时间今天",
+            },
+        )
+    return result
+
+
+def _store_error() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail={
+            "code": "a_share_research_store_error",
+            "message": "A 股研究存档暂不可用",
+        },
+    )
+
+
 @router.get("/candidates", response_model=CandidateBoard)
 def candidates(
     service: Annotated[object, Depends(get_a_share_diagnosis_service)],
@@ -27,15 +51,9 @@ def candidates(
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> CandidateBoard:
     try:
-        return service.candidates(as_of or _beijing_today(), limit)
-    except AShareResearchIntegrityError as error:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={
-                "code": "a_share_research_integrity_error",
-                "message": "A 股研究存档校验失败",
-            },
-        ) from error
+        return service.candidates(_research_date(as_of), limit)
+    except AShareResearchStoreError as error:
+        raise _store_error() from error
 
 
 @router.get("/{symbol}/diagnosis", response_model=AShareDiagnosis)
@@ -45,7 +63,15 @@ async def diagnosis(
     as_of: date | None = None,
 ) -> AShareDiagnosis:
     try:
-        return await service.diagnose(symbol, as_of or _beijing_today())
+        return await service.diagnose(symbol, _research_date(as_of))
+    except SourceAuthorizationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "source_authorization_required",
+                "message": "请先在礼部完成 A 股行情和财务数据授权",
+            },
+        ) from error
     except DiagnosisUnavailableError as error:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -54,14 +80,8 @@ async def diagnosis(
                 "message": "A 股基础行情和本地历史均不可用",
             },
         ) from error
-    except AShareResearchIntegrityError as error:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={
-                "code": "a_share_research_integrity_error",
-                "message": "A 股研究存档校验失败",
-            },
-        ) from error
+    except AShareResearchStoreError as error:
+        raise _store_error() from error
 
 @router.get("/{symbol}/snapshot", response_model=ResearchCard)
 async def snapshot(
