@@ -126,6 +126,24 @@ def test_newer_commit_before_older_still_derives_complete_change_chain(tmp_path)
     ]
 
 
+def test_forward_and_reverse_arrival_publish_identical_latest_revision() -> None:
+    forward = ClauseRepository(create_engine("sqlite+pysqlite:///:memory:"))
+    reverse = ClauseRepository(create_engine("sqlite+pysqlite:///:memory:"))
+    forward.initialize()
+    reverse.initialize()
+    for item in (snapshot("9.87", 1), snapshot("9.66", 2)):
+        forward.append(item)
+    for item in (snapshot("9.66", 2), snapshot("9.87", 1)):
+        reverse.append(item)
+
+    assert forward.list_events("113065", source="eastmoney") == reverse.list_events(
+        "113065", source="eastmoney"
+    )
+    revisions = reverse.list_event_revisions("113065", source="eastmoney")
+    assert len(revisions) == 2
+    assert revisions[0] != revisions[1]
+
+
 def test_changed_conversion_price_appends_normalized_event() -> None:
     repository = ClauseRepository(create_engine("sqlite+pysqlite:///:memory:"))
     repository.initialize()
@@ -145,7 +163,6 @@ def test_decimal_scale_difference_does_not_create_price_change() -> None:
     repository.append(snapshot("9.870", 2))
 
     assert [event.event_type for event in repository.events("113065", source="eastmoney")] == [
-        "terms_observed",
         "terms_observed",
     ]
 
@@ -230,6 +247,17 @@ def test_verifier_registry_accepts_custom_source_and_rejects_unknown() -> None:
     unknown = item.model_copy(update={"parser_version": "unknown-v1"})
     with pytest.raises(ValueError, match="no verifier registered"):
         repository.append(unknown)
+
+
+def test_public_append_cannot_use_legacy_parser_to_bypass_verification() -> None:
+    repository = ClauseRepository(create_engine("sqlite+pysqlite:///:memory:"))
+    repository.initialize()
+    item = snapshot("9.87", 1)
+    forged_contract = item.contract.model_copy(update={"conversion_price": Decimal("1")})
+    forged = item.model_copy(update={"contract": forged_contract, "parser_version": "legacy-v1"})
+
+    with pytest.raises(ValueError, match="no verifier registered"):
+        repository.append(forged)
 
 
 def test_same_raw_can_be_replayed_under_new_parser_version() -> None:
