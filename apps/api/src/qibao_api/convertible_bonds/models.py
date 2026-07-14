@@ -1,6 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -40,7 +40,7 @@ class BondClauseSnapshot(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     contract: ConvertibleBondContract
-    raw_payload: dict[str, Any]
+    raw_payload: bytes
     content_hash: str
     source: str
     fetched_at: datetime

@@ -1,6 +1,7 @@
 import hashlib
 import json
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
@@ -13,7 +14,17 @@ from qibao_api.contracts.market import DataQuality
 from qibao_api.convertible_bonds.models import BondClauseSnapshot, BondQuote
 
 CHINA_TZ = timezone(timedelta(hours=8))
-ClauseTransport = Callable[[str], Awaitable[dict[str, Any]]]
+EASTMONEY_ENDPOINT = "https://datacenter-web.eastmoney.com/api/data/v1/get"
+EASTMONEY_REPORT = "RPT_BOND_CB_LIST"
+
+
+@dataclass(frozen=True)
+class RawHttpResponse:
+    status_code: int
+    body: bytes
+
+
+ClauseTransport = Callable[[str, dict[str, str]], Awaitable[RawHttpResponse]]
 
 
 def _bond_market_prefix(code: str) -> str:
@@ -39,6 +50,8 @@ class TencentBondQuoteSource:
         fields = _extract_tencent_payload(raw.decode("gbk", errors="strict")).split("~")
         if len(fields) < 31:
             raise ValueError("Tencent quote payload is incomplete")
+        if fields[2] != bond_code:
+            raise ValueError("Tencent payload code does not match requested bond")
         observed_at = datetime.strptime(fields[30], "%Y%m%d%H%M%S").replace(tzinfo=CHINA_TZ)
         price = Decimal(fields[3])
         suspended = price == 0
@@ -56,49 +69,97 @@ class TencentBondQuoteSource:
 
 
 def parse_eastmoney_clause_payload(
-    payload: dict[str, Any], *, fetched_at: datetime
+    raw_payload: bytes,
+    *,
+    requested_bond_code: str,
+    fetched_at: datetime,
 ) -> BondClauseSnapshot:
-    linked_stock = payload.get("linked_stock")
-    if not linked_stock:
-        raise ValueError("linked_stock is missing from clause payload")
-    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    try:
+        response = json.loads(raw_payload.decode("utf-8"))
+        rows = response["result"]["data"]
+        provider = rows[0]
+    except (UnicodeDecodeError, json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
+        raise ValueError("Eastmoney clause response is incomplete") from exc
+
+    code = _required(provider, "SECURITY_CODE")
+    if code != requested_bond_code:
+        raise ValueError("Eastmoney SECURITY_CODE does not match requested bond")
+
+    # Provider-to-domain mapping is deliberately explicit so upstream field changes fail closed.
     contract = ConvertibleBondContract(
-        bond_code=payload["bond_code"],
-        linked_stock=linked_stock,
-        conversion_price=Decimal(payload["conversion_price"]),
-        maturity=date.fromisoformat(payload["maturity"]),
-        remaining_size=Decimal(payload["remaining_size"]),
+        bond_code=code,
+        linked_stock=_required(provider, "CONVERT_STOCK_CODE"),
+        conversion_price=Decimal(_required(provider, "CONVERT_PRICE")),
+        maturity=_provider_date(_required(provider, "MATURITY_DATE")),
+        remaining_size=Decimal(_required(provider, "REMAIN_SIZE")),
         clause_dates=ClauseDates(
-            conversion_start=date.fromisoformat(payload["conversion_start"]),
-            redemption_start=_optional_date(payload.get("redemption_start")),
-            put_back_start=_optional_date(payload.get("put_back_start")),
+            conversion_start=_provider_date(_required(provider, "CONVERT_START_DATE")),
+            redemption_start=_optional_provider_date(provider.get("REDEEM_START_DATE")),
+            put_back_start=_optional_provider_date(provider.get("PUTBACK_START_DATE")),
         ),
         as_of=fetched_at,
     )
+    immutable_raw = bytes(raw_payload)
     return BondClauseSnapshot(
         contract=contract,
-        raw_payload=payload,
-        content_hash=hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+        raw_payload=immutable_raw,
+        content_hash=hashlib.sha256(immutable_raw).hexdigest(),
         source="eastmoney",
         fetched_at=fetched_at,
     )
 
 
-def _optional_date(value: Any) -> date | None:
-    return date.fromisoformat(value) if value else None
+def _required(payload: dict[str, Any], field: str) -> str:
+    value = payload.get(field)
+    if value is None or value == "":
+        raise ValueError(f"Eastmoney field {field} is missing")
+    return str(value)
+
+
+def _provider_date(value: str) -> date:
+    return date.fromisoformat(value.split(" ", 1)[0])
+
+
+def _optional_provider_date(value: Any) -> date | None:
+    return _provider_date(str(value)) if value else None
 
 
 class EastmoneyClauseSource:
     def __init__(
         self,
-        transport: ClauseTransport,
+        transport: ClauseTransport | None = None,
         *,
+        client: httpx.AsyncClient | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
     ) -> None:
         self.transport = transport
+        self.client = client
         self.clock = clock
 
     async def fetch(self, bond_code: str) -> BondClauseSnapshot:
         validate_convertible_bond_code(bond_code)
-        payload = await self.transport(bond_code)
-        return parse_eastmoney_clause_payload(payload, fetched_at=self.clock())
+        params = {
+            "reportName": EASTMONEY_REPORT,
+            "columns": "ALL",
+            "filter": f'(SECURITY_CODE="{bond_code}")',
+            "pageNumber": "1",
+            "pageSize": "1",
+        }
+        response = await self._request(params)
+        if response.status_code != 200:
+            raise ValueError(f"Eastmoney clause request returned status {response.status_code}")
+        return parse_eastmoney_clause_payload(
+            response.body,
+            requested_bond_code=bond_code,
+            fetched_at=self.clock(),
+        )
+
+    async def _request(self, params: dict[str, str]) -> RawHttpResponse:
+        if self.transport is not None:
+            return await self.transport(EASTMONEY_ENDPOINT, params)
+        if self.client is not None:
+            response = await self.client.get(EASTMONEY_ENDPOINT, params=params)
+        else:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(EASTMONEY_ENDPOINT, params=params)
+        return RawHttpResponse(status_code=response.status_code, body=response.content)
