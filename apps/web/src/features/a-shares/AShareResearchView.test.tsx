@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { AShareResearchView } from "./AShareResearchView";
@@ -81,12 +81,66 @@ describe("AShareResearchView", () => {
 
   it("explains an empty local universe without inventing candidates", async () => {
     render(<AShareResearchView
-      loadCandidates={() => Promise.resolve({ ...boards, short_term: [], swing: [] })}
+      loadCandidates={() => Promise.resolve({ ...boards, universe_status: "empty", short_term: [], swing: [] })}
       loadDiagnosis={() => Promise.resolve(partialDiagnosis)}
     />);
 
     expect(await screen.findByText("本地候选池为空")).toBeInTheDocument();
     expect(screen.getByText(/先到工部同步/)).toBeInTheDocument();
+  });
+
+  it("uses a neutral message when only the selected ranking is empty", async () => {
+    render(<AShareResearchView
+      loadCandidates={() => Promise.resolve({ ...boards, short_term: [] })}
+      loadDiagnosis={() => Promise.resolve(partialDiagnosis)}
+    />);
+
+    expect(await screen.findByText("当前榜单暂无候选")).toBeInTheDocument();
+    expect(screen.queryByText(/先到工部同步/)).not.toBeInTheDocument();
+  });
+
+  it("returns diagnosis to the explicit idle state when switching rankings", async () => {
+    render(<AShareResearchView
+      loadCandidates={() => Promise.resolve(boards)}
+      loadDiagnosis={() => Promise.resolve(partialDiagnosis)}
+    />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /600000/ }));
+    expect(await screen.findByText("基本面数据暂不可用")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "波段榜" }));
+    expect(screen.getByText("选择候选标的")).toBeInTheDocument();
+  });
+
+  it("ignores a stale diagnosis response after the selected ranking changes", async () => {
+    let resolveDiagnosis!: (value: typeof partialDiagnosis) => void;
+    const pending = new Promise<typeof partialDiagnosis>((resolve) => { resolveDiagnosis = resolve; });
+    render(<AShareResearchView
+      loadCandidates={() => Promise.resolve(boards)}
+      loadDiagnosis={() => pending}
+    />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /600000/ }));
+    fireEvent.click(screen.getByRole("tab", { name: "波段榜" }));
+    resolveDiagnosis(partialDiagnosis);
+
+    await waitFor(() => expect(screen.getByText("选择候选标的")).toBeInTheDocument());
+    expect(screen.queryByText("浦发银行 · 600000")).not.toBeInTheDocument();
+  });
+
+  it("links tabs to a panel and supports arrow-key navigation", async () => {
+    render(<AShareResearchView
+      loadCandidates={() => Promise.resolve(boards)}
+      loadDiagnosis={() => Promise.resolve(partialDiagnosis)}
+    />);
+
+    const shortTab = await screen.findByRole("tab", { name: "短线榜" });
+    const swingTab = screen.getByRole("tab", { name: "波段榜" });
+    expect(shortTab).toHaveAttribute("aria-controls", "a-share-candidate-panel");
+    expect(screen.getByRole("tabpanel")).toHaveAttribute("aria-labelledby", "a-share-short-term-tab");
+    shortTab.focus();
+    fireEvent.keyDown(shortTab, { key: "ArrowRight" });
+    expect(swingTab).toHaveFocus();
+    expect(swingTab).toHaveAttribute("aria-selected", "true");
   });
 
   it("surfaces candidate request failures", async () => {

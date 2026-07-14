@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity, AlertTriangle, BarChart3, ChevronRight, Database,
   LineChart, LoaderCircle, RefreshCw, ShieldAlert, Target, TrendingUp,
@@ -99,9 +99,17 @@ export function AShareResearchView({ loadCandidates, loadDiagnosis }: Props) {
   const [boardState, setBoardState] = useState<"loading" | "ready" | "error">("loading");
   const [diagnosisState, setDiagnosisState] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [error, setError] = useState("");
+  const diagnosisRequest = useRef(0);
+  const shortTabRef = useRef<HTMLButtonElement>(null);
+  const swingTabRef = useRef<HTMLButtonElement>(null);
+
+  function resetDiagnosis() {
+    diagnosisRequest.current += 1;
+    setSelected(null); setDiagnosis(null); setDiagnosisState("idle");
+  }
 
   function refresh() {
-    setBoardState("loading"); setError(""); setSelected(null); setDiagnosis(null);
+    setBoardState("loading"); setError(""); resetDiagnosis();
     void loadCandidates().then((value) => { setBoard(value); setBoardState("ready"); }).catch((reason) => { setError(reason instanceof Error ? reason.message : "候选池加载失败"); setBoardState("error"); });
   }
   useEffect(refresh, [loadCandidates]);
@@ -109,8 +117,26 @@ export function AShareResearchView({ loadCandidates, loadDiagnosis }: Props) {
 
   function inspect(symbol: string) {
     if (!board) return;
+    const request = ++diagnosisRequest.current;
     setSelected(symbol); setDiagnosisState("loading"); setError("");
-    void loadDiagnosis(symbol, board.as_of).then((value) => { setDiagnosis(value); setDiagnosisState("ready"); }).catch((reason) => { setDiagnosis(null); setError(reason instanceof Error ? reason.message : "诊断加载失败"); setDiagnosisState("error"); });
+    void loadDiagnosis(symbol, board.as_of).then((value) => {
+      if (request !== diagnosisRequest.current) return;
+      setDiagnosis(value); setDiagnosisState("ready");
+    }).catch((reason) => {
+      if (request !== diagnosisRequest.current) return;
+      setDiagnosis(null); setError(reason instanceof Error ? reason.message : "诊断加载失败"); setDiagnosisState("error");
+    });
+  }
+
+  function selectTab(nextTab: "short_term" | "swing") {
+    setTab(nextTab); resetDiagnosis(); setError("");
+  }
+
+  function handleTabKey(key: string) {
+    if (key !== "ArrowLeft" && key !== "ArrowRight") return;
+    const nextTab = tab === "short_term" ? "swing" : "short_term";
+    selectTab(nextTab);
+    (nextTab === "short_term" ? shortTabRef : swingTabRef).current?.focus();
   }
 
   return (
@@ -124,14 +150,17 @@ export function AShareResearchView({ loadCandidates, loadDiagnosis }: Props) {
         <section className="candidate-console">
           <header><div><p className="eyebrow">ZHONGSHU / RANKING</p><h2>候选观察榜</h2></div><span>{entries.length.toString().padStart(2, "0")} / {board ? board.short_term.length + board.swing.length : "--"}</span></header>
           <div className="candidate-tabs" role="tablist" aria-label="A 股候选周期">
-            <button role="tab" aria-selected={tab === "short_term"} onClick={() => { setTab("short_term"); setSelected(null); setDiagnosis(null); }}>短线榜</button>
-            <button role="tab" aria-selected={tab === "swing"} onClick={() => { setTab("swing"); setSelected(null); setDiagnosis(null); }}>波段榜</button>
+            <button ref={shortTabRef} id="a-share-short-term-tab" role="tab" aria-controls="a-share-candidate-panel" aria-selected={tab === "short_term"} tabIndex={tab === "short_term" ? 0 : -1} onKeyDown={(event) => handleTabKey(event.key)} onClick={() => selectTab("short_term")}>短线榜</button>
+            <button ref={swingTabRef} id="a-share-swing-tab" role="tab" aria-controls="a-share-candidate-panel" aria-selected={tab === "swing"} tabIndex={tab === "swing" ? 0 : -1} onKeyDown={(event) => handleTabKey(event.key)} onClick={() => selectTab("swing")}>波段榜</button>
           </div>
-          {boardState === "loading" && <div className="candidate-message"><LoaderCircle size={18} /><span>正在读取本地候选宇宙...</span></div>}
-          {boardState === "ready" && entries.length === 0 && <div className="candidate-message empty"><Database size={24} /><b>本地候选池为空</b><p>先到工部同步至少 60 根日线，再生成可重复候选榜。</p></div>}
-          <div className="candidate-list">{entries.map((entry) => <CandidateRow key={entry.symbol} entry={entry} selected={selected === entry.symbol} onSelect={() => inspect(entry.symbol)} />)}</div>
-          {board && board.exclusions.length > 0 && <div className="candidate-exclusions"><AlertTriangle size={14} /><span>{board.exclusions.length} 只股票因流动性或历史质量被排除</span></div>}
-          {board?.snapshot_id && <footer className="snapshot-foot"><span>候选快照</span><code>{board.snapshot_id}</code></footer>}
+          <div id="a-share-candidate-panel" role="tabpanel" aria-labelledby={tab === "short_term" ? "a-share-short-term-tab" : "a-share-swing-tab"}>
+            {boardState === "loading" && <div className="candidate-message"><LoaderCircle size={18} /><span>正在读取本地候选宇宙...</span></div>}
+            {boardState === "ready" && entries.length === 0 && board?.universe_status === "empty" && <div className="candidate-message empty"><Database size={24} /><b>本地候选池为空</b><p>先到工部同步至少 60 根日线，再生成可重复候选榜。</p></div>}
+            {boardState === "ready" && entries.length === 0 && board?.universe_status !== "empty" && <div className="candidate-message empty"><Database size={24} /><b>当前榜单暂无候选</b><p>本次确定性筛选没有标的进入该周期榜单。</p></div>}
+            <div className="candidate-list">{entries.map((entry) => <CandidateRow key={entry.symbol} entry={entry} selected={selected === entry.symbol} onSelect={() => inspect(entry.symbol)} />)}</div>
+            {board && board.exclusions.length > 0 && <div className="candidate-exclusions"><AlertTriangle size={14} /><span>{board.exclusions.length} 只股票因流动性或历史质量被排除</span></div>}
+            {board?.snapshot_id && <footer className="snapshot-foot"><span>候选快照</span><code>{board.snapshot_id}</code></footer>}
+          </div>
         </section>
 
         <section className="diagnosis-console">
