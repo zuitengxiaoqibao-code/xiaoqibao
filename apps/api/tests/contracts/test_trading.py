@@ -25,6 +25,16 @@ def test_order_requires_a_share_symbol_and_board_lot() -> None:
         )
 
 
+def test_order_rejects_convertible_bond_code() -> None:
+    with pytest.raises(ValidationError):
+        OrderRequest(
+            client_order_id="bond-in-a-share-contract",
+            symbol="113001",
+            side="buy",
+            shares=100,
+        )
+
+
 def test_order_rejects_unsupported_side_and_oversize_quantity() -> None:
     with pytest.raises(ValidationError):
         OrderRequest(

@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from qibao_api.contracts.instruments import validate_a_share_code
+
 
 class PaperAccount(BaseModel):
     account_id: str = Field(min_length=1, max_length=64)
@@ -25,6 +27,11 @@ class OrderRequest(BaseModel):
     symbol: str = Field(pattern=r"^\d{6}$")
     side: Literal["buy", "sell"]
     shares: int = Field(gt=0, le=1_000_000)
+
+    @field_validator("symbol")
+    @classmethod
+    def require_a_share_symbol(cls, symbol: str) -> str:
+        return validate_a_share_code(symbol)
 
     @field_validator("shares")
     @classmethod
