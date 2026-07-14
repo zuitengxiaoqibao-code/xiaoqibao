@@ -1,0 +1,19 @@
+{
+  "evidence": {
+    "endpoint": "https://datacenter-web.eastmoney.com/api/data/v1/get",
+    "report": "RPTA_WEB_KZZ_LS",
+    "retrieved_at": "2026-07-14",
+    "data_date": "2026-07-13",
+    "source": "Eastmoney"
+  },
+  "record": {
+    "ZCODE": "118040",
+    "SWAPVALUE": "109.786039986",
+    "PUREBONDVALUE": "100.8084389141",
+    "PUREBONDOR": "9.57019193",
+    "SWAPOR": "0.6102415335",
+    "FCLOSE": "110.456",
+    "SWAPPRICE": "28.51",
+    "STOCK_PRICE": "31.3"
+  }
+}

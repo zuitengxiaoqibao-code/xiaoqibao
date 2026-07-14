@@ -1,5 +1,7 @@
+import json
 from datetime import date, datetime, timezone
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -15,27 +17,60 @@ from qibao_api.convertible_bonds.metrics import (
 )
 
 
-def test_published_conversion_value_formula_keeps_decimal_precision() -> None:
-    # Published formula: par / conversion price * linked-stock price.
+FIXTURE = (
+    Path(__file__).parents[1]
+    / "fixtures"
+    / "convertible_bonds"
+    / "eastmoney_118040_20260713.json"
+)
+
+
+def eastmoney_118040() -> dict[str, object]:
+    return json.loads(FIXTURE.read_text(encoding="utf-8"))
+
+
+def test_eastmoney_118040_conversion_value_matches_published_field() -> None:
+    # Endpoint https://datacenter-web.eastmoney.com/api/data/v1/get,
+    # report RPTA_WEB_KZZ_LS, retrieved 2026-07-14; data date 2026-07-13,
+    # ZCODE 118040, source Eastmoney.
+    record = eastmoney_118040()["record"]
     value = conversion_value(
         par_value=Decimal("100"),
-        conversion_price=Decimal("9.87"),
-        stock_price=Decimal("10.25"),
+        conversion_price=Decimal("28.51"),
+        stock_price=Decimal("31.3"),
     )
 
-    assert value == Decimal("100") / Decimal("9.87") * Decimal("10.25")
-    assert value != value.quantize(Decimal("0.01"))
+    published = Decimal(record["SWAPVALUE"])
+    assert abs(value - published) <= Decimal("0.000000001")
 
 
-def test_premium_formulas_match_hand_calculation_without_rounding() -> None:
-    conversion = Decimal("100") / Decimal("9.87") * Decimal("10.25")
+def test_eastmoney_118040_premiums_match_published_percent_fields() -> None:
+    # SWAPOR and PUREBONDOR are published percentages, so divide them by 100
+    # before comparing with the ratio returned by this domain module.
+    record = eastmoney_118040()["record"]
+    conversion = Decimal(record["SWAPVALUE"])
+    bond_price = Decimal(record["FCLOSE"])
+    pure_bond_value = Decimal(record["PUREBONDVALUE"])
 
-    assert conversion_premium(Decimal("121.50"), conversion) == (
-        Decimal("121.50") - conversion
-    ) / conversion
-    assert pure_bond_premium(Decimal("121.50"), Decimal("92.40")) == (
-        Decimal("121.50") - Decimal("92.40")
-    ) / Decimal("92.40")
+    swap_ratio = conversion_premium(bond_price, conversion)
+    pure_ratio = pure_bond_premium(bond_price, pure_bond_value)
+
+    assert swap_ratio is not None
+    assert pure_ratio is not None
+    assert abs(swap_ratio - Decimal("0.006102415335")) <= Decimal("0.000000000001")
+    assert abs(pure_ratio - Decimal("0.095701919302")) <= Decimal("0.000000000001")
+    assert abs(swap_ratio - Decimal(record["SWAPOR"]) / Decimal("100")) <= Decimal(
+        "0.000000000001"
+    )
+    assert abs(pure_ratio - Decimal(record["PUREBONDOR"]) / Decimal("100")) <= Decimal(
+        "0.00000000001"
+    )
+
+
+def test_simple_hand_calculated_examples_use_fixed_expected_constants() -> None:
+    assert conversion_value(Decimal("100"), Decimal("20"), Decimal("30")) == Decimal("150")
+    assert conversion_premium(Decimal("165"), Decimal("150")) == Decimal("0.1")
+    assert pure_bond_premium(Decimal("110"), Decimal("100")) == Decimal("0.1")
 
 
 def test_display_boundary_rounds_without_changing_calculation_value() -> None:
