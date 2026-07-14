@@ -57,6 +57,13 @@ def test_missing_turnover_amount_is_observe_only_and_names_the_missing_input() -
     assert result.rule_version == "bond-risk.1"
 
 
+def test_missing_conversion_premium_is_observe_only() -> None:
+    result = evaluate_bond_risk(risk_input(conversion_premium=None), BondRiskPolicy())
+
+    assert result.outcome == "observe_only"
+    assert result.reason_code == "bond_conversion_premium_missing"
+
+
 @pytest.mark.parametrize(
     ("overrides", "reason_code"),
     [
@@ -93,6 +100,36 @@ def test_combination_uses_documented_priority_independent_of_input_field_order()
     assert forward.priority == 500
 
 
+def test_exclude_outcome_always_beats_higher_priority_observe_only() -> None:
+    result = evaluate_bond_risk(
+        risk_input(strong_redemption=clause("unknown"), remaining_size=Decimal("0.1")),
+        BondRiskPolicy(),
+    )
+
+    assert result.outcome == "exclude"
+    assert result.reason_code == "bond_remaining_size_too_small"
+
+
+@given(
+    st.sampled_from(
+        [
+            {"remaining_days": 1},
+            {"remaining_size": Decimal("0.1")},
+            {"conversion_premium": Decimal("0.9")},
+            {"turnover_amount": Decimal("1")},
+        ]
+    )
+)
+def test_unknown_strong_redemption_never_masks_an_exclusion(
+    exclusion: dict[str, object],
+) -> None:
+    result = evaluate_bond_risk(
+        risk_input(strong_redemption=clause("unknown"), **exclusion), BondRiskPolicy()
+    )
+
+    assert result.outcome == "exclude"
+
+
 def test_strong_redemption_cannot_be_inferred_from_name_or_price() -> None:
     with pytest.raises(ValidationError):
         BondRiskInput(
@@ -107,6 +144,7 @@ def test_strong_redemption_cannot_be_inferred_from_name_or_price() -> None:
 
 
 def candidate(code: str, **overrides: object) -> BondCandidate:
+    evidence = clause(bond_code=code)
     values = {
         "bond_code": code,
         "bond_price": Decimal("110"),
@@ -114,9 +152,21 @@ def candidate(code: str, **overrides: object) -> BondCandidate:
         "conversion_premium": Decimal("0.15"),
         "remaining_size": Decimal("12"),
         "remaining_days": 900,
-        "risk": evaluate_bond_risk(risk_input(bond_code=code), BondRiskPolicy()),
+        "strong_redemption": evidence,
     }
     values.update(overrides)
+    if "risk" not in overrides:
+        values["risk"] = evaluate_bond_risk(
+            risk_input(
+                bond_code=code,
+                turnover_amount=values["turnover_amount"],
+                conversion_premium=values["conversion_premium"],
+                remaining_size=values["remaining_size"],
+                remaining_days=values["remaining_days"],
+                strong_redemption=values["strong_redemption"],
+            ),
+            BondRiskPolicy(),
+        )
     return BondCandidate(**values)
 
 
@@ -126,11 +176,56 @@ def test_candidate_input_forbids_a_share_research_and_score_fields() -> None:
             candidate("113001", **{field: 99})
 
 
+def test_risk_result_is_bound_to_bond_asset_and_canonical_input_snapshot() -> None:
+    value = risk_input()
+    first = evaluate_bond_risk(value, BondRiskPolicy())
+    second = evaluate_bond_risk(value, BondRiskPolicy())
+
+    assert first.bond_code == "113001"
+    assert first.asset.value == "convertible_bond"
+    assert first.input_fingerprint == second.input_fingerprint
+    assert len(first.input_fingerprint) == 64
+
+
+def test_candidate_rejects_risk_for_another_bond() -> None:
+    other = evaluate_bond_risk(risk_input(bond_code="113002"), BondRiskPolicy())
+
+    with pytest.raises(ValidationError, match="bond_code"):
+        candidate("113001", risk=other)
+
+
+def test_candidate_rejects_risk_from_changed_premium_snapshot() -> None:
+    old = evaluate_bond_risk(risk_input(conversion_premium=Decimal("0.15")), BondRiskPolicy())
+
+    with pytest.raises(ValidationError, match="fingerprint"):
+        candidate("113001", conversion_premium=Decimal("0.16"), risk=old)
+
+
+def test_candidate_rejects_stale_eligible_risk_after_metric_changes() -> None:
+    old = evaluate_bond_risk(risk_input(), BondRiskPolicy())
+
+    with pytest.raises(ValidationError, match="fingerprint"):
+        candidate("113001", remaining_days=1, risk=old)
+
+
+def test_candidate_cannot_be_eligible_with_missing_conversion_premium() -> None:
+    evidence = clause()
+    risk = evaluate_bond_risk(
+        risk_input(conversion_premium=None, strong_redemption=evidence), BondRiskPolicy()
+    )
+
+    item = candidate(
+        "113001", conversion_premium=None, strong_redemption=evidence, risk=risk
+    )
+    assert item.risk.outcome == "observe_only"
+
+
 def test_candidate_filter_and_ranking_use_only_bond_metrics_and_risk() -> None:
     first = candidate("113001", conversion_premium=Decimal("0.10"))
     second = candidate("118040", conversion_premium=Decimal("0.20"))
     excluded = candidate(
         "113002",
+        remaining_days=1,
         risk=evaluate_bond_risk(
             risk_input(bond_code="113002", remaining_days=1), BondRiskPolicy()
         ),

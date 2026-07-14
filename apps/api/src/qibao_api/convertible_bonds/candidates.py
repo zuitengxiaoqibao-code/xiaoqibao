@@ -1,9 +1,14 @@
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from qibao_api.contracts.instruments import validate_convertible_bond_code
-from qibao_api.convertible_bonds.risk import BondRiskResult
+from qibao_api.convertible_bonds.metrics import EvidenceBackedClauseState
+from qibao_api.convertible_bonds.risk import (
+    BondRiskInput,
+    BondRiskResult,
+    risk_input_fingerprint,
+)
 
 
 class BondCandidate(BaseModel):
@@ -15,12 +20,30 @@ class BondCandidate(BaseModel):
     conversion_premium: Decimal | None
     remaining_size: Decimal = Field(ge=0)
     remaining_days: int = Field(ge=0)
+    strong_redemption: EvidenceBackedClauseState
     risk: BondRiskResult
 
     @field_validator("bond_code")
     @classmethod
     def validate_code(cls, value: str) -> str:
         return validate_convertible_bond_code(value)
+
+    @model_validator(mode="after")
+    def bind_risk_to_candidate_snapshot(self) -> "BondCandidate":
+        if self.risk.bond_code != self.bond_code:
+            raise ValueError("risk bond_code must match candidate bond_code")
+        snapshot = BondRiskInput(
+            bond_code=self.bond_code,
+            turnover_amount=self.turnover_amount,
+            conversion_premium=self.conversion_premium,
+            remaining_size=self.remaining_size,
+            remaining_days=self.remaining_days,
+            strong_redemption=self.strong_redemption,
+        )
+        expected = risk_input_fingerprint(snapshot, self.risk.rule_version)
+        if self.risk.input_fingerprint != expected:
+            raise ValueError("risk input_fingerprint must match candidate metric snapshot")
+        return self
 
 
 class BondCandidateFilter(BaseModel):
