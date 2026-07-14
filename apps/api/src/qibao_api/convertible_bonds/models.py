@@ -44,6 +44,7 @@ class BondClauseSnapshot(BaseModel):
     content_hash: str
     source: str
     fetched_at: datetime
+    parser_version: str
 
     @field_validator("fetched_at")
     @classmethod

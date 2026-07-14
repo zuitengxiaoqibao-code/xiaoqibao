@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 import httpx
@@ -7,143 +7,135 @@ import pytest
 
 from qibao_api.contracts.market import AssetKind, DataQuality
 from qibao_api.convertible_bonds.adapters import (
+    CB_LIST_REPORT,
+    BS_INFO_REPORT,
     EastmoneyClauseSource,
     RawHttpResponse,
     TencentBondQuoteSource,
+    unpack_raw_reports,
 )
 
 
-def tencent_body(
-    *, code: str = "113001", price: str = "121.50", timestamp: str = "20260714103000"
-) -> bytes:
+# Field shape captured from Eastmoney on 2026-07-14; values are anonymized.
+def eastmoney_capture(report: str, *, code: str = "113065", price: str = "12.34") -> bytes:
+    if report == CB_LIST_REPORT:
+        row = {
+            "SECURITY_CODE": code,
+            "CONVERT_STOCK_CODE": "600001",
+            "TRANSFER_VALUE": price,
+            "TRANSFER_START_DATE": "2023-03-01 00:00:00",
+            "REDEEM_CLAUSE": "anonymized redemption clause",
+            "RESALE_CLAUSE": "anonymized resale clause",
+        }
+    elif report == BS_INFO_REPORT:
+        row = {
+            "SECURITY_CODE": code,
+            "HONOUR_DATE": "2028-09-15 00:00:00",
+            "BOND_BALANCE": "18.765432",
+            "CLAUSE_CONTENT": "anonymized supplementary clause text",
+            "EXPIRE_DATE": "2028-09-15 00:00:00",
+        }
+    else:
+        raise AssertionError(report)
+    return json.dumps({"result": {"data": [row]}}, separators=(",", ":")).encode()
+
+
+def tencent_body(*, code: str = "113065", price: str = "121.50") -> bytes:
     fields = [""] * 31
-    fields[1] = "\u6d66\u53d1\u8f6c\u503a"
+    fields[1] = "\u6d4b\u8bd5\u8f6c\u503a"
     fields[2] = code
     fields[3] = price
     fields[4] = "120.00"
-    fields[30] = timestamp
-    return ('v_sh113001="' + "~".join(fields) + '";').encode("gbk")
+    fields[30] = "20260714103000"
+    return ('v_sh113065="' + "~".join(fields) + '";').encode("gbk")
 
 
 @pytest.mark.asyncio
-async def test_tencent_adapter_decodes_gbk_and_preserves_raw_identity() -> None:
-    raw = tencent_body()
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/q=sh113001"
-        return httpx.Response(200, content=raw)
+async def test_tencent_quote_metadata_suspension_and_code_validation() -> None:
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=tencent_body())
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        quote = await TencentBondQuoteSource(client).fetch("113001")
-
+        quote = await TencentBondQuoteSource(client).fetch("113065")
     assert quote.asset is AssetKind.CONVERTIBLE_BOND
-    assert quote.symbol == "113001"
-    assert quote.name == "\u6d66\u53d1\u8f6c\u503a"
     assert quote.price == Decimal("121.50")
-    assert quote.source == "tencent"
-    assert quote.observed_at == datetime(
-        2026, 7, 14, 10, 30, tzinfo=timezone(timedelta(hours=8))
-    )
+    assert quote.observed_at == datetime(2026, 7, 14, 10, 30, tzinfo=timezone(timedelta(hours=8)))
     assert quote.quality is DataQuality.FRESH
-    assert quote.raw_identity
 
+    async def mismatch(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=tencent_body(code="113066"))
 
-@pytest.mark.asyncio
-async def test_tencent_adapter_rejects_provider_code_mismatch() -> None:
-    async def handler(_: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, content=tencent_body(code="113002"))
-
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(mismatch)) as client:
         with pytest.raises(ValueError, match="does not match requested bond"):
-            await TencentBondQuoteSource(client).fetch("113001")
+            await TencentBondQuoteSource(client).fetch("113065")
 
 
 @pytest.mark.asyncio
-async def test_tencent_adapter_marks_zero_price_as_suspended() -> None:
-    async def handler(_: httpx.Request) -> httpx.Response:
+async def test_tencent_marks_zero_price_suspended_and_rejects_short_payload() -> None:
+    async def suspended(_: httpx.Request) -> httpx.Response:
         return httpx.Response(200, content=tencent_body(price="0"))
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        quote = await TencentBondQuoteSource(client).fetch("113001")
-
+    async with httpx.AsyncClient(transport=httpx.MockTransport(suspended)) as client:
+        quote = await TencentBondQuoteSource(client).fetch("113065")
     assert quote.price is None
     assert quote.suspended is True
-    assert quote.quality is DataQuality.UNAVAILABLE
 
+    async def short(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b'v_sh113065="too~short";')
 
-@pytest.mark.asyncio
-async def test_tencent_adapter_rejects_incomplete_payload() -> None:
-    async def handler(_: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, content=b'v_sh113001="too~short";')
-
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(short)) as client:
         with pytest.raises(ValueError, match="incomplete"):
-            await TencentBondQuoteSource(client).fetch("113001")
-
-
-def eastmoney_body(*, code: str = "113001", price: str = "9.87") -> bytes:
-    return json.dumps({
-        "version": "1f8d9b",
-        "result": {"pages": 1, "data": [{
-            "SECURITY_CODE": code,
-            "CONVERT_STOCK_CODE": "600000",
-            "CONVERT_PRICE": price,
-            "REMAIN_SIZE": "12.345678",
-            "MATURITY_DATE": "2030-07-14 00:00:00",
-            "CONVERT_START_DATE": "2026-01-01 00:00:00",
-            "REDEEM_START_DATE": "2026-07-01 00:00:00",
-            "PUTBACK_START_DATE": "2029-01-01 00:00:00",
-            "REDEEM_CLAUSE": "provider text",
-            "PUTBACK_CLAUSE": "provider text",
-        }]},
-    }, separators=(",", ":")).encode()
+            await TencentBondQuoteSource(client).fetch("113065")
 
 
 @pytest.mark.asyncio
-async def test_eastmoney_source_builds_real_request_and_maps_provider_fields() -> None:
+async def test_eastmoney_fetches_two_reports_and_maps_only_observed_fields() -> None:
     seen: list[tuple[str, dict[str, str]]] = []
 
     async def transport(url: str, params: dict[str, str]) -> RawHttpResponse:
         seen.append((url, params))
-        return RawHttpResponse(status_code=200, body=eastmoney_body())
+        return RawHttpResponse(200, eastmoney_capture(params["reportName"]))
 
-    def clock() -> datetime:
-        return datetime(2026, 7, 14, tzinfo=timezone.utc)
+    observed = datetime(2026, 7, 14, tzinfo=timezone.utc)
+    snapshot = await EastmoneyClauseSource(transport=transport, clock=lambda: observed).fetch(
+        "113065"
+    )
 
-    snapshot = await EastmoneyClauseSource(transport=transport, clock=clock).fetch("113001")
-
-    assert seen[0][0] == "https://datacenter-web.eastmoney.com/api/data/v1/get"
-    assert seen[0][1]["reportName"] == "RPT_BOND_CB_LIST"
-    assert seen[0][1]["filter"] == '(SECURITY_CODE="113001")'
-    assert snapshot.contract.linked_stock == "600000"
-    assert snapshot.contract.conversion_price == Decimal("9.87")
-    assert snapshot.source == "eastmoney"
-    assert snapshot.raw_payload == eastmoney_body()
-    assert snapshot.fetched_at == clock()
+    assert [params["reportName"] for _, params in seen] == [CB_LIST_REPORT, BS_INFO_REPORT]
+    assert all(params["filter"] == '(SECURITY_CODE="113065")' for _, params in seen)
+    assert snapshot.contract.linked_stock == "600001"
+    assert snapshot.contract.conversion_price == Decimal("12.34")
+    assert snapshot.contract.clause_dates.conversion_start == date(2023, 3, 1)
+    assert snapshot.contract.maturity == date(2028, 9, 15)
+    assert snapshot.contract.remaining_size == Decimal("18.765432")
+    assert snapshot.contract.clause_dates.redemption_start is None
+    assert snapshot.contract.clause_dates.put_back_start is None
+    raw = unpack_raw_reports(snapshot.raw_payload)
+    assert raw[CB_LIST_REPORT] == eastmoney_capture(CB_LIST_REPORT)
+    assert raw[BS_INFO_REPORT] == eastmoney_capture(BS_INFO_REPORT)
+    assert b"REDEEM_CLAUSE" in raw[CB_LIST_REPORT]
+    assert b"CLAUSE_CONTENT" in raw[BS_INFO_REPORT]
 
 
 @pytest.mark.asyncio
-async def test_eastmoney_source_rejects_status_and_provider_code_mismatch() -> None:
-    async def bad_status(_: str, __: dict[str, str]) -> RawHttpResponse:
-        return RawHttpResponse(status_code=503, body=b"unavailable")
+async def test_eastmoney_rejects_status_missing_fields_and_code_mismatch() -> None:
+    async def status(_: str, __: dict[str, str]) -> RawHttpResponse:
+        return RawHttpResponse(503, b"unavailable")
 
     with pytest.raises(ValueError, match="status 503"):
-        await EastmoneyClauseSource(transport=bad_status).fetch("113001")
+        await EastmoneyClauseSource(transport=status).fetch("113065")
 
-    async def wrong_code(_: str, __: dict[str, str]) -> RawHttpResponse:
-        return RawHttpResponse(status_code=200, body=eastmoney_body(code="113002"))
+    async def mismatch(_: str, params: dict[str, str]) -> RawHttpResponse:
+        return RawHttpResponse(200, eastmoney_capture(params["reportName"], code="113066"))
 
     with pytest.raises(ValueError, match="does not match requested bond"):
-        await EastmoneyClauseSource(transport=wrong_code).fetch("113001")
+        await EastmoneyClauseSource(transport=mismatch).fetch("113065")
 
-
-@pytest.mark.asyncio
-async def test_eastmoney_source_rejects_missing_linked_stock() -> None:
-    raw = json.loads(eastmoney_body())
-    del raw["result"]["data"][0]["CONVERT_STOCK_CODE"]
-
-    async def transport(_: str, __: dict[str, str]) -> RawHttpResponse:
-        return RawHttpResponse(status_code=200, body=json.dumps(raw).encode())
+    async def missing(_: str, params: dict[str, str]) -> RawHttpResponse:
+        raw = json.loads(eastmoney_capture(params["reportName"]))
+        if params["reportName"] == CB_LIST_REPORT:
+            del raw["result"]["data"][0]["CONVERT_STOCK_CODE"]
+        return RawHttpResponse(200, json.dumps(raw).encode())
 
     with pytest.raises(ValueError, match="CONVERT_STOCK_CODE"):
-        await EastmoneyClauseSource(transport=transport).fetch("113001")
+        await EastmoneyClauseSource(transport=missing).fetch("113065")

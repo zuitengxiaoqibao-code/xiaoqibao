@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import json
 from collections.abc import Awaitable, Callable
@@ -15,7 +16,9 @@ from qibao_api.convertible_bonds.models import BondClauseSnapshot, BondQuote
 
 CHINA_TZ = timezone(timedelta(hours=8))
 EASTMONEY_ENDPOINT = "https://datacenter-web.eastmoney.com/api/data/v1/get"
-EASTMONEY_REPORT = "RPT_BOND_CB_LIST"
+CB_LIST_REPORT = "RPT_BOND_CB_LIST"
+BS_INFO_REPORT = "RPT_BOND_BS_INFO"
+EASTMONEY_PARSER_VERSION = "eastmoney-dual-v1"
 
 
 @dataclass(frozen=True)
@@ -68,45 +71,77 @@ class TencentBondQuoteSource:
         )
 
 
-def parse_eastmoney_clause_payload(
-    raw_payload: bytes,
+def pack_raw_reports(reports: dict[str, bytes]) -> bytes:
+    payload = {
+        report: base64.b64encode(body).decode("ascii") for report, body in sorted(reports.items())
+    }
+    return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("ascii")
+
+
+def unpack_raw_reports(raw_payload: bytes) -> dict[str, bytes]:
+    try:
+        payload = json.loads(raw_payload.decode("ascii"))
+        return {report: base64.b64decode(body, validate=True) for report, body in payload.items()}
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError, TypeError) as exc:
+        raise ValueError("Eastmoney raw report bundle is invalid") from exc
+
+
+def parse_eastmoney_clause_payloads(
+    reports: dict[str, bytes],
     *,
     requested_bond_code: str,
     fetched_at: datetime,
 ) -> BondClauseSnapshot:
-    try:
-        response = json.loads(raw_payload.decode("utf-8"))
-        rows = response["result"]["data"]
-        provider = rows[0]
-    except (UnicodeDecodeError, json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
-        raise ValueError("Eastmoney clause response is incomplete") from exc
-
-    code = _required(provider, "SECURITY_CODE")
-    if code != requested_bond_code:
+    if set(reports) != {CB_LIST_REPORT, BS_INFO_REPORT}:
+        raise ValueError("Eastmoney clause snapshot requires both reports")
+    cb_row = _provider_row(reports[CB_LIST_REPORT], CB_LIST_REPORT)
+    bs_row = _provider_row(reports[BS_INFO_REPORT], BS_INFO_REPORT)
+    cb_code = _required(cb_row, "SECURITY_CODE")
+    bs_code = _required(bs_row, "SECURITY_CODE")
+    if cb_code != requested_bond_code or bs_code != requested_bond_code:
         raise ValueError("Eastmoney SECURITY_CODE does not match requested bond")
 
-    # Provider-to-domain mapping is deliberately explicit so upstream field changes fail closed.
     contract = ConvertibleBondContract(
-        bond_code=code,
-        linked_stock=_required(provider, "CONVERT_STOCK_CODE"),
-        conversion_price=Decimal(_required(provider, "CONVERT_PRICE")),
-        maturity=_provider_date(_required(provider, "MATURITY_DATE")),
-        remaining_size=Decimal(_required(provider, "REMAIN_SIZE")),
+        bond_code=cb_code,
+        linked_stock=_required(cb_row, "CONVERT_STOCK_CODE"),
+        conversion_price=Decimal(_required(cb_row, "TRANSFER_VALUE")),
+        maturity=_provider_date(_required(bs_row, "HONOUR_DATE")),
+        remaining_size=Decimal(_required(bs_row, "BOND_BALANCE")),
         clause_dates=ClauseDates(
-            conversion_start=_provider_date(_required(provider, "CONVERT_START_DATE")),
-            redemption_start=_optional_provider_date(provider.get("REDEEM_START_DATE")),
-            put_back_start=_optional_provider_date(provider.get("PUTBACK_START_DATE")),
+            conversion_start=_provider_date(_required(cb_row, "TRANSFER_START_DATE")),
+            redemption_start=None,
+            put_back_start=None,
         ),
         as_of=fetched_at,
     )
-    immutable_raw = bytes(raw_payload)
+    raw_payload = pack_raw_reports(reports)
     return BondClauseSnapshot(
         contract=contract,
-        raw_payload=immutable_raw,
-        content_hash=hashlib.sha256(immutable_raw).hexdigest(),
+        raw_payload=raw_payload,
+        content_hash=hashlib.sha256(raw_payload).hexdigest(),
         source="eastmoney",
         fetched_at=fetched_at,
+        parser_version=EASTMONEY_PARSER_VERSION,
     )
+
+
+def parse_eastmoney_clause_bundle(
+    raw_payload: bytes, *, requested_bond_code: str, fetched_at: datetime
+) -> BondClauseSnapshot:
+    return parse_eastmoney_clause_payloads(
+        unpack_raw_reports(raw_payload),
+        requested_bond_code=requested_bond_code,
+        fetched_at=fetched_at,
+    )
+
+
+def _provider_row(raw_payload: bytes, report: str) -> dict[str, Any]:
+    try:
+        response = json.loads(raw_payload.decode("utf-8"))
+        rows = response["result"]["data"]
+        return rows[0]
+    except (UnicodeDecodeError, json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
+        raise ValueError(f"Eastmoney {report} response is incomplete") from exc
 
 
 def _required(payload: dict[str, Any], field: str) -> str:
@@ -118,10 +153,6 @@ def _required(payload: dict[str, Any], field: str) -> str:
 
 def _provider_date(value: str) -> date:
     return date.fromisoformat(value.split(" ", 1)[0])
-
-
-def _optional_provider_date(value: Any) -> date | None:
-    return _provider_date(str(value)) if value else None
 
 
 class EastmoneyClauseSource:
@@ -138,18 +169,23 @@ class EastmoneyClauseSource:
 
     async def fetch(self, bond_code: str) -> BondClauseSnapshot:
         validate_convertible_bond_code(bond_code)
-        params = {
-            "reportName": EASTMONEY_REPORT,
-            "columns": "ALL",
-            "filter": f'(SECURITY_CODE="{bond_code}")',
-            "pageNumber": "1",
-            "pageSize": "1",
-        }
-        response = await self._request(params)
-        if response.status_code != 200:
-            raise ValueError(f"Eastmoney clause request returned status {response.status_code}")
-        return parse_eastmoney_clause_payload(
-            response.body,
+        reports: dict[str, bytes] = {}
+        for report in (CB_LIST_REPORT, BS_INFO_REPORT):
+            params = {
+                "reportName": report,
+                "columns": "ALL",
+                "filter": f'(SECURITY_CODE="{bond_code}")',
+                "pageNumber": "1",
+                "pageSize": "1",
+            }
+            response = await self._request(params)
+            if response.status_code != 200:
+                raise ValueError(
+                    f"Eastmoney {report} request returned status {response.status_code}"
+                )
+            reports[report] = response.body
+        return parse_eastmoney_clause_payloads(
+            reports,
             requested_bond_code=bond_code,
             fetched_at=self.clock(),
         )
