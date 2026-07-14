@@ -1,7 +1,6 @@
 from collections.abc import Sequence
 from datetime import date
-from decimal import Decimal
-from math import sqrt
+from decimal import Context, Decimal
 
 from qibao_api.a_shares.models import FactorSnapshot
 from qibao_api.contracts.bars import DailyBar
@@ -18,7 +17,7 @@ def _mean(values: Sequence[Decimal]) -> Decimal:
 def _population_volatility(values: Sequence[Decimal]) -> Decimal:
     average = _mean(values)
     variance = _mean([(value - average) ** 2 for value in values])
-    return Decimal(str(sqrt(float(variance))))
+    return variance.sqrt(context=Context(prec=28))
 
 
 def build_factor_snapshot(bars: Sequence[DailyBar], as_of: date) -> FactorSnapshot:
@@ -28,6 +27,15 @@ def build_factor_snapshot(bars: Sequence[DailyBar], as_of: date) -> FactorSnapsh
     )
     if len(eligible) < 60:
         raise InsufficientHistoryError("at least 60 historical bars are required")
+    symbols = {bar.symbol for bar in eligible}
+    if len(symbols) != 1:
+        raise ValueError("factor history must contain exactly one symbol")
+    trade_dates = [bar.trade_date for bar in eligible]
+    if len(set(trade_dates)) != len(trade_dates):
+        raise ValueError("factor history must contain one bar per trade date")
+    sources = {bar.source for bar in eligible}
+    if len(sources) != 1:
+        raise ValueError("factor history must contain exactly one source")
     window = eligible[-60:]
     latest = window[-1]
     closes = [bar.close for bar in window]

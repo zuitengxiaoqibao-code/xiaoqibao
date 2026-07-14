@@ -30,7 +30,7 @@ class CandidateEntry(BaseModel):
 
     symbol: str = Field(pattern=r"^\d{6}$")
     horizon: Literal["short_term", "swing"]
-    score: Decimal = Field(ge=0, le=100)
+    score: Decimal = Field(ge=-30, le=90)
     score_breakdown: dict[str, Decimal]
     factor_snapshot: FactorSnapshot
 

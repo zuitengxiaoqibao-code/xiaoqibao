@@ -1,7 +1,9 @@
 from datetime import date
 from decimal import Decimal
 
-from qibao_api.a_shares.candidates import build_candidate_board
+import pytest
+
+from qibao_api.a_shares.candidates import build_candidate_board, rank_candidates
 from qibao_api.a_shares.models import FactorSnapshot
 
 
@@ -91,3 +93,52 @@ def test_candidate_board_breaks_equal_scores_by_symbol() -> None:
 
     assert [item.symbol for item in board.short_term] == ["000001", "600001"]
     assert [item.symbol for item in board.swing] == ["000001", "600001"]
+
+
+def test_rank_candidates_exposes_both_horizons_and_rejects_unknown_horizon() -> None:
+    item = snapshot(
+        "600001", return_5d="0.1", return_20d="0.2", distance_ma20="0.1",
+        volume_ratio="1.2", volatility="0.02", drawdown="-0.04",
+    )
+
+    assert rank_candidates([item], "short_term", 10)[0].horizon == "short_term"
+    assert rank_candidates([item], "swing", 10)[0].horizon == "swing"
+    with pytest.raises(ValueError, match="horizon"):
+        rank_candidates([item], "intraday", 10)
+
+
+def test_fixed_penalties_are_not_scaled_to_avoid_negative_scores() -> None:
+    risky = snapshot(
+        "600001", return_5d="-0.2", return_20d="-0.3", distance_ma20="-0.2",
+        volume_ratio="0.5", volatility="0.2", drawdown="-0.5", liquidity="10000000",
+    )
+    strong = snapshot(
+        "600002", return_5d="0.2", return_20d="0.3", distance_ma20="0.2",
+        volume_ratio="2", volatility="0.01", drawdown="-0.01",
+    )
+
+    short_risky = rank_candidates([risky, strong], "short_term", 10)[1]
+    swing_risky = rank_candidates([risky, strong], "swing", 10)[1]
+
+    assert short_risky.score_breakdown["risk_penalty"] == Decimal("-10")
+    assert short_risky.score == Decimal("-10")
+    assert swing_risky.score_breakdown["volatility_penalty"] == Decimal("-10")
+    assert swing_risky.score_breakdown["drawdown_penalty"] == Decimal("-20")
+    assert swing_risky.score == Decimal("-30")
+
+
+def test_winsorization_ties_values_beyond_five_percent_boundaries() -> None:
+    items = []
+    for index in range(21):
+        value = Decimal(index)
+        items.append(snapshot(
+            f"60{index:04d}", return_5d=str(value), return_20d=str(value),
+            distance_ma20=str(value), volume_ratio=str(value + 1),
+            volatility="0.02", drawdown="-0.04",
+        ))
+
+    ranked = rank_candidates(items, "short_term", 21)
+    by_symbol = {item.symbol: item for item in ranked}
+
+    assert by_symbol["600019"].score_breakdown["momentum"] == by_symbol["600020"].score_breakdown["momentum"]
+    assert by_symbol["600000"].score_breakdown["momentum"] == by_symbol["600001"].score_breakdown["momentum"]

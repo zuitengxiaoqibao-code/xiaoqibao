@@ -77,3 +77,31 @@ def test_factor_snapshot_keeps_requested_as_of_on_non_trading_day() -> None:
     result = build_factor_snapshot(bars, as_of=requested_as_of)
 
     assert result.as_of == requested_as_of
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (lambda bars: [*bars[:59], bars[59].model_copy(update={"symbol": "000001"})], "symbol"),
+        (
+            lambda bars: [
+                *bars[:59],
+                bars[59].model_copy(update={"trade_date": bars[58].trade_date}),
+            ],
+            "trade date",
+        ),
+        (lambda bars: [*bars[:59], bars[59].model_copy(update={"source": "other"})], "source"),
+    ],
+)
+def test_factor_snapshot_rejects_ambiguous_provenance(mutation, message: str) -> None:
+    bars = mutation(make_bars(60))
+
+    with pytest.raises(ValueError, match=message):
+        build_factor_snapshot(bars, as_of=max(bar.trade_date for bar in bars))
+
+
+def test_equal_volatility_remains_exactly_equal() -> None:
+    first = build_factor_snapshot(make_bars(60, symbol="600000"), date(2026, 7, 14))
+    second = build_factor_snapshot(make_bars(60, symbol="000001"), date(2026, 7, 14))
+
+    assert first.volatility_20d == second.volatility_20d
