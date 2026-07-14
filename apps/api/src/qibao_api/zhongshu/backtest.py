@@ -1,8 +1,19 @@
 from decimal import Decimal
 
-from qibao_api.contracts.backtest import BacktestRequest, BacktestResult, EquityPoint, Trade
+from qibao_api.contracts.backtest import (
+    BacktestRequest,
+    BacktestResult,
+    BacktestSegmentResult,
+    EquityPoint,
+    Trade,
+)
 from qibao_api.contracts.bars import DailyBar
-from qibao_api.zhongshu.performance import max_drawdown
+from qibao_api.zhongshu.performance import (
+    market_regime_attribution,
+    max_drawdown,
+    performance_metrics,
+    split_bars,
+)
 
 LIMIT_THRESHOLD = Decimal("0.098")
 
@@ -12,6 +23,26 @@ class BacktestEngine:
         ordered = sorted(bars, key=lambda bar: bar.trade_date)
         if len(ordered) <= request.slow_window:
             raise ValueError("not enough bars for selected slow window")
+
+        result = self._run_core(request, ordered)
+        train, validation, out_of_sample = split_bars(
+            ordered, Decimal("0.6"), Decimal("0.2")
+        )
+        named_segments = (
+            ("train", train),
+            ("validation", validation),
+            ("out_of_sample", out_of_sample),
+        )
+        if all(len(segment_bars) > request.slow_window for _, segment_bars in named_segments):
+            result.segments = [
+                self._attribute_segment(name, segment_bars, result.equity_curve)
+                for name, segment_bars in named_segments
+            ]
+        return result
+
+    def _run_core(
+        self, request: BacktestRequest, ordered: list[DailyBar]
+    ) -> BacktestResult:
 
         cash = request.initial_cash
         shares = 0
@@ -82,9 +113,41 @@ class BacktestEngine:
             total_return=total_return.quantize(Decimal("0.0001")),
             max_drawdown=max_drawdown([point.equity for point in points]),
             total_cost=total_cost.quantize(Decimal("0.01")),
+            metrics=performance_metrics(points, trades),
+            market_regimes=market_regime_attribution(ordered, points),
             trades=trades,
             equity_curve=points,
             warnings=warnings,
+        )
+
+    def _attribute_segment(
+        self, name: str, bars: list[DailyBar], equity_curve: list[EquityPoint]
+    ) -> BacktestSegmentResult:
+        start_date = bars[0].trade_date
+        end_date = bars[-1].trade_date
+        start_index = next(
+            index for index, point in enumerate(equity_curve)
+            if point.trade_date == start_date
+        )
+        end_index = next(
+            index for index, point in enumerate(equity_curve)
+            if point.trade_date == end_date
+        )
+        anchor_index = max(0, start_index - 1)
+        attribution_points = equity_curve[anchor_index:end_index + 1]
+        starting_equity = attribution_points[0].equity
+        ending_equity = attribution_points[-1].equity
+        return BacktestSegmentResult(
+            name=name,
+            start_date=start_date,
+            end_date=end_date,
+            bar_count=len(bars),
+            starting_equity=starting_equity,
+            ending_equity=ending_equity,
+            total_return=(ending_equity / starting_equity - Decimal("1")).quantize(
+                Decimal("0.0001")
+            ),
+            max_drawdown=max_drawdown([point.equity for point in attribution_points]),
         )
 
     @staticmethod

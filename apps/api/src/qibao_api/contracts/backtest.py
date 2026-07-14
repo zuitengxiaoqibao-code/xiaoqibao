@@ -38,6 +38,31 @@ class EquityPoint(BaseModel):
     market_value: Decimal
 
 
+class PerformanceMetrics(BaseModel):
+    annualized_volatility: Decimal = Field(ge=0)
+    win_rate: Decimal = Field(ge=0, le=1)
+    profit_loss_ratio: Decimal | None = Field(default=None, ge=0)
+    turnover_rate: Decimal = Field(ge=0)
+    closed_trade_count: int = Field(ge=0)
+
+
+class BacktestSegmentResult(BaseModel):
+    name: Literal["train", "validation", "out_of_sample"]
+    start_date: date
+    end_date: date
+    bar_count: int = Field(gt=0)
+    starting_equity: Decimal = Field(gt=0)
+    ending_equity: Decimal = Field(gt=0)
+    total_return: Decimal
+    max_drawdown: Decimal = Field(ge=0, le=1)
+
+
+class MarketRegimeResult(BaseModel):
+    name: Literal["bull", "bear", "sideways"]
+    bar_count: int = Field(ge=0)
+    total_return: Decimal
+
+
 class BacktestResult(BaseModel):
     symbol: str
     strategy: str
@@ -46,6 +71,9 @@ class BacktestResult(BaseModel):
     total_return: Decimal
     max_drawdown: Decimal
     total_cost: Decimal
+    metrics: PerformanceMetrics
+    segments: list[BacktestSegmentResult] = Field(default_factory=list)
+    market_regimes: list[MarketRegimeResult] = Field(default_factory=list)
     trades: list[Trade]
     equity_curve: list[EquityPoint]
     warnings: list[str] = Field(default_factory=list)

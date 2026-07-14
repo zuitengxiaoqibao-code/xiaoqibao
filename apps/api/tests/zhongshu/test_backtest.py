@@ -56,3 +56,29 @@ def test_limit_up_open_rejects_buy() -> None:
 
     assert result.trades == []
     assert any("涨停" in warning for warning in result.warnings)
+
+
+def test_long_history_returns_independent_train_validation_and_out_of_sample_results() -> None:
+    closes = [str(10 + ((index // 5) % 2) * 3 + (index % 5)) for index in range(90)]
+    bars = bars_from_prices(closes)
+
+    result = BacktestEngine().run(
+        BacktestRequest(fast_window=2, slow_window=3, commission_rate=0, slippage_rate=0),
+        bars,
+    )
+
+    assert [segment.name for segment in result.segments] == ["train", "validation", "out_of_sample"]
+    assert result.segments[0].start_date == bars[0].trade_date
+    assert result.segments[0].end_date < result.segments[1].start_date
+    assert result.segments[1].end_date < result.segments[2].start_date
+    assert all(segment.bar_count > 3 for segment in result.segments)
+    equity_by_date = {point.trade_date: point.equity for point in result.equity_curve}
+    point_index = {point.trade_date: index for index, point in enumerate(result.equity_curve)}
+    for segment in result.segments:
+        index = point_index[segment.start_date]
+        expected_start = (
+            result.initial_cash if index == 0 else result.equity_curve[index - 1].equity
+        )
+        assert segment.starting_equity == expected_start
+        assert segment.ending_equity == equity_by_date[segment.end_date]
+    assert {regime.name for regime in result.market_regimes} == {"bull", "bear", "sideways"}
