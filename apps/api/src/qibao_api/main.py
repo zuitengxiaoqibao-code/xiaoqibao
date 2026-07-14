@@ -9,6 +9,9 @@ from qibao_api.gongbu.data_service import FallbackHistorySource, MarketDataServi
 from qibao_api.gongbu.tdx_client import create_tdx_client
 from qibao_api.gongbu.tdx_history import TdxHistorySource
 from qibao_api.gongbu.tencent_quotes import TencentQuoteSource
+from qibao_api.convertible_bonds.adapters import EastmoneyClauseSource, TencentBondQuoteSource
+from qibao_api.convertible_bonds.repository import BondClauseRepository
+from qibao_api.convertible_bonds.service import ConvertibleBondService
 from qibao_api.bingbu.paper_broker import PaperBroker
 from qibao_api.bingbu.paper_service import PaperTradingService
 from qibao_api.hubu.repository import PaperRepository
@@ -29,6 +32,7 @@ from qibao_api.dongchang.repository import AuditFindingRepository
 from qibao_api.routes.xingbu import router as xingbu_router
 from qibao_api.routes.libu import router as libu_router
 from qibao_api.routes.dongchang import router as dongchang_router
+from qibao_api.routes.convertible_bonds import router as convertible_bonds_router
 
 
 @asynccontextmanager
@@ -45,6 +49,10 @@ async def lifespan(application: FastAPI):
     compliance.set_feature_sources("paper_orders", "a_share", ("tencent",))
     compliance.set_feature_sources("history_sync.mootdx", "a_share", ("mootdx",))
     compliance.set_feature_sources("history_sync.baidu", "a_share", ("baidu",))
+    compliance.set_feature_sources("bond_quotes", "convertible_bond", ("tencent",))
+    compliance.set_feature_sources("bond_clauses", "convertible_bond", ("eastmoney",))
+    bond_repository = BondClauseRepository(engine)
+    bond_repository.initialize()
     async with httpx.AsyncClient(timeout=10) as client:
         with httpx.Client(timeout=10) as history_client:
             history_sources = []
@@ -86,6 +94,11 @@ async def lifespan(application: FastAPI):
                 QuoteRepository(engine),
                 RiskGate(),
             )
+            application.state.bond_repository = bond_repository
+            application.state.bond_service = ConvertibleBondService(
+                TencentBondQuoteSource(client), EastmoneyClauseSource(client=client),
+                TencentQuoteSource(client), bond_repository, compliance,
+            )
             paper_repository = PaperRepository(settings.data_dir / "paper.sqlite3")
             application.state.paper_repository = paper_repository
             application.state.paper_service = PaperTradingService(
@@ -96,6 +109,7 @@ async def lifespan(application: FastAPI):
                 yield
             finally:
                 paper_repository.close()
+                bond_repository.close()
                 compliance.close()
                 audit_repository.close()
     engine.dispose()
@@ -110,3 +124,4 @@ app.include_router(paper_router)
 app.include_router(xingbu_router)
 app.include_router(libu_router)
 app.include_router(dongchang_router)
+app.include_router(convertible_bonds_router)

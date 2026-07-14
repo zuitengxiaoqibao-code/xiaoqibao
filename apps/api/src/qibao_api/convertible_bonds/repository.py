@@ -121,6 +121,9 @@ class ClauseRepository:
                     )
             connection.commit()
 
+    def close(self) -> None:
+        self.engine.dispose()
+
     def _migrate_legacy_schema(self, connection) -> bool:
         for table_name in ("bond_clause_snapshots", "bond_clause_events"):
             for operation in ("update", "delete"):
@@ -316,6 +319,13 @@ class ClauseRepository:
             row = connection.execute(statement).mappings().one_or_none()
         return self._snapshot_from_row(row) if row else None
 
+    def all_latest(self) -> list[BondClauseSnapshot]:
+        with self.engine.connect() as connection:
+            codes = connection.execute(
+                select(clause_snapshots.c.bond_code).distinct().order_by(clause_snapshots.c.bond_code)
+            ).scalars().all()
+        return [item for code in codes if (item := self.latest(code)) is not None]
+
     def events(self, bond_code: str, *, source: str | None = None) -> list[ClauseEvent]:
         return self.list_events(bond_code, source=source)
 
@@ -441,6 +451,9 @@ def _decimal_text(value: Decimal | None) -> str | None:
     if value is None:
         return None
     return format(value.normalize(), "f")
+
+
+BondClauseRepository = ClauseRepository
 
 
 def _database_lock(database_url: str) -> threading.RLock:

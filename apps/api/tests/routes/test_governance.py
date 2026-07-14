@@ -69,6 +69,21 @@ def test_libu_explicit_revoke_and_acknowledge_actions(tmp_path) -> None:
     assert revoked.json()["permission_state"] == "revoked"
     assert client.get("/api/v1/libu/status").json()["features"][0]["allowed"] is False
 
+
+def test_libu_asset_query_and_actions_keep_a_share_and_bond_records_isolated(tmp_path) -> None:
+    client, compliance, _ = make_client(tmp_path)
+    compliance.set_feature_sources("bond_quotes", AssetKind.CONVERTIBLE_BOND, ("tencent",))
+
+    response = client.post(
+        "/api/v1/libu/sources/tencent/authorize?asset=convertible_bond",
+        json={"permission_reference": "bond-contract"},
+    )
+    assert response.status_code == 200
+    assert response.json()["asset"] == "convertible_bond"
+    assert client.get("/api/v1/libu/status?asset=convertible_bond").json()["sources"][0]["asset"] == "convertible_bond"
+    a_share_sources = client.get("/api/v1/libu/status?asset=a_share").json()["sources"]
+    assert all(item["permission_state"] == "pending" for item in a_share_sources)
+
     authorized = client.post("/api/v1/libu/sources/tencent/authorize", json={
         "permission_reference": "contract:local-test", "disclaimer_version": "2026-07"
     })

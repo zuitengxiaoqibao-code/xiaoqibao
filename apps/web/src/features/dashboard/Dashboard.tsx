@@ -13,6 +13,8 @@ import { PaperTradingPanel } from "../paper-trading/PaperTradingPanel";
 import type { OrderResult, PaperAccount, Portfolio } from "../paper-trading/types";
 import type { ResearchCard } from "./types";
 import { GovernanceView, type AuditStatus, type ComplianceStatus, type RiskStatus } from "../governance/GovernanceViews";
+import { ConvertibleBondView } from "../convertible-bonds/ConvertibleBondView";
+import type { BondCandidates, BondDashboard, BondDiagnosis } from "../convertible-bonds/types";
 
 type ViewState =
   | { kind: "idle" }
@@ -29,6 +31,9 @@ type Props = {
   submitPaperOrder?: (symbol: string, side: "buy" | "sell", shares: number) => Promise<OrderResult>;
   loadRisk?: () => Promise<RiskStatus>; loadCompliance?: () => Promise<ComplianceStatus>; loadAudit?: () => Promise<AuditStatus>;
   complianceAction?: (source: string, action: "authorize" | "revoke" | "acknowledge", permissionReference?: string) => Promise<unknown>;
+  loadBondDashboard?: () => Promise<BondDashboard>;
+  loadBondDiagnosis?: (code: string) => Promise<BondDiagnosis>;
+  loadBondCandidates?: () => Promise<BondCandidates>;
 };
 
 const departments = [
@@ -97,11 +102,11 @@ function ResearchPanel({ card }: { card: ResearchCard }) {
   );
 }
 
-export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadPaperPortfolio, createPaperAccount, submitPaperOrder, loadRisk, loadCompliance, loadAudit, complianceAction }: Props) {
+export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadPaperPortfolio, createPaperAccount, submitPaperOrder, loadRisk, loadCompliance, loadAudit, complianceAction, loadBondDashboard, loadBondDiagnosis, loadBondCandidates }: Props) {
   const [state, setState] = useState<ViewState>({ kind: "idle" });
   const [symbol, setSymbol] = useState("600000");
   const [dataState, setDataState] = useState<DataStatusState>({ kind: "idle" });
-  const [activeView, setActiveView] = useState<"dashboard" | "xingbu" | "libu" | "dongchang">("dashboard");
+  const [activeView, setActiveView] = useState<"dashboard" | "xingbu" | "libu" | "dongchang" | "bonds">("dashboard");
 
   async function inspect(requestedSymbol: string) {
     setState({ kind: "loading" });
@@ -150,13 +155,15 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadPaperPor
             </button>
           )})}
         </nav>
-        <button className="bond-entry" type="button">
+        <button className={activeView === "bonds" ? "bond-entry active" : "bond-entry"} type="button" onClick={() => setActiveView("bonds")}>
           <Boxes size={16} /><span><b>可转债专区</b><small>独立资产域</small></span><ChevronRight size={15} />
         </button>
         <div className="sidebar-foot"><span className="pulse-dot" />系统本地运行</div>
       </aside>
 
-      {activeView !== "dashboard" && <GovernanceView view={activeView} loadRisk={loadRisk} loadCompliance={loadCompliance} loadAudit={loadAudit} complianceAction={complianceAction} />}
+      {activeView !== "dashboard" && activeView !== "bonds" && <GovernanceView view={activeView} loadRisk={loadRisk} loadCompliance={loadCompliance} loadAudit={loadAudit} complianceAction={complianceAction} />}
+
+      {activeView === "bonds" && loadBondDashboard && loadBondDiagnosis && loadBondCandidates && <ConvertibleBondView loadDashboard={loadBondDashboard} loadDiagnosis={loadBondDiagnosis} loadCandidates={loadBondCandidates} />}
 
       {activeView === "dashboard" && <main className="command-center">
         <header className="topbar">

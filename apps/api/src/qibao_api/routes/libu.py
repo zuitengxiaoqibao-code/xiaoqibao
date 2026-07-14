@@ -20,20 +20,21 @@ class PolicyAction(BaseModel):
 
 
 @router.get("/status")
-def status(repository: Annotated[ComplianceRepository, Depends(get_compliance_repository)]):
-    records = repository.list_current_records(AssetKind.A_SHARE)
-    dependencies = repository.list_source_dependencies(AssetKind.A_SHARE)
+def status(repository: Annotated[ComplianceRepository, Depends(get_compliance_repository)],
+           asset: AssetKind = AssetKind.A_SHARE):
+    records = repository.list_current_records(asset)
+    dependencies = repository.list_source_dependencies(asset)
     known = {item.source for item in records}
     pending_sources = sorted({item.source for item in dependencies} - known)
     now = datetime.now(timezone.utc)
     stale = bool(records) and any(now - item.recorded_at > timedelta(days=90) for item in records)
     feature_names = sorted({item.feature for item in dependencies})
     features = [
-        repository.check_feature_sources(feature, AssetKind.A_SHARE)
+        repository.check_feature_sources(feature, asset)
         for feature in feature_names
     ]
     sources = [item.model_dump(mode="json") for item in records] + [
-        {"source": source, "asset": "a_share", "permission_state": "pending",
+        {"source": source, "asset": asset.value, "permission_state": "pending",
          "permission_reference": "unregistered", "disclaimer_version": CURRENT_DISCLAIMER_VERSION,
          "user_acknowledged_at": None, "recorded_at": None}
         for source in pending_sources
@@ -42,10 +43,11 @@ def status(repository: Annotated[ComplianceRepository, Depends(get_compliance_re
     return {"policy_state": state, "sources": sources, "features": features}
 
 
-def _append(repository, source, payload, state: Literal["authorized", "revoked"], acknowledged):
+def _append(repository, source, payload, state: Literal["authorized", "revoked"], acknowledged,
+            asset: AssetKind):
     now = datetime.now(timezone.utc)
     record = ComplianceRecord(
-        record_id=f"compliance-{uuid4().hex}", asset=AssetKind.A_SHARE, source=source,
+        record_id=f"compliance-{uuid4().hex}", asset=asset, source=source,
         permission_state=state, permission_reference=f"local_user:{payload.permission_reference}",
         disclaimer_version=CURRENT_DISCLAIMER_VERSION,
         user_acknowledged_at=now if acknowledged else None, recorded_at=now,
@@ -55,17 +57,17 @@ def _append(repository, source, payload, state: Literal["authorized", "revoked"]
 
 
 @router.post("/sources/{source}/authorize", response_model=ComplianceRecord)
-def authorize(source: str, payload: PolicyAction, repository: Annotated[ComplianceRepository, Depends(get_compliance_repository)]):
-    return _append(repository, source, payload, "authorized", False)
+def authorize(source: str, payload: PolicyAction, repository: Annotated[ComplianceRepository, Depends(get_compliance_repository)], asset: AssetKind = AssetKind.A_SHARE):
+    return _append(repository, source, payload, "authorized", False, asset)
 
 
 @router.post("/sources/{source}/revoke", response_model=ComplianceRecord)
-def revoke(source: str, payload: PolicyAction, repository: Annotated[ComplianceRepository, Depends(get_compliance_repository)]):
-    return _append(repository, source, payload, "revoked", False)
+def revoke(source: str, payload: PolicyAction, repository: Annotated[ComplianceRepository, Depends(get_compliance_repository)], asset: AssetKind = AssetKind.A_SHARE):
+    return _append(repository, source, payload, "revoked", False, asset)
 
 
 @router.post("/sources/{source}/acknowledge", response_model=ComplianceRecord)
-def acknowledge(source: str, payload: PolicyAction, repository: Annotated[ComplianceRepository, Depends(get_compliance_repository)]):
-    current = repository.get_current_record(source, AssetKind.A_SHARE)
+def acknowledge(source: str, payload: PolicyAction, repository: Annotated[ComplianceRepository, Depends(get_compliance_repository)], asset: AssetKind = AssetKind.A_SHARE):
+    current = repository.get_current_record(source, asset)
     state = current.permission_state if current is not None else "pending"
-    return _append(repository, source, payload, state, True)
+    return _append(repository, source, payload, state, True, asset)

@@ -21,6 +21,19 @@ const freshCard = {
 };
 
 describe("Dashboard", () => {
+  it("navigates to the independent convertible-bond domain", async () => {
+    render(<Dashboard loadSnapshot={() => Promise.resolve(freshCard)}
+      loadBondDashboard={() => Promise.resolve({ status: "empty", bond_count: 0, bond_codes: [] })}
+      loadBondDiagnosis={() => Promise.reject(new Error("unused"))}
+      loadBondCandidates={() => Promise.resolve({ status: "empty", items: [] })} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /可转债专区/ }));
+
+    expect(await screen.findByRole("heading", { name: "可转债专区" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "今日情报态势" })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "候选池" })).toBeInTheDocument();
+  });
+
   it("shows evidence source and data time", async () => {
     render(<Dashboard loadSnapshot={() => Promise.resolve(freshCard)} />);
 

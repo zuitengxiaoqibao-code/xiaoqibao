@@ -30,3 +30,7 @@ def get_compliance_repository(request: Request) -> ComplianceRepository:
 
 def get_audit_repository(request: Request) -> AuditFindingRepository:
     return request.app.state.audit_repository
+
+
+def get_bond_service(request: Request):
+    return request.app.state.bond_service
