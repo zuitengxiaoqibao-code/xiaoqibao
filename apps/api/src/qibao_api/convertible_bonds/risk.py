@@ -1,5 +1,6 @@
 import hashlib
 import json
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Literal
 
@@ -56,23 +57,37 @@ class BondRiskResult(BaseModel):
     priority: int
 
 
+def _canonical_decimal(value: Decimal | None) -> str | None:
+    if value is None:
+        return None
+    if not value.is_finite():
+        raise ValueError("fingerprint decimal inputs must be finite")
+    if value.is_zero():
+        return "0"
+    return format(value.normalize(), "f")
+
+
+def _canonical_instant(value: datetime) -> str:
+    return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
 def risk_input_fingerprint(value: BondRiskInput, rule_version: str) -> str:
     evidence = value.strong_redemption
     payload = {
         "asset": value.asset.value,
         "bond_code": value.bond_code,
-        "conversion_premium": str(value.conversion_premium) if value.conversion_premium is not None else None,
+        "conversion_premium": _canonical_decimal(value.conversion_premium),
         "remaining_days": value.remaining_days,
-        "remaining_size": str(value.remaining_size),
+        "remaining_size": _canonical_decimal(value.remaining_size),
         "rule_version": rule_version,
         "strong_redemption": {
             "bond_code": evidence.bond_code,
             "clause_text": evidence.clause_text,
-            "observed_at": evidence.observed_at.isoformat(),
+            "observed_at": _canonical_instant(evidence.observed_at),
             "source": evidence.source,
             "state": evidence.state,
         },
-        "turnover_amount": str(value.turnover_amount) if value.turnover_amount is not None else None,
+        "turnover_amount": _canonical_decimal(value.turnover_amount),
     }
     encoded = json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()

@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
@@ -185,6 +185,92 @@ def test_risk_result_is_bound_to_bond_asset_and_canonical_input_snapshot() -> No
     assert first.asset.value == "convertible_bond"
     assert first.input_fingerprint == second.input_fingerprint
     assert len(first.input_fingerprint) == 64
+
+
+@given(
+    value=st.decimals(
+        min_value="-1000", max_value="1000", allow_nan=False, allow_infinity=False
+    ),
+    trailing_zeros=st.integers(min_value=1, max_value=8),
+)
+def test_fingerprint_normalizes_semantically_equal_decimal_encodings(
+    value: Decimal, trailing_zeros: int
+) -> None:
+    decimal_tuple = value.as_tuple()
+    equivalent = Decimal(
+        (
+            decimal_tuple.sign,
+            decimal_tuple.digits + (0,) * trailing_zeros,
+            decimal_tuple.exponent - trailing_zeros,
+        )
+    )
+
+    first = evaluate_bond_risk(risk_input(conversion_premium=value), BondRiskPolicy())
+    second = evaluate_bond_risk(
+        risk_input(conversion_premium=equivalent), BondRiskPolicy()
+    )
+
+    assert value == equivalent
+    assert first.input_fingerprint == second.input_fingerprint
+
+
+def test_fingerprint_normalizes_decimal_zero_and_exponent_forms() -> None:
+    pairs = [(Decimal("0"), Decimal("-0.000")), (Decimal("1E+2"), Decimal("100.00"))]
+
+    for first_value, second_value in pairs:
+        first = evaluate_bond_risk(
+            risk_input(turnover_amount=first_value), BondRiskPolicy()
+        )
+        second = evaluate_bond_risk(
+            risk_input(turnover_amount=second_value), BondRiskPolicy()
+        )
+        assert first.input_fingerprint == second.input_fingerprint
+
+
+def test_fingerprint_normalizes_same_instant_to_utc_fixed_format() -> None:
+    utc_evidence = clause().model_copy(
+        update={"observed_at": datetime(2026, 7, 14, 1, 30, tzinfo=timezone.utc)}
+    )
+    china_evidence = clause().model_copy(
+        update={
+            "observed_at": datetime(
+                2026, 7, 14, 9, 30, tzinfo=timezone(timedelta(hours=8))
+            )
+        }
+    )
+
+    first = evaluate_bond_risk(
+        risk_input(strong_redemption=utc_evidence), BondRiskPolicy()
+    )
+    second = evaluate_bond_risk(
+        risk_input(strong_redemption=china_evidence), BondRiskPolicy()
+    )
+    assert first.input_fingerprint == second.input_fingerprint
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"conversion_premium": Decimal("0.151")},
+        {
+            "strong_redemption": clause().model_copy(
+                update={"observed_at": NOW + timedelta(microseconds=1)}
+            )
+        },
+        {
+            "strong_redemption": clause().model_copy(
+                update={"source": "exchange-announcement "}
+            )
+        },
+    ],
+)
+def test_fingerprint_changes_for_real_value_time_or_exact_evidence_change(
+    change: dict[str, object],
+) -> None:
+    baseline = evaluate_bond_risk(risk_input(), BondRiskPolicy())
+    changed = evaluate_bond_risk(risk_input(**change), BondRiskPolicy())
+
+    assert baseline.input_fingerprint != changed.input_fingerprint
 
 
 def test_candidate_rejects_risk_for_another_bond() -> None:
