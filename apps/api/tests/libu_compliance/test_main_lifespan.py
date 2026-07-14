@@ -41,11 +41,15 @@ async def test_lifespan_injects_guarded_production_sources_and_closes_compliance
         assert len(compliance.list_feature_source_history("market_news", "a_share")) == 1
         news_repository = application.state.news_repository
         assert application.state.news_service.repository is news_repository
+        briefing_repository = application.state.briefing_repository
+        assert application.state.briefing_workflow.briefing_repository is briefing_repository
 
     with pytest.raises(sqlite3.ProgrammingError, match="closed"):
         compliance.list_feature_source_history("realtime_quotes", "a_share")
     with pytest.raises(sqlite3.ProgrammingError, match="closed"):
         news_repository.events()
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        briefing_repository.reports()
 
 
 @pytest.mark.asyncio

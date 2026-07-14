@@ -190,6 +190,21 @@ class PaperRepository:
         return [dict(row) for row in rows]
 
     @synchronized
+    def list_order_outcomes_between(
+        self, start: datetime, end: datetime
+    ) -> list[dict[str, object]]:
+        rows = self.connection.execute(
+            """SELECT order_id, status, rejection_reason, created_at
+            FROM paper_orders WHERE created_at >= ? AND created_at <= ?
+            ORDER BY created_at, order_id""",
+            (
+                start.astimezone(timezone.utc).isoformat(),
+                end.astimezone(timezone.utc).isoformat(),
+            ),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    @synchronized
     def reject_order(self, order_id: str, reason: str) -> None:
         with self.connection:
             cursor = self.connection.execute(

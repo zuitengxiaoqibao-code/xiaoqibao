@@ -42,3 +42,11 @@ def get_news_service(request: Request):
 
 def get_news_repository(request: Request):
     return request.app.state.news_repository
+
+
+def get_briefing_workflow(request: Request):
+    return request.app.state.briefing_workflow
+
+
+def get_briefing_repository(request: Request):
+    return request.app.state.briefing_repository

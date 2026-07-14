@@ -80,6 +80,15 @@ class BarRepository:
             for row in rows
         ]
 
+    def trade_dates(self, limit: int = 1000) -> list:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT DISTINCT trade_date FROM daily_bars
+                ORDER BY trade_date DESC LIMIT ?""",
+                [limit],
+            ).fetchall()
+        return [row[0] for row in rows]
+
     def export_parquet(self, symbol: str) -> Path:
         if not symbol.isdigit() or len(symbol) != 6:
             raise ValueError("symbol must be six digits")

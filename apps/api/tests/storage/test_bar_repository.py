@@ -42,3 +42,10 @@ def test_export_parquet_contains_symbol_rows(tmp_path) -> None:
     with duckdb.connect() as connection:
         count = connection.execute("SELECT count(*) FROM read_parquet(?)", [str(path)]).fetchone()[0]
     assert count == 1
+
+
+def test_trade_dates_are_distinct_and_descending(tmp_path) -> None:
+    repository = BarRepository(tmp_path / "market.duckdb", tmp_path / "parquet")
+    repository.upsert([make_bar()])
+
+    assert repository.trade_dates(limit=10) == [date(2026, 7, 13)]

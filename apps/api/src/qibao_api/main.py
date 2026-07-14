@@ -40,6 +40,11 @@ from qibao_api.routes.dongchang import router as dongchang_router
 from qibao_api.routes.convertible_bonds import router as convertible_bonds_router
 from qibao_api.routes.news import router as news_router
 from qibao_api.zhongshu.news_ai import NewsAIGateway, UnavailableNewsAIProvider
+from qibao_api.shangshu.briefing_repository import BriefingRepository
+from qibao_api.shangshu.daily_briefing import DailyBriefingWorkflow
+from qibao_api.shangshu.trading_calendar import StoredTradingCalendar
+from qibao_api.routes.briefings import router as briefings_router
+from qibao_api.shangshu.postclose_context import RepositoryPostcloseContextSource
 
 
 @asynccontextmanager
@@ -65,6 +70,8 @@ async def lifespan(application: FastAPI):
     diagnosis_repository = BondDiagnosisRepository(settings.data_dir / "bond-diagnoses.sqlite3")
     news_repository = NewsRepository(settings.data_dir / "news.sqlite3")
     application.state.news_repository = news_repository
+    briefing_repository = BriefingRepository(settings.data_dir / "briefings.sqlite3")
+    application.state.briefing_repository = briefing_repository
     async with httpx.AsyncClient(timeout=10) as client:
         with httpx.Client(timeout=10) as history_client:
             history_sources = []
@@ -143,6 +150,14 @@ async def lifespan(application: FastAPI):
             )
             paper_repository = PaperRepository(settings.data_dir / "paper.sqlite3")
             application.state.paper_repository = paper_repository
+            application.state.briefing_workflow = DailyBriefingWorkflow(
+                news_repository,
+                briefing_repository,
+                StoredTradingCalendar(bar_repository),
+                RepositoryPostcloseContextSource(
+                    paper_repository, audit_repository
+                ),
+            )
             application.state.paper_service = PaperTradingService(
                 application.state.pipeline,
                 PaperBroker(paper_repository),
@@ -154,6 +169,7 @@ async def lifespan(application: FastAPI):
                 bond_repository.close()
                 diagnosis_repository.close()
                 news_repository.close()
+                briefing_repository.close()
                 compliance.close()
                 audit_repository.close()
     engine.dispose()
@@ -170,3 +186,4 @@ app.include_router(libu_router)
 app.include_router(dongchang_router)
 app.include_router(convertible_bonds_router)
 app.include_router(news_router)
+app.include_router(briefings_router)
