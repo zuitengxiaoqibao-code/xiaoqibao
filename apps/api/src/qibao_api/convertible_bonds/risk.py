@@ -64,7 +64,15 @@ def _canonical_decimal(value: Decimal | None) -> str | None:
         raise ValueError("fingerprint decimal inputs must be finite")
     if value.is_zero():
         return "0"
-    return format(value.normalize(), "f")
+    parts = value.as_tuple()
+    digits = list(parts.digits)
+    exponent = int(parts.exponent)
+    while digits[-1] == 0:
+        digits.pop()
+        exponent += 1
+    coefficient = "".join(str(digit) for digit in digits)
+    sign = "-" if parts.sign else ""
+    return f"{sign}{coefficient}e{exponent}"
 
 
 def _canonical_instant(value: datetime) -> str:

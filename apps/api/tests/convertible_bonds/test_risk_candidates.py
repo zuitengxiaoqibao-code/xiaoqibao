@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import Decimal, localcontext
 
 import pytest
 from hypothesis import given, strategies as st
@@ -225,6 +225,35 @@ def test_fingerprint_normalizes_decimal_zero_and_exponent_forms() -> None:
             risk_input(turnover_amount=second_value), BondRiskPolicy()
         )
         assert first.input_fingerprint == second.input_fingerprint
+
+
+def test_fingerprint_preserves_digits_beyond_decimal_context_precision() -> None:
+    first_value = Decimal("0.1234567890123456789012345678901234567891")
+    second_value = Decimal("0.1234567890123456789012345678901234567892")
+
+    first = evaluate_bond_risk(
+        risk_input(conversion_premium=first_value), BondRiskPolicy()
+    )
+    second = evaluate_bond_risk(
+        risk_input(conversion_premium=second_value), BondRiskPolicy()
+    )
+
+    assert first.input_fingerprint != second.input_fingerprint
+
+
+def test_fingerprint_is_independent_of_active_decimal_context_precision() -> None:
+    value = risk_input(
+        conversion_premium=Decimal("0.1234567890123456789012345678901234567891")
+    )
+    baseline = evaluate_bond_risk(value, BondRiskPolicy()).input_fingerprint
+
+    with localcontext() as context:
+        context.prec = 5
+        under_low_precision = evaluate_bond_risk(
+            value, BondRiskPolicy()
+        ).input_fingerprint
+
+    assert under_low_precision == baseline
 
 
 def test_fingerprint_normalizes_same_instant_to_utc_fixed_format() -> None:
