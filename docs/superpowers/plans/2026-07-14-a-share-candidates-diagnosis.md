@@ -193,7 +193,7 @@ git commit -m "feat(a-shares): aggregate evidence-backed diagnoses"
 - Produces: `GET /api/v1/a-shares/candidates?as_of=YYYY-MM-DD&limit=20`、`GET /api/v1/a-shares/{symbol}/diagnosis?as_of=YYYY-MM-DD`。
 - Persists: append-only candidate snapshots and diagnosis snapshots with canonical SHA-256 input hash.
 
-- [ ] **Step 1: 写失败路由测试，固定响应与资产隔离**
+- [x] **Step 1: 写失败路由测试，固定响应与资产隔离**
 
 ```python
 def test_a_share_candidates_return_separate_short_and_swing_lists() -> None:
@@ -206,7 +206,7 @@ def test_convertible_bond_code_never_reaches_a_share_diagnosis() -> None:
     assert client.get("/api/v1/a-shares/113001/diagnosis").status_code == 422
 ```
 
-- [ ] **Step 2: 写失败仓储测试，固定追加写和防篡改行为**
+- [x] **Step 2: 写失败仓储测试，固定追加写和防篡改行为**
 
 ```python
 def test_candidate_snapshot_is_append_only_and_hash_verified(tmp_path: Path) -> None:
@@ -217,11 +217,11 @@ def test_candidate_snapshot_is_append_only_and_hash_verified(tmp_path: Path) -> 
         repository.connection.execute("UPDATE candidate_snapshots SET payload='{}'")
 ```
 
-- [ ] **Step 3: 实现服务依赖、路由和错误映射**
+- [x] **Step 3: 实现服务依赖、路由和错误映射**
 
 候选池无任何满足历史要求的股票时返回 `200` 和空榜，同时包含 `universe_status="empty"`；本地仓损坏返回 `503`；单个补充来源失败仍返回 `200 partial`；基础行情与本地日线同时不可用时返回 `503`，不得返回伪诊断。
 
-- [ ] **Step 4: 运行路由、仓储与全后端测试**
+- [x] **Step 4: 运行路由、仓储与全后端测试**
 
 Run: `.venv/Scripts/python.exe -m pytest apps/api/tests/routes/test_research.py apps/api/tests/a_shares -q`
 
@@ -231,7 +231,7 @@ Run: `.venv/Scripts/python.exe -m pytest apps/api/tests -q`
 
 Expected: 全部 PASS。
 
-- [ ] **Step 5: 提交 API 切片**
+- [x] **Step 5: 提交 API 切片**
 
 ```bash
 git add apps/api/src/qibao_api apps/api/tests

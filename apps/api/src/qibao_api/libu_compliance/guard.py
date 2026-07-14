@@ -49,6 +49,31 @@ class AuthorizedQuoteSource:
         self._asset = AssetKind(asset)
 
     async def fetch(self, symbol: str) -> Result:
+        self._require_sources()
+        return await self._source.fetch(symbol)
+
+    async def fetch_snapshot(self, symbol: str) -> Result:
+        self._require_sources()
+        return await self._source.fetch_snapshot(symbol)
+
+    def _require_sources(self) -> None:
         for feature in self._features:
             self._compliance.require_feature_sources(feature, self._asset)
-        return await self._source.fetch(symbol)
+
+
+class AuthorizedFinanceSource:
+    def __init__(
+        self,
+        source,
+        compliance: ComplianceRepository,
+        feature: str,
+        asset: AssetKind | str,
+    ) -> None:
+        self._source = source
+        self._compliance = compliance
+        self._feature = feature
+        self._asset = AssetKind(asset)
+
+    def fetch(self, symbol: str):
+        self._compliance.require_feature_sources(self._feature, self._asset)
+        return self._source.fetch(symbol)

@@ -49,6 +49,8 @@ class CandidateBoard(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     asset: Literal["a_share"] = "a_share"
+    snapshot_id: str | None = None
+    input_snapshot_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     as_of: date
     factor_version: Literal["a-share-factors-v1"] = FACTOR_VERSION
     short_term: list[CandidateEntry]

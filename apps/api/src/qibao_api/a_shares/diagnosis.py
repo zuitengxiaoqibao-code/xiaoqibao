@@ -45,6 +45,8 @@ class AShareDiagnosis(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     asset: Literal["a_share"] = "a_share"
+    snapshot_id: str | None = None
+    input_snapshot_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     symbol: str = Field(pattern=r"^\d{6}$")
     as_of: date
     action: Literal["observe", "blocked"]
@@ -79,6 +81,13 @@ class NewsRepositoryPort(Protocol):
     def events(self) -> list[NormalizedNewsEvent]: ...
 
 
+class ResearchSnapshotRepositoryPort(Protocol):
+    def append_candidate_board(self, board: CandidateBoard) -> str: ...
+    def get_candidate_board(self, snapshot_id: str) -> CandidateBoard: ...
+    def append_diagnosis(self, diagnosis: AShareDiagnosis) -> str: ...
+    def get_diagnosis(self, snapshot_id: str) -> AShareDiagnosis: ...
+
+
 def _unavailable(source: str, explanation: str) -> DiagnosisSection:
     return DiagnosisSection(status="unavailable", source=source, explanation=explanation)
 
@@ -90,12 +99,14 @@ class AShareDiagnosisService:
         market_source: MarketSourcePort,
         finance_source: FinanceSourcePort,
         news_repository: NewsRepositoryPort,
+        research_repository: ResearchSnapshotRepositoryPort | None = None,
         clock: Callable[[], datetime] = datetime.now,
     ) -> None:
         self.bar_repository = bar_repository
         self.market_source = market_source
         self.finance_source = finance_source
         self.news_repository = news_repository
+        self.research_repository = research_repository
         self.clock = clock
 
     def candidates(self, as_of: date, limit: int = 20) -> CandidateBoard:
@@ -111,15 +122,20 @@ class AShareDiagnosisService:
                     symbol=symbol, reason_code="invalid_history", detail=str(error)
                 ))
         if not snapshots:
-            return CandidateBoard(
+            board = CandidateBoard(
                 as_of=as_of, short_term=[], swing=[], exclusions=exclusions
             )
-        board = build_candidate_board(snapshots, limit)
-        return board.model_copy(update={
-            "exclusions": sorted(
-                [*exclusions, *board.exclusions], key=lambda item: item.symbol
-            )
-        })
+        else:
+            board = build_candidate_board(snapshots, limit)
+            board = board.model_copy(update={
+                "exclusions": sorted(
+                    [*exclusions, *board.exclusions], key=lambda item: item.symbol
+                )
+            })
+        if self.research_repository is None:
+            return board
+        snapshot_id = self.research_repository.append_candidate_board(board)
+        return self.research_repository.get_candidate_board(snapshot_id)
 
     async def diagnose(self, symbol: str, as_of: date) -> AShareDiagnosis:
         bars = self.bar_repository.latest_many([symbol], 120, as_of).get(symbol, [])
@@ -135,7 +151,7 @@ class AShareDiagnosisService:
             events, news_error,
         )
         missing = [name for name, section in sections.items() if section.status == "unavailable"]
-        return AShareDiagnosis(
+        diagnosis = AShareDiagnosis(
             symbol=symbol,
             as_of=as_of,
             action="observe",
@@ -143,6 +159,10 @@ class AShareDiagnosisService:
             sections=sections,
             missing_data=missing,
         )
+        if self.research_repository is None:
+            return diagnosis
+        snapshot_id = self.research_repository.append_diagnosis(diagnosis)
+        return self.research_repository.get_diagnosis(snapshot_id)
 
     async def _market(
         self, symbol: str, as_of: date

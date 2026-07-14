@@ -7,6 +7,9 @@ import httpx
 from fastapi import FastAPI, Request
 from sqlalchemy import create_engine
 
+from qibao_api.a_shares.diagnosis import AShareDiagnosisService
+from qibao_api.a_shares.fundamentals import TdxFinanceSource
+from qibao_api.a_shares.repository import AShareResearchRepository
 from qibao_api.gongbu.baidu_history import BaiduHistorySource
 from qibao_api.gongbu.data_service import FallbackHistorySource, MarketDataService
 from qibao_api.gongbu.tdx_client import create_tdx_client
@@ -23,7 +26,11 @@ from qibao_api.gongbu.news_repository import NewsRepository
 from qibao_api.bingbu.paper_broker import PaperBroker
 from qibao_api.bingbu.paper_service import PaperTradingService
 from qibao_api.hubu.repository import PaperRepository
-from qibao_api.libu_compliance.guard import AuthorizedHistorySource, AuthorizedQuoteSource
+from qibao_api.libu_compliance.guard import (
+    AuthorizedFinanceSource,
+    AuthorizedHistorySource,
+    AuthorizedQuoteSource,
+)
 from qibao_api.libu_compliance.repository import ComplianceRepository
 from qibao_api.routes.backtest import router as backtest_router
 from qibao_api.routes.data import router as data_router
@@ -82,6 +89,7 @@ async def lifespan(application: FastAPI):
     application.state.audit_repository = audit_repository
     application.state.compliance_repository = compliance
     compliance.set_feature_sources("realtime_quotes", "a_share", ("tencent",))
+    compliance.set_feature_sources("a_share_finance", "a_share", ("mootdx",))
     compliance.set_feature_sources("paper_orders", "a_share", ("tencent",))
     compliance.set_feature_sources("history_sync.mootdx", "a_share", ("mootdx",))
     compliance.set_feature_sources("history_sync.baidu", "a_share", ("baidu",))
@@ -94,6 +102,10 @@ async def lifespan(application: FastAPI):
     diagnosis_repository = BondDiagnosisRepository(settings.data_dir / "bond-diagnoses.sqlite3")
     news_repository = NewsRepository(settings.data_dir / "news.sqlite3")
     application.state.news_repository = news_repository
+    a_share_research_repository = AShareResearchRepository(
+        settings.data_dir / "a-share-research.sqlite3"
+    )
+    application.state.a_share_research_repository = a_share_research_repository
     briefing_repository = BriefingRepository(settings.data_dir / "briefings.sqlite3")
     application.state.briefing_repository = briefing_repository
     async with httpx.AsyncClient(timeout=10) as client:
@@ -123,6 +135,7 @@ async def lifespan(application: FastAPI):
                 settings.data_dir / "market.duckdb",
                 settings.data_dir / "parquet" / "a-shares",
             )
+            application.state.bar_repository = bar_repository
             application.state.market_data_service = MarketDataService(
                 FallbackHistorySource(history_sources),
                 bar_repository,
@@ -136,6 +149,20 @@ async def lifespan(application: FastAPI):
                 ),
                 QuoteRepository(engine),
                 RiskGate(),
+            )
+            application.state.a_share_diagnosis_service = AShareDiagnosisService(
+                bar_repository,
+                AuthorizedQuoteSource(
+                    TencentQuoteSource(client),
+                    compliance,
+                    ("realtime_quotes",),
+                    "a_share",
+                ),
+                AuthorizedFinanceSource(
+                    TdxFinanceSource(), compliance, "a_share_finance", "a_share"
+                ),
+                news_repository,
+                a_share_research_repository,
             )
             application.state.bond_repository = bond_repository
             application.state.bond_service = ConvertibleBondService(
@@ -221,6 +248,7 @@ async def lifespan(application: FastAPI):
                 compliance.close()
                 audit_repository.close()
                 operations_repository.close()
+                a_share_research_repository.close()
     engine.dispose()
 
 

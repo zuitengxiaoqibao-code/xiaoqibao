@@ -284,6 +284,7 @@ class BackupService:
 
     @staticmethod
     def _verify_business_repositories(restored: Path) -> None:
+        from qibao_api.a_shares.repository import AShareResearchRepository
         from qibao_api.contracts.market import AssetKind
         from qibao_api.convertible_bonds.diagnosis_repository import (
             BondDiagnosisRepository,
@@ -314,6 +315,8 @@ class BackupService:
             ("bond-diagnoses.sqlite3", BondDiagnosisRepository,
              lambda repo: repo.latest_by_bond()),
             ("operations.sqlite3", OperationsRepository, lambda repo: repo.jobs()),
+            ("a-share-research.sqlite3", AShareResearchRepository,
+             lambda repo: repo.verify_all()),
         )
         for filename, repository_type, read in checks:
             path = restored / filename
