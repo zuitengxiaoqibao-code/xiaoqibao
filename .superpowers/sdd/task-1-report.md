@@ -134,3 +134,43 @@ Ruff: All checks passed!
 Mojibake scan: no matches
 git diff --check: clean
 ```
+
+## Numeric payload review fix
+
+### RED
+
+Added a route regression whose source delegates to the real `parse_tencent_quote()` with a
+50-field Tencent-shaped payload containing `price="not-a-number"`.
+
+```powershell
+.venv\Scripts\python.exe -m pytest apps/api/tests/routes/test_research.py::test_exact_code_maps_malformed_tencent_numeric_payload_to_unavailable -q
+```
+
+Observed: `1 failed in 1.58s`; `Decimal(fields[3])` raised
+`decimal.InvalidOperation` through the route.
+
+### GREEN
+
+The expected external quote failure tuple now includes `DecimalException`. Directory
+persistence remains outside the tuple, so storage and programming failures are not hidden.
+
+Boundary verification:
+
+```text
+2 passed in 1.22s
+```
+
+This jointly covered the malformed real-parser path and the existing
+`sqlite3.ProgrammingError` propagation regression.
+
+Final verification:
+
+```text
+35 focused and lifecycle tests passed in 6.18s
+516 full API tests passed in 33.60s
+```
+
+The first full run passed 515 tests before the known DuckDB Unicode workspace-path startup
+failure occurred in an unrelated health test. The clean full run used the same tests with
+`QIBAO_DATA_DIR` set to an ASCII-only temporary runtime path, avoiding that DuckDB/Windows
+environment issue.

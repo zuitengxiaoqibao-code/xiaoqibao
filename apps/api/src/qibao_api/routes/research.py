@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from decimal import DecimalException
 from typing import Annotated, Literal
 from zoneinfo import ZoneInfo
 
@@ -87,7 +88,7 @@ async def search_instruments(
                 observed_at=_quote_observed_at(quote.observed_at),
                 quote_quality=_quote_quality(quote.quality),
             )
-        except (httpx.HTTPError, ValueError):
+        except (httpx.HTTPError, ValueError, DecimalException):
             items = ()
             source_status = "unavailable"
         else:

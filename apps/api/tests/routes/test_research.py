@@ -25,6 +25,7 @@ from qibao_api.dependencies import (
     get_server_time,
 )
 from qibao_api.main import app
+from qibao_api.gongbu.tencent_quotes import parse_tencent_quote
 from qibao_api.routes.research import router as research_router
 from qibao_api.libu_compliance.repository import SourceAuthorizationError
 
@@ -280,6 +281,14 @@ class ProgrammingErrorQuoteSource:
         raise sqlite3.ProgrammingError("closed database")
 
 
+class MalformedNumericQuoteSource:
+    async def fetch(self, symbol: str):
+        fields = [""] * 50
+        fields[1:5] = ["坏行情", symbol, "not-a-number", "10.00"]
+        fields[30] = "20260715100100"
+        return parse_tencent_quote("~".join(fields), source="tencent")
+
+
 def search_client(directory=None, source=None) -> TestClient:
     application = FastAPI()
     application.include_router(research_router)
@@ -372,3 +381,13 @@ def test_exact_code_does_not_hide_programming_or_storage_errors() -> None:
         search_client(source=ProgrammingErrorQuoteSource()).get(
             "/api/v1/a-shares/search?q=600001"
         )
+
+
+def test_exact_code_maps_malformed_tencent_numeric_payload_to_unavailable() -> None:
+    response = search_client(source=MalformedNumericQuoteSource()).get(
+        "/api/v1/a-shares/search?q=600001"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["items"] == []
+    assert response.json()["source_status"] == "unavailable"
