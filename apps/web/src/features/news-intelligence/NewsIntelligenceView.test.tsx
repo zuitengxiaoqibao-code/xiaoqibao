@@ -62,6 +62,32 @@ describe("NewsIntelligenceView", () => {
     expect(screen.getByRole("heading", { name: "新标的事件" })).toBeInTheDocument();
   });
 
+  it("invalidates deferred collect and correction work when the symbol changes", async () => {
+    let resolveSync!: () => void;
+    let resolveCorrection!: () => void;
+    const syncNews = vi.fn(() => new Promise<Record<string, number>>((resolve) => { resolveSync = () => resolve({ fetched: 1 }); }));
+    const createCorrection = vi.fn(() => new Promise<void>((resolve) => { resolveCorrection = resolve; }));
+    const loadBundle = vi.fn().mockResolvedValue(bundle);
+    const view = render(<NewsIntelligenceView selectedSymbol="600000" loadBundle={loadBundle} syncNews={syncNews} createCorrection={createCorrection} />);
+    await screen.findByRole("heading", { name: "先进制造专项政策发布" });
+    fireEvent.click(screen.getByRole("button", { name: "同步新闻" }));
+    view.rerender(<NewsIntelligenceView selectedSymbol="000001" loadBundle={loadBundle} syncNews={syncNews} createCorrection={createCorrection} />);
+    resolveSync();
+    await Promise.resolve();
+    expect(screen.queryByRole("heading", { name: "先进制造专项政策发布" })).not.toBeInTheDocument();
+
+    view.rerender(<NewsIntelligenceView selectedSymbol="600000" loadBundle={loadBundle} syncNews={syncNews} createCorrection={createCorrection} />);
+    await screen.findByRole("heading", { name: "先进制造专项政策发布" });
+    fireEvent.click(screen.getByRole("button", { name: "查看 2 条证据" }));
+    fireEvent.change(screen.getByLabelText("复核理由"), { target: { value: "待复核" } });
+    fireEvent.click(screen.getByRole("button", { name: "确认并存档" }));
+    view.rerender(<NewsIntelligenceView selectedSymbol="000001" loadBundle={loadBundle} syncNews={syncNews} createCorrection={createCorrection} />);
+    expect(screen.queryByRole("dialog", { name: "事件证据" })).not.toBeInTheDocument();
+    resolveCorrection();
+    await Promise.resolve();
+    expect(screen.queryByRole("heading", { name: "先进制造专项政策发布" })).not.toBeInTheDocument();
+  });
+
   it("separates facts, interpretation, uncertainty, and contrary evidence", async () => {
     render(<NewsIntelligenceView loadBundle={() => Promise.resolve(bundle)} syncNews={() => Promise.resolve({ fetched: 0 })} createCorrection={() => Promise.resolve()} />);
 

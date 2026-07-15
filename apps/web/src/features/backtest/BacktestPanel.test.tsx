@@ -22,6 +22,33 @@ const result = {
 };
 
 describe("BacktestPanel", () => {
+  it("rejects bond and known index codes", () => {
+    const runBacktest = vi.fn(() => Promise.resolve(result));
+    render(<BacktestPanel symbol="" runBacktest={runBacktest} />);
+    const input = screen.getByRole("textbox", { name: "回测 A 股代码" });
+    fireEvent.change(input, { target: { value: "113065" } });
+    expect(screen.getByRole("button", { name: "运行回测" })).toBeDisabled();
+    fireEvent.change(input, { target: { value: "000300" } });
+    expect(screen.getByRole("button", { name: "运行回测" })).toBeDisabled();
+  });
+
+  it("isolates out-of-order results and clears prior output when the input changes", async () => {
+    let resolveOld!: (value: typeof result) => void;
+    const old = new Promise<typeof result>((resolve) => { resolveOld = resolve; });
+    const newer = { ...result, symbol: "000001", total_return: "0.1000" };
+    const runBacktest = vi.fn().mockReturnValueOnce(old).mockResolvedValueOnce(newer);
+    render(<BacktestPanel symbol="600000" runBacktest={runBacktest} />);
+    fireEvent.click(screen.getByRole("button", { name: "运行回测" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "回测 A 股代码" }), { target: { value: "000001" } });
+    fireEvent.click(screen.getByRole("button", { name: "运行回测" }));
+    expect(await screen.findByText("回测标的 000001")).toBeInTheDocument();
+    resolveOld(result);
+    await Promise.resolve();
+    expect(screen.getByText("回测标的 000001")).toBeInTheDocument();
+    expect(screen.queryByText("回测标的 600000")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole("textbox", { name: "回测 A 股代码" }), { target: { value: "600519" } });
+    expect(screen.queryByText("回测标的 000001")).not.toBeInTheDocument();
+  });
   it("defaults to the selected symbol without overwriting an explicit edit", async () => {
     const runBacktest = vi.fn(() => Promise.resolve(result));
     const view = render(<BacktestPanel symbol="600000" runBacktest={runBacktest} />);
@@ -31,7 +58,7 @@ describe("BacktestPanel", () => {
     view.rerender(<BacktestPanel symbol="600519" runBacktest={runBacktest} />);
     expect(input).toHaveValue("000001");
     fireEvent.click(screen.getByRole("button", { name: "运行回测" }));
-    expect(runBacktest).toHaveBeenCalledWith("000001");
+    expect(runBacktest).toHaveBeenCalledWith("000001", expect.any(AbortSignal));
   });
 
   it("shows losses, drawdown and costs without positive framing", async () => {

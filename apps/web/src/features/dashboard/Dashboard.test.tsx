@@ -171,7 +171,8 @@ describe("Dashboard", () => {
     /></SelectedInstrumentProvider>);
 
     fireEvent.click(screen.getByRole("button", { name: /刑部/ }));
-    expect(await screen.findByText("当前标的 600000")).toBeInTheDocument();
+    expect(await screen.findByText(/全局.*资产级治理数据/)).toBeInTheDocument();
+    expect(screen.getByText(/导航代码 600000/)).toBeInTheDocument();
     expect(window.location.pathname).toBe("/risk");
     fireEvent.click(screen.getByRole("button", { name: /历史回测/ }));
     expect(await screen.findByRole("textbox", { name: "回测 A 股代码" })).toHaveValue("600000");
@@ -193,6 +194,19 @@ describe("Dashboard", () => {
     expect(screen.getByRole("tab", { name: "候选池" })).toBeInTheDocument();
     expect(window.location.pathname).toBe("/convertible-bonds");
     expect(new URL(window.location.href).searchParams.has("symbol")).toBe(false);
+  });
+
+  it("does not present an A-share navigation symbol as convertible-bond governance scope", async () => {
+    window.history.replaceState({}, "", "/?symbol=600000");
+    render(<SelectedInstrumentProvider><Dashboard loadSnapshot={() => Promise.resolve(freshCard)}
+      loadBondDashboard={() => Promise.resolve({ status: "empty", bond_count: 0, bond_codes: [] })}
+      loadBondDiagnosis={() => Promise.reject(new Error("unused"))}
+      loadBondCandidates={() => Promise.resolve({ status: "empty", items: [] })}
+      loadCompliance={() => Promise.resolve({ policy_state: "current", sources: [], features: [] })} /></SelectedInstrumentProvider>);
+    fireEvent.click(screen.getByRole("button", { name: /可转债专区/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /礼部/ }));
+    expect(await screen.findByText(/全局.*资产级治理数据/)).toBeInTheDocument();
+    expect(screen.queryByText(/导航代码 600000/)).not.toBeInTheDocument();
   });
 
   it("restores A-share workspace selection across browser history", async () => {

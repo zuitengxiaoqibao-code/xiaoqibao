@@ -38,7 +38,7 @@ type ViewState =
 type Props = {
   loadSnapshot: (symbol: string) => Promise<ResearchCard>;
   syncHistory?: (symbol: string, limit?: number) => Promise<SyncReport>;
-  runBacktest?: (symbol: string) => Promise<BacktestResult>;
+  runBacktest?: (symbol: string, signal?: AbortSignal) => Promise<BacktestResult>;
   loadPaperPortfolio?: () => Promise<Portfolio>;
   createPaperAccount?: () => Promise<PaperAccount>;
   submitPaperOrder?: (symbol: string, side: "buy" | "sell", shares: number) => Promise<OrderResult>;
@@ -171,10 +171,10 @@ function SelectedNewsWorkspace({ loadBundle, syncNews, createCorrection, openNew
 
 function SelectedGovernanceWorkspace(props: ComponentProps<typeof GovernanceView>) {
   const symbol = useOptionalSelectedInstrument()?.symbol ?? null;
-  return <div className="selected-governance-workspace">{symbol && <span className="selected-symbol-context">当前标的 {symbol}</span>}<GovernanceView {...props} /></div>;
+  return <div className="selected-governance-workspace"><div className="selected-symbol-context"><b>全局 / 资产级治理数据</b><span>不按单股过滤{symbol ? ` · 导航代码 ${symbol}` : ""}</span></div><GovernanceView {...props} /></div>;
 }
 
-function SelectedBacktestWorkspace({ runBacktest }: { runBacktest: (symbol: string) => Promise<BacktestResult> }) {
+function SelectedBacktestWorkspace({ runBacktest }: { runBacktest: (symbol: string, signal?: AbortSignal) => Promise<BacktestResult> }) {
   const { symbol } = useSelectedInstrument();
   return <main className="command-center"><BacktestPanel symbol={symbol ?? ""} runBacktest={runBacktest} /></main>;
 }

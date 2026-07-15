@@ -1,6 +1,7 @@
 import { BarChart3, Play, ShieldAlert } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+import { isAShareSymbol } from "../instrument-selection/SelectedInstrumentProvider";
 import type { BacktestResult } from "./types";
 
 type State = { kind: "idle" | "loading" } | { kind: "ready"; result: BacktestResult } | { kind: "error"; message: string };
@@ -12,27 +13,43 @@ function percent(value: string): string {
 const segmentName = { train: "训练段", validation: "验证段", out_of_sample: "样本外" };
 const regimeName = { bull: "上行阶段", bear: "下行阶段", sideways: "震荡阶段" };
 
-export function BacktestPanel({ symbol, runBacktest }: { symbol: string; runBacktest: (symbol: string) => Promise<BacktestResult> }) {
+export function BacktestPanel({ symbol, runBacktest }: { symbol: string; runBacktest: (symbol: string, signal?: AbortSignal) => Promise<BacktestResult> }) {
   const [state, setState] = useState<State>({ kind: "idle" });
   const [requestedSymbol, setRequestedSymbol] = useState(symbol);
   const explicitlyEdited = useRef(false);
-  useEffect(() => { if (!explicitlyEdited.current) setRequestedSymbol(symbol); }, [symbol]);
+  const requestVersion = useRef(0);
+  const controller = useRef<AbortController | null>(null);
+  function invalidateResult() {
+    requestVersion.current += 1;
+    controller.current?.abort(); controller.current = null;
+    setState({ kind: "idle" });
+  }
+  useEffect(() => {
+    if (!explicitlyEdited.current) { setRequestedSymbol(symbol); invalidateResult(); }
+  }, [symbol]);
+  useEffect(() => () => { requestVersion.current += 1; controller.current?.abort(); }, []);
   async function run() {
+    if (!isAShareSymbol(requestedSymbol)) return;
+    const request = ++requestVersion.current;
+    controller.current?.abort();
+    const currentController = new AbortController();
+    controller.current = currentController;
     setState({ kind: "loading" });
-    try { setState({ kind: "ready", result: await runBacktest(requestedSymbol) }); }
-    catch (error) { setState({ kind: "error", message: error instanceof Error ? error.message : "未知错误" }); }
+    try { const result = await runBacktest(requestedSymbol, currentController.signal); if (request === requestVersion.current) setState({ kind: "ready", result }); }
+    catch (error) { if (request === requestVersion.current && !currentController.signal.aborted) setState({ kind: "error", message: error instanceof Error ? error.message : "未知错误" }); }
+    finally { if (request === requestVersion.current) controller.current = null; }
   }
   return (
     <section className="backtest-panel">
       <div className="backtest-heading">
         <div><p className="eyebrow">中书省 / 固定策略模板</p><h2>双均线历史回测</h2><p>5 日快线 × 20 日慢线 · 次日开盘成交 · 已计佣金与滑点</p></div>
-        <label>回测 A 股代码<input aria-label="回测 A 股代码" inputMode="numeric" maxLength={6} pattern="\d{6}" value={requestedSymbol} onChange={(event) => { explicitlyEdited.current = true; setRequestedSymbol(event.target.value.replace(/\D/g, "")); }} /></label>
-        <button type="button" onClick={() => void run()} disabled={state.kind === "loading" || !/^\d{6}$/.test(requestedSymbol)}><Play size={15} />运行回测</button>
+        <label>回测 A 股代码<input aria-label="回测 A 股代码" inputMode="numeric" maxLength={6} pattern="\d{6}" value={requestedSymbol} onChange={(event) => { explicitlyEdited.current = true; setRequestedSymbol(event.target.value.replace(/\D/g, "")); invalidateResult(); }} /></label>
+        <button type="button" onClick={() => void run()} disabled={state.kind === "loading" || !isAShareSymbol(requestedSymbol)}><Play size={15} />运行回测</button>
       </div>
       {state.kind === "idle" && <div className="backtest-empty">使用本地历史日线，不调用 AI，不承诺收益。</div>}
       {state.kind === "loading" && <div className="backtest-empty" aria-busy="true">正在复算历史交易...</div>}
       {state.kind === "error" && <div className="backtest-error" role="alert"><ShieldAlert size={17} />{state.message}</div>}
-      {state.kind === "ready" && <div className="backtest-result">
+      {state.kind === "ready" && <div className="backtest-result"><p className="backtest-result-symbol">回测标的 {state.result.symbol}</p>
         <div className="metric-grid">
           <div><span>总收益</span><b className={Number(state.result.total_return) < 0 ? "negative-metric" : "positive-metric"}>{percent(state.result.total_return)}</b></div>
           <div><span>最大回撤</span><b>{percent(state.result.max_drawdown)}</b></div>

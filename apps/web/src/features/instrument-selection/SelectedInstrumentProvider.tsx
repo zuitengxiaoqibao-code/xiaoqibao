@@ -14,7 +14,7 @@ type SelectedInstrument = {
 
 const SelectedInstrumentContext = createContext<SelectedInstrument | null>(null);
 const A_SHARE_SYMBOL = /^(?:(?:000|001|002|003|300|301|600|601|603|605|688|689|920)\d{3}|[48]\d{5})$/;
-export const isAShareSymbol = (symbol: string): boolean => A_SHARE_SYMBOL.test(symbol);
+export const isAShareSymbol = (symbol: string): boolean => symbol !== "000300" && A_SHARE_SYMBOL.test(symbol);
 
 function symbolFromLocation(): string | null {
   if (window.location.pathname === "/convertible-bonds") return null;

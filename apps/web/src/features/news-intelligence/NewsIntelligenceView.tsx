@@ -18,22 +18,33 @@ export function NewsIntelligenceView({ selectedSymbol, loadBundle, syncNews, cre
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const requestVersion = useRef(0);
-  async function loadSelectedBundle() {
-    const loaded = await loadBundle();
-    if (!selectedSymbol) return loaded;
-    return { ...loaded, events: loaded.events.filter((event) => event.affected_instruments.length === 0 || event.affected_instruments.some(([asset, code]) => asset === "a_share" && code === selectedSymbol)) };
+  function filterSelectedBundle(loaded: NewsIntelligenceBundle, symbol: string | null | undefined) {
+    if (!symbol) return loaded;
+    return { ...loaded, events: loaded.events.filter((event) => event.affected_instruments.length === 0 || event.affected_instruments.some(([asset, code]) => asset === "a_share" && code === symbol)) };
   }
-  async function reload() {
+  async function runBundleRequest(work: () => Promise<NewsIntelligenceBundle>, failureMessage: string, mode: "loading" | "saving") {
     const request = ++requestVersion.current;
-    setLoading(true); setError("");
-    try { const loaded = await loadSelectedBundle(); if (request === requestVersion.current) setBundle(loaded); }
-    catch (cause) { if (request === requestVersion.current) setError(cause instanceof Error ? cause.message : "情报流暂不可用"); }
-    finally { if (request === requestVersion.current) setLoading(false); }
+    const requestSymbol = selectedSymbol;
+    if (mode === "loading") setLoading(true); else setSaving(true);
+    setError("");
+    try { const loaded = await work(); if (request === requestVersion.current) { setBundle(filterSelectedBundle(loaded, requestSymbol)); return true; } }
+    catch (cause) { if (request === requestVersion.current) setError(cause instanceof Error ? cause.message : failureMessage); }
+    finally { if (request === requestVersion.current) { setLoading(false); setSaving(false); } }
+    return false;
   }
-  useEffect(() => { void reload(); return () => { requestVersion.current += 1; }; }, [loadBundle, selectedSymbol]);
+  useEffect(() => {
+    requestVersion.current += 1;
+    setSelected(null); setReason(""); setBundle(null); setSaving(false);
+    void runBundleRequest(loadBundle, "情报流暂不可用", "loading");
+    return () => { requestVersion.current += 1; };
+  }, [loadBundle, selectedSymbol]);
   const interpretationByEvent = useMemo(() => new Map(bundle?.interpretations.map((item) => [item.event_id, item]) ?? []), [bundle]);
-  async function collect() { setLoading(true); setError(""); try { await syncNews(); setBundle(await loadSelectedBundle()); } catch (cause) { setError(cause instanceof Error ? cause.message : "新闻同步失败"); } finally { setLoading(false); } }
-  async function saveCorrection() { if (!selected || !reason.trim()) return; setSaving(true); try { await createCorrection({ event_id: selected.event_id, reason: reason.trim(), review_state: "verified", affected_instruments: selected.affected_instruments, industries: selected.industries, themes: selected.themes }); setReason(""); setBundle(await loadSelectedBundle()); } catch (cause) { setError(cause instanceof Error ? cause.message : "复核存档失败"); } finally { setSaving(false); } }
+  async function collect() { await runBundleRequest(async () => { await syncNews(); return loadBundle(); }, "新闻同步失败", "loading"); }
+  async function saveCorrection() {
+    if (!selected || !reason.trim()) return;
+    const correction = { event_id: selected.event_id, reason: reason.trim(), review_state: "verified" as const, affected_instruments: selected.affected_instruments, industries: selected.industries, themes: selected.themes };
+    if (await runBundleRequest(async () => { await createCorrection(correction); return loadBundle(); }, "复核存档失败", "saving")) setReason("");
+  }
   const selectedInterpretation = selected ? interpretationByEvent.get(selected.event_id) : undefined;
   const contrary = selected?.citations.filter((item) => selectedInterpretation?.contrary_citation_ids.includes(item.citation_id)) ?? [];
   return <main className="news-domain">
