@@ -32,6 +32,8 @@ class QuantitativeLevels(BaseModel):
             raise ValueError("tranches must be positive")
         if sum(self.tranches, Decimal()) > 1:
             raise ValueError("tranches must sum to at most one")
+        if sum(self.tranches, Decimal()) > self.max_position:
+            raise ValueError("tranches must sum to at most max position")
         return self
 
 

@@ -75,3 +75,5 @@ def test_invalid_and_stale_levels_raise_validation_error() -> None:
         levels(watch_price_low=Decimal("11"), watch_price_high=Decimal("10"))
     with pytest.raises(ValidationError, match="stale"):
         SimulationPlanBuilder(now=NOW + timedelta(minutes=6)).build(context())
+    with pytest.raises(ValidationError):
+        levels(tranches=(Decimal("0.4"), Decimal("0.3")), max_position=Decimal("0.6"))

@@ -111,6 +111,18 @@ describe("DecisionWorkbench", () => {
     vi.useRealTimers();
   });
 
+  it("keeps polling the current endpoint until a historical date is explicitly selected", async () => {
+    vi.useFakeTimers();
+    const loadCurrent = vi.fn().mockResolvedValue(response());
+    const loadDate = vi.fn().mockResolvedValue(response());
+    render(<DecisionWorkbench loadCurrent={loadCurrent} loadDate={loadDate} />);
+    await vi.runOnlyPendingTimersAsync();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(loadCurrent).toHaveBeenCalledTimes(2);
+    expect(loadDate).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
   it("shows degraded zero-advice, AI-unavailable, and stale polling semantics", async () => {
     const slot = { ...emptySlot, phase_status: "partial" as const, quality: "partial" as const, aggregate_version: "s1", ai_status: "unavailable" as const, generated_at: "2026-07-15T10:20:00+08:00" };
     render(<DecisionWorkbench loadCurrent={() => Promise.resolve(response({ phases: { premarket: emptySlot, intraday: slot, postclose: emptySlot } }))} />);

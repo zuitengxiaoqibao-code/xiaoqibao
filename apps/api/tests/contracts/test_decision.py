@@ -87,6 +87,8 @@ def test_simulation_plan_enforces_numeric_limits() -> None:
         plan(tranches=("0.4", "0.4", "0.4"))
     with pytest.raises(ValidationError):
         plan(max_position="0")
+    with pytest.raises(ValidationError):
+        plan(tranches=("0.4", "0.3"), max_position="0.6")
 
 
 def test_simulated_advice_requires_gate_references() -> None:
@@ -94,3 +96,5 @@ def test_simulated_advice_requires_gate_references() -> None:
         advice(action="simulated_plan", simulation_plan_id="plan-1")
     with pytest.raises(ValidationError):
         advice(simulation_plan_id="plan-1")
+    with pytest.raises(ValidationError):
+        advice(action="simulated_plan", simulation_plan_id="plan-1", risk_decision_id="risk-1")

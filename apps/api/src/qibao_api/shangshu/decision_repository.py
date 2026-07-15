@@ -86,6 +86,9 @@ class DecisionRepository:
                 raise DecisionIntegrityError("advice and plan references are not reciprocal")
             if advice.risk_decision_id != plan.risk_decision_id:
                 raise DecisionIntegrityError("advice and plan risk references differ")
+            gate = advice.simulation_gate
+            if gate is None or gate.compliance_snapshot_id != plan.compliance_snapshot_id:
+                raise DecisionIntegrityError("advice gate and plan compliance references differ")
         for advice in aggregate.advice:
             if advice.simulation_plan_id and advice.simulation_plan_id not in plans_by_id:
                 raise DecisionIntegrityError("advice references a missing plan")

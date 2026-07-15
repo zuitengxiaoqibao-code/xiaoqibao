@@ -98,3 +98,29 @@ Production composition now includes:
 - TypeScript/Vite production build: passed.
 - Mojibake/fallback-marker scan: no matches.
 - `git diff --check`: passed.
+
+## Final Cross-Task Review Fixes
+
+### RED evidence
+
+- Immutable safety tests failed `3` cases: persisted simulation advice accepted no gate, and both quantitative levels and persisted plans accepted tranche totals above `max_position`.
+- Current-mode frontend polling regression test demonstrated that polling called the date-specific loader after the initial current response populated its date.
+- Focused integration exposed `8` obsolete monitor fixtures that attempted to construct malformed planned advice without a passing immutable gate; the contract now rejects these producers before persistence.
+
+### Implemented behavior
+
+- The serialized production scheduler iteration now executes fixed briefing slots and `tick_intraday` together under the existing application write lock. Layered cadence therefore runs independently of completed fixed slots while the persisted PollState owns 60-second focus, 180-300-second universe, and 60/120/240/300 failure backoff.
+- Intraday API advice is an authoritative materialized observation state folded across premarket plus every intraday delta. `delta_version`, `delta_advice`, and `delta_plans` remain separately exposed as the append-only change stream.
+- Immutable `AdviceCard` validation requires a stored passing gate for simulated plans. Repository integrity additionally verifies risk and compliance references across advice, gate, and plan.
+- Persisted PollState now supplies API mode, intervals, failure counts, last successes, next dues, and next-check timing. An absent state is explicit `uninitialized`; no interval is fabricated.
+- `QuantitativeLevels` and `SimulationPlan` both enforce `sum(tranches) <= max_position`.
+- Date-specific responses consult the trading calendar; an unconfirmed current date is closed/postclose, never open.
+- Current-mode browser polling continues to call the current endpoint. The historical endpoint is used only after explicit date selection, and manual phase selection remains stable.
+
+### Verification evidence
+
+- Full backend: `492 passed`.
+- Ruff: all checks passed.
+- Full frontend: `12 files, 53 tests passed`.
+- Production TypeScript/Vite build: passed.
+- Browser acceptance was not performed, per controller instruction.

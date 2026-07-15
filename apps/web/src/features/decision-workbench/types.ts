@@ -23,9 +23,10 @@ export type PhaseSlot = {
   aggregate_version: string | null; strategy_versions?: string[]; ai_status: "ready" | "unavailable" | "not_requested";
   generated_at?: string; advice: Advice[]; evidence: Evidence[]; plans: SimulationPlan[];
   plan_readiness: Record<string, PlanReadiness>;
+  delta_version?: string; delta_advice?: Advice[]; delta_plans?: SimulationPlan[];
 };
 export type DecisionResponse = {
   server_time: string; trading_date: string; current_phase: DecisionPhase; market_session: "open" | "closed";
   phases: Record<DecisionPhase, PhaseSlot>;
-  polling: { focus_interval_seconds: number; universe_interval_seconds: number; stale_after_seconds: number; next_check_seconds: number | null };
+  polling: { status?: "uninitialized" | "normal" | "degraded"; focus_interval_seconds: number | null; universe_interval_seconds: number | null; stale_after_seconds: number; next_check_seconds: number | null; consecutive_focus_failures?: number; consecutive_universe_failures?: number; last_focus_success_at?: string | null; last_universe_success_at?: string | null };
 };

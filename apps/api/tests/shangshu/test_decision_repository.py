@@ -7,7 +7,8 @@ from pathlib import Path
 import pytest
 
 from qibao_api.contracts.decision import (
-    AdviceCard, DecisionCycleAggregate, DecisionCycleSnapshot, EvidenceReference, SimulationPlan,
+    AdviceCard, DecisionCycleAggregate, DecisionCycleSnapshot, EvidenceReference,
+    SimulationGateAudit, SimulationPlan,
 )
 from qibao_api.shangshu.decision_repository import DecisionIntegrityError, DecisionRepository
 
@@ -34,6 +35,11 @@ def aggregate(sequence: int = 1, previous: str | None = None, *, planned: bool =
         conclusion="wait", confidence=Decimal("0.6"), supporting_evidence=(evidence,), contrary_evidence=(),
         risks=("risk",), invalidation_conditions=("invalid",), quantitative_result={},
         risk_decision_id="risk-1" if planned else None, simulation_plan_id="plan-1" if planned else None,
+        simulation_gate=SimulationGateAudit(
+            quote_state="ready", compliance_state="ready", evidence_state="ready",
+            risk_state="approve", risk_decision_id="risk-1",
+            compliance_snapshot_id="compliance-1",
+        ) if planned else None,
         strategy_version="v1", created_at=NOW,
     )
     plans = ()

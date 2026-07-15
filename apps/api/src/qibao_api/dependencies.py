@@ -74,5 +74,10 @@ def get_decision_calendar(request: Request):
     return request.app.state.decision_calendar
 
 
+def get_decision_poll_state(request: Request):
+    repository = getattr(request.app.state, "poll_state_repository", None)
+    return repository.latest() if repository is not None else None
+
+
 def get_server_time() -> datetime:
     return datetime.now(timezone.utc)

@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -27,6 +28,19 @@ class FakeSettings:
     @property
     def database_url(self) -> str:
         return f"sqlite:///{(self.data_dir / 'qibao.db').as_posix()}"
+
+
+def test_runtime_tick_runs_fixed_slots_and_layered_intraday_once_serially() -> None:
+    calls = []
+    scheduler = type("Scheduler", (), {
+        "tick": lambda _self, now: calls.append(("fixed", now)),
+        "tick_intraday": lambda _self, now: calls.append(("layered", now)),
+    })()
+    now = datetime(2026, 7, 15, tzinfo=timezone.utc)
+
+    main_module._runtime_tick(scheduler, now)
+
+    assert calls == [("fixed", now), ("layered", now)]
 
 
 @pytest.mark.asyncio

@@ -89,9 +89,15 @@ async def _scheduler_loop(
         await asyncio.sleep(interval_seconds)
         try:
             async with write_gate:
-                await asyncio.to_thread(scheduler.tick, datetime.now(timezone.utc))
+                now = datetime.now(timezone.utc)
+                await asyncio.to_thread(_runtime_tick, scheduler, now)
         except Exception:
             logger.exception("scheduled briefing tick failed")
+
+
+def _runtime_tick(scheduler, now: datetime) -> None:
+    scheduler.tick(now)
+    scheduler.tick_intraday(now)
 
 
 @asynccontextmanager
@@ -253,6 +259,7 @@ async def lifespan(application: FastAPI):
             poll_state_repository = PollStateRepository(
                 settings.data_dir / "intraday-poll.sqlite3"
             )
+            application.state.poll_state_repository = poll_state_repository
             premarket_decision = PremarketDecisionService(
                 candidate_service=decision_candidate_source,
                 news_repository=news_repository,

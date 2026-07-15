@@ -6,11 +6,13 @@ from fastapi.testclient import TestClient
 from qibao_api.dependencies import (
     get_decision_calendar,
     get_decision_repository,
+    get_decision_poll_state,
     get_scheduler,
     get_server_time,
 )
 from qibao_api.routes.decisions import _slot, router
 from qibao_api.shangshu.decision_repository import DecisionIntegrityError
+from qibao_api.shangshu.intraday_monitor import PollState
 
 
 CHINA_TZ = timezone(timedelta(hours=8))
@@ -25,6 +27,9 @@ class Repository:
         if self.broken:
             raise DecisionIntegrityError("secret corrupt payload")
         return self.values.get((trading_date, phase))
+
+    def cycles(self, trading_date, phase):
+        return self.values.get((trading_date, f"{phase}_cycles"), [])
 
 
 class Calendar:
@@ -45,7 +50,7 @@ class Scheduler:
         return self.result
 
 
-def client(*, now, repository=None, trading_days=(), scheduler=None):
+def client(*, now, repository=None, trading_days=(), scheduler=None, poll_state=None):
     application = FastAPI()
     application.include_router(router)
     scheduler = scheduler or Scheduler({"status": "completed"})
@@ -53,6 +58,7 @@ def client(*, now, repository=None, trading_days=(), scheduler=None):
     application.dependency_overrides[get_decision_calendar] = lambda: Calendar(trading_days)
     application.dependency_overrides[get_scheduler] = lambda: scheduler
     application.dependency_overrides[get_server_time] = lambda: now
+    application.dependency_overrides[get_decision_poll_state] = lambda: poll_state
     return TestClient(application), scheduler
 
 
@@ -152,3 +158,60 @@ def test_plan_readiness_requires_all_gate_states_and_reciprocal_references():
     assert blocked["ready"] is False
     assert blocked["reasons"] == ["evidence_blocked"]
     assert ready["ready"] is True
+
+
+def test_polling_response_uses_persisted_backoff_and_failure_state():
+    now = datetime(2026, 7, 15, 10, 30, tzinfo=CHINA_TZ)
+    state = PollState(
+        focus_interval_seconds=240, universe_interval_seconds=300,
+        consecutive_focus_failures=3, consecutive_universe_failures=4,
+        next_focus_due_at=now + timedelta(seconds=240),
+        next_universe_due_at=now + timedelta(seconds=300), mode="degraded",
+        last_error_code="timeout_error",
+    )
+    api, _ = client(now=now, trading_days=(now.date(),), poll_state=state)
+
+    polling = api.get("/api/v1/decisions/current").json()["polling"]
+
+    assert polling["status"] == "degraded"
+    assert polling["focus_interval_seconds"] == 240
+    assert polling["universe_interval_seconds"] == 300
+    assert polling["consecutive_focus_failures"] == 3
+    assert polling["next_check_seconds"] == 240
+
+
+def test_date_specific_today_is_closed_when_calendar_does_not_confirm_trading():
+    now = datetime(2026, 7, 18, 10, 30, tzinfo=CHINA_TZ)
+    api, _ = client(now=now, trading_days=())
+
+    response = api.get(f"/api/v1/decisions/{now.date().isoformat()}")
+
+    assert response.json()["market_session"] == "closed"
+    assert response.json()["current_phase"] == "postclose"
+
+
+def test_intraday_slot_materializes_unchanged_symbols_and_keeps_latest_delta():
+    day = date(2026, 7, 15)
+    def snapshot(identity, _phase):
+        return {
+            "snapshot": {"snapshot_id": identity, "status": "ready", "data_quality": "ready", "ai_status": "not_requested"},
+            "advice": [], "plans": [],
+        }
+    premarket = snapshot("pre-1", "premarket")
+    premarket["advice"] = [
+        {"advice_id": "a1", "symbol": "600000", "horizon": "intraday", "action": "observe", "strategy_version": "v1", "supporting_evidence": [], "contrary_evidence": []},
+        {"advice_id": "a2", "symbol": "000001", "horizon": "intraday", "action": "observe", "strategy_version": "v1", "supporting_evidence": [], "contrary_evidence": []},
+    ]
+    delta = snapshot("intra-1", "intraday")
+    delta["advice"] = [{"advice_id": "a3", "symbol": "600000", "horizon": "intraday", "action": "wait", "strategy_version": "v1", "supporting_evidence": [], "contrary_evidence": []}]
+    repository = Repository({
+        (day, "premarket"): premarket, (day, "intraday"): delta,
+        (day, "intraday_cycles"): [delta],
+    })
+    api, _ = client(now=datetime(2026, 7, 15, 10, 30, tzinfo=CHINA_TZ), repository=repository, trading_days=(day,))
+
+    slot = api.get("/api/v1/decisions/current").json()["phases"]["intraday"]
+
+    assert {(item["symbol"], item["action"]) for item in slot["advice"]} == {("600000", "wait"), ("000001", "observe")}
+    assert [item["advice_id"] for item in slot["delta_advice"]] == ["a3"]
+    assert slot["delta_version"] == "intra-1"

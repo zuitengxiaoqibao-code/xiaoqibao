@@ -518,10 +518,7 @@ def test_source_change_with_identical_plan_semantics_does_not_append(tmp_path) -
 def test_failed_gate_clears_stale_simulated_plan(gate_update, tmp_path) -> None:
     repository = DecisionRepository(tmp_path / "decisions.sqlite3")
     baseline_aggregate(repository)
-    proposed = advice(
-        "proposal", action="simulated_plan", simulation_plan_id="stale-plan",
-        risk_decision_id="stale-risk", conclusion="stale", created_at=NOW,
-    )
+    proposed = advice("proposal", conclusion="gate fallback", created_at=NOW)
     base_gate = SimulationGateContext(
         quote_state="ready", compliance_state="ready", evidence_state="ready",
         risk_state="approve", advice_id="proposal", risk_decision_id="risk-1",
@@ -547,10 +544,7 @@ def test_failed_gate_clears_stale_simulated_plan(gate_update, tmp_path) -> None:
 def test_missing_gate_clears_stale_simulated_plan(tmp_path) -> None:
     repository = DecisionRepository(tmp_path / "decisions.sqlite3")
     baseline_aggregate(repository)
-    proposed = advice(
-        "proposal", action="simulated_plan", simulation_plan_id="stale-plan",
-        risk_decision_id="stale-risk", conclusion="stale", created_at=NOW,
-    )
+    proposed = advice("proposal", conclusion="missing gate fallback", created_at=NOW)
     aggregate = decision_monitor(
         tmp_path, Evaluation([result_for((proposed,), gates={})]), repository,
     ).check(NOW).aggregate
@@ -559,7 +553,7 @@ def test_missing_gate_clears_stale_simulated_plan(tmp_path) -> None:
     assert updated.action == "observe"
     assert updated.simulation_plan_id is None
     assert updated.risk_decision_id is None
-    assert "simulation_gate_missing" in updated.risks
+    assert updated.simulation_gate is None
 
 
 def test_layered_quotes_retain_universe_and_update_focus_across_restart(tmp_path) -> None:

@@ -116,6 +116,14 @@ class AdviceCard(BaseModel):
         if self.action == "simulated_plan":
             if not self.simulation_plan_id or not self.risk_decision_id:
                 raise ValueError("simulated plan advice requires plan and risk references")
+            gate = self.simulation_gate
+            if gate is None or (
+                gate.quote_state != "ready" or gate.compliance_state != "ready"
+                or gate.evidence_state != "ready" or gate.risk_state != "approve"
+                or gate.risk_decision_id != self.risk_decision_id
+                or not gate.compliance_snapshot_id
+            ):
+                raise ValueError("simulated plan advice requires every immutable gate to pass")
         elif self.simulation_plan_id is not None:
             raise ValueError("non-plan advice cannot reference a simulation plan")
         return self
@@ -161,6 +169,8 @@ class SimulationPlan(BaseModel):
             raise ValueError("watch price low must not exceed high")
         if self.valid_from >= self.valid_until:
             raise ValueError("plan validity duration must be positive")
+        if sum(self.tranches, Decimal()) > self.max_position:
+            raise ValueError("tranches must sum to at most max position")
         return self
 
 
