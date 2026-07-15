@@ -8,6 +8,7 @@ from fastapi import FastAPI, Request
 from sqlalchemy import create_engine
 
 from qibao_api.a_shares.diagnosis import AShareDiagnosisService
+from qibao_api.a_shares.cockpit import StockDecisionCockpitService
 from qibao_api.a_shares.fundamentals import TdxFinanceSource
 from qibao_api.a_shares.instrument_directory import AShareInstrument, AShareInstrumentDirectory
 from qibao_api.a_shares.repository import AShareResearchRepository
@@ -338,6 +339,11 @@ async def lifespan(application: FastAPI):
             )
             try:
                 application.state.a_share_instrument_directory = a_share_instrument_directory
+                application.state.a_share_cockpit_service = StockDecisionCockpitService(
+                    a_share_instrument_directory,
+                    application.state.a_share_diagnosis_service,
+                    decision_repository,
+                )
                 observed_at = datetime.now(timezone.utc)
                 for symbol in bar_repository.symbols_with_history(1, observed_at.date()):
                     if a_share_instrument_directory.resolve(symbol) is None:
@@ -390,7 +396,7 @@ async def serialize_runtime_access(request: Request, call_next):
     path = request.url.path
     if request.method == "GET" and (
         path == "/api/v1/a-shares/candidates"
-        or (path.startswith("/api/v1/a-shares/") and path.endswith("/diagnosis"))
+        or (path.startswith("/api/v1/a-shares/") and path.endswith(("/diagnosis", "/cockpit")))
     ):
         return await call_next(request)
     async with write_gate:

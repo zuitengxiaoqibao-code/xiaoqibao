@@ -18,12 +18,15 @@ from qibao_api.a_shares.models import CandidateBoard
 from qibao_api.a_shares.instrument_directory import AShareInstrument
 from qibao_api.a_shares.repository import AShareResearchStoreError
 from qibao_api.dependencies import (
+    get_a_share_cockpit_service,
     get_a_share_diagnosis_service,
     get_a_share_instrument_directory,
     get_a_share_quote_source,
     get_pipeline,
     get_server_time,
 )
+from qibao_api.a_shares.cockpit import UnknownAShareError
+from qibao_api.shangshu.decision_repository import DecisionIntegrityError
 from qibao_api.main import app
 from qibao_api.gongbu.tencent_quotes import parse_tencent_quote
 from qibao_api.routes.research import router as research_router
@@ -391,3 +394,44 @@ def test_exact_code_maps_malformed_tencent_numeric_payload_to_unavailable() -> N
     assert response.status_code == 200
     assert response.json()["items"] == []
     assert response.json()["source_status"] == "unavailable"
+
+
+class UnknownCockpit:
+    async def get(self, symbol, as_of, cutoff):
+        raise UnknownAShareError(symbol)
+
+
+class CorruptCockpit:
+    async def get(self, symbol, as_of, cutoff):
+        raise DecisionIntegrityError("corrupt advice payload containing secret advice")
+
+
+def cockpit_client(service) -> TestClient:
+    application = FastAPI()
+    application.include_router(research_router)
+    application.dependency_overrides[get_a_share_cockpit_service] = lambda: service
+    application.dependency_overrides[get_server_time] = lambda: SEARCH_NOW
+    return TestClient(application)
+
+
+def test_cockpit_maps_invalid_and_unknown_symbol() -> None:
+    client = cockpit_client(UnknownCockpit())
+    assert client.get("/api/v1/a-shares/123/cockpit").status_code == 422
+    assert client.get("/api/v1/a-shares/600999/cockpit").status_code == 404
+
+
+def test_cockpit_hides_corrupt_decision_payload() -> None:
+    response = cockpit_client(CorruptCockpit()).get(
+        "/api/v1/a-shares/600000/cockpit"
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "decision_integrity_error"
+    assert "advice" not in response.text
+
+
+def test_cockpit_rejects_future_as_of_using_server_beijing_time() -> None:
+    response = cockpit_client(UnknownCockpit()).get(
+        "/api/v1/a-shares/600000/cockpit?as_of=2026-07-16"
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "future_as_of_not_allowed"

@@ -66,6 +66,10 @@ def get_a_share_diagnosis_service(request: Request):
     return request.app.state.a_share_diagnosis_service
 
 
+def get_a_share_cockpit_service(request: Request):
+    return request.app.state.a_share_cockpit_service
+
+
 def get_a_share_instrument_directory(request: Request):
     return request.app.state.a_share_instrument_directory
 

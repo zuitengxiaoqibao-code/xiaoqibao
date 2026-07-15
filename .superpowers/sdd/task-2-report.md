@@ -1,110 +1,66 @@
-# Task 2 Report
+# Task 2 Implementation Report
 
 ## Status
 
-Complete.
+Implemented the read-only single-stock cockpit aggregate and API. Task 3 was not touched.
 
-## Commit
+## Delivered behavior
 
-This implementation commit: `feat(decisions): generate evidence-backed premarket advice`.
+- Added frozen `CockpitSection`, `StockPhaseHistory`, `DecisionVersion`, and
+  `StockCockpitSnapshot` response contracts.
+- Added `StockDecisionCockpitService.get()` as an async method to match the existing
+  async `AShareDiagnosisService.diagnose()` lifecycle.
+- Resolves one known A-share instrument and returns an explicit 404 for an unknown code.
+- Reads each decision phase at the requested trading date and applies one server cutoff.
+- Filters every advice record to the selected symbol and rejects records created after the
+  cutoff or containing evidence observed after the cutoff.
+- Preserves the selected stock's immutable phase version sequence in `change_stream`.
+- Derives current advice by latest `(horizon, created_at)` record.
+- Derives candidate membership from already persisted decision advice, avoiding a call to
+  `candidates()` that could generate and persist a new candidate board.
+- Maps diagnosis `events` to the public cockpit `news` section.
+- Converts each diagnosis section independently, including cutoff rejection for a section
+  observed after the requested cutoff.
+- Always returns `funds` as unavailable with `fund_data_not_connected`.
+- Always returns `backtest` as unavailable with `backtest_not_run`; no backtest strategy is
+  selected or executed.
+- Leaves `DecisionIntegrityError` unhandled in the service and maps it at the HTTP boundary
+  to a generic 503 `decision_integrity_error` response that does not expose corrupt data.
+- Uses the injected server time as the snapshot cutoff and its Asia/Shanghai date for future
+  `as_of` validation.
+- Registers the service in application lifespan and exempts the read-only cockpit GET from
+  the runtime write lock.
 
-## Files
+## TDD evidence
 
-- `apps/api/src/qibao_api/zhongshu/decision_ai.py`
-- `apps/api/src/qibao_api/zhongshu/premarket_decision.py`
-- `apps/api/tests/zhongshu/test_decision_ai.py`
-- `apps/api/tests/zhongshu/test_premarket_decision.py`
-- `apps/api/src/qibao_api/shangshu/scheduler.py`
-- `apps/api/tests/shangshu/test_scheduler.py`
-- `.superpowers/sdd/task-2-report.md`
+1. Added `apps/api/tests/a_shares/test_cockpit.py` before production code.
+2. Initial run failed during collection with
+   `ModuleNotFoundError: qibao_api.a_shares.cockpit`.
+3. Added the minimal aggregate and contracts; four service tests passed.
+4. Added route tests before route/dependency implementation.
+5. Route test collection failed because `get_a_share_cockpit_service` did not exist.
+6. Added dependency, route, lifecycle wiring, and error shielding; target tests passed.
+7. Added a read-only regression test that makes `candidates()` raise if called. It failed
+   against the first implementation, then passed after membership derivation moved to the
+   persisted phase advice.
 
-## TDD Evidence
+## Verification
 
-RED command:
+- Target tests: `30 passed`.
+- Final full API suite after the read-only membership refinement: `523 passed`.
+- Ruff: `All checks passed!`.
+- `git diff --check`: no whitespace errors (only Git CRLF conversion warnings).
+- Mojibake scan over touched Chinese source/test files: no matches.
 
-```powershell
-.venv\Scripts\python.exe -m pytest apps/api/tests/zhongshu/test_decision_ai.py apps/api/tests/zhongshu/test_premarket_decision.py apps/api/tests/shangshu/test_scheduler.py -q
-```
+## Concerns and decisions
 
-RED result: collection failed with two expected `ModuleNotFoundError` errors for
-`qibao_api.zhongshu.decision_ai` and `qibao_api.zhongshu.premarket_decision` before
-either production module existed.
-
-GREEN command:
-
-```powershell
-.venv\Scripts\python.exe -m pytest apps/api/tests/zhongshu/test_decision_ai.py apps/api/tests/zhongshu/test_premarket_decision.py apps/api/tests/shangshu/test_scheduler.py -q
-```
-
-GREEN result: `22 passed in 1.55s`.
-
-Broader regression result: `396 passed in 28.27s`.
-
-## Design Decisions And Deviations
-
-- Added frozen timestamped envelopes for candidate, compliance, and market-risk inputs because the
-  existing candidate board has no capture timestamp.
-- Kept all service dependencies injected and duck-typed; no application globals are imported.
-- Provider output uses an extra-forbidden schema and a whole-result validation gate. One synchronous
-  attempt produces distinct invalid-output and provider-error counters.
-- Persisted AI provider, model, prompt version, generation time, evidence IDs, and counters in each
-  frozen advice payload. Credentials remain private to the gateway and are absent from requests,
-  representations, results, and repository payloads.
-- The source input hash excludes AI output, so identical deterministic source inputs return the prior
-  aggregate without another provider call. Changed source inputs append through the Task 1 chain.
-- Candidate factor membership is the only positive support used to establish `observe`; headline text
-  never changes direction. Candidate-associated events with deterministic risk markers are contrary
-  evidence and downgrade the action, while direction-unknown news remains at cycle reference level.
-- News and interpretations are candidate/A-share scoped before canonical hashing and snapshot references.
-- Scheduler integration records briefing completion before running the optional decision workflow and
-  uses a distinct decision job stream for its started/completed/failed lifecycle.
-
-## Self Review
-
-- Confirmed Task 2 emits only A-share `observe`, `wait`, or blocked/no-advice outcomes and never plans.
-- Confirmed all evidence and source timestamps stored in the aggregate are at or before the window end.
-- Confirmed missing/future required inputs block advice and AI failure retains deterministic advice.
-- Confirmed repository serialization is the return boundary, preventing first-run/idempotent type drift.
-- Confirmed no API key or raw provider response is persisted.
-
-## Concerns
-
-- Direction-unknown news is intentionally excluded from advice evidence until a deterministic direction
-  contract becomes available.
-
-## Review Fix Evidence
-
-Review RED command:
-
-```powershell
-.venv\Scripts\python.exe -m pytest apps/api/tests/zhongshu/test_decision_ai.py apps/api/tests/zhongshu/test_premarket_decision.py apps/api/tests/shangshu/test_scheduler.py -q
-```
-
-Review RED result: `18 failed, 19 passed in 2.14s`. Failures covered headline-driven advice,
-risk-event evidence placement, unrelated/bond news hashing, evidence-number reuse, expanded prohibited
-semantics, and scheduler decision-job projection.
-
-Review GREEN result: `37 passed in 2.00s`.
-
-Final review verification: focused `37 passed in 1.83s`; full API `411 passed in 27.17s`;
-Ruff clean; mojibake scan empty; `git diff --check` clean.
-
-## Unicode-Adjacent Number Review Fix
-
-RED command:
-
-```powershell
-.venv\Scripts\python.exe -m pytest apps/api/tests/zhongshu/test_decision_ai.py -q
-```
-
-RED result: `1 failed, 18 passed in 0.70s`; `增长10%` bypassed the Unicode-aware `\w`
-lookbehind, while punctuation happened to expose the decimal and signed cases.
-
-GREEN result: AI-focused `19 passed in 0.56s`; Task 2 focused `40 passed in 1.58s`.
-The matcher now rejects ASCII digit sequences anywhere, including signs, decimals, percentages, and
-comma-grouped values adjacent to Chinese text.
-
-Final verification: focused `40 passed in 1.57s`; full API rerun `414 passed in 24.23s`;
-Ruff clean; mojibake scan empty; `git diff --check` clean. The first full-suite attempt had one
-environmental DuckDB path decode failure with 413 tests passing; that test passed alone and the complete
-suite then passed on rerun.
+- The brief presents a synchronous `get()` signature, but the existing diagnosis service is
+  async. The cockpit method is async so the route does not create a nested event loop or
+  bypass the established FastAPI lifecycle.
+- One target-suite run failed while DuckDB opened the Chinese workspace path with a transient
+  `UnicodeDecodeError`; an immediate identical rerun passed all 30 tests. This appears to be
+  an existing Windows/DuckDB path issue rather than cockpit behavior, but remains a test
+  environment risk.
+- There is no persisted fund or backtest result repository in the current application. The
+  response therefore reports the two binding explicit unavailable reasons and performs no
+  speculative computation.

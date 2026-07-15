@@ -8,6 +8,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict
 
 from qibao_api.a_shares.diagnosis import AShareDiagnosis, DiagnosisUnavailableError
+from qibao_api.a_shares.cockpit import StockCockpitSnapshot, UnknownAShareError
 from qibao_api.a_shares.instrument_directory import AShareInstrument, AShareInstrumentDirectory
 from qibao_api.a_shares.models import CandidateBoard
 from qibao_api.a_shares.repository import AShareResearchStoreError
@@ -16,6 +17,7 @@ from qibao_api.contracts.market import DataQuality
 from qibao_api.contracts.research import ResearchCard
 from qibao_api.dependencies import (
     get_a_share_diagnosis_service,
+    get_a_share_cockpit_service,
     get_a_share_instrument_directory,
     get_a_share_quote_source,
     get_pipeline,
@@ -23,6 +25,7 @@ from qibao_api.dependencies import (
 )
 from qibao_api.gongbu.tencent_quotes import market_prefix
 from qibao_api.shangshu.pipeline import ResearchPipeline
+from qibao_api.shangshu.decision_repository import DecisionIntegrityError
 from qibao_api.libu_compliance.repository import SourceAuthorizationError
 
 router = APIRouter(prefix="/api/v1/a-shares", tags=["A股"])
@@ -120,6 +123,20 @@ def _research_date(value: date | None) -> date:
     return result
 
 
+def _research_date_at(value: date | None, server_time: datetime) -> date:
+    today = server_time.astimezone(ZoneInfo("Asia/Shanghai")).date()
+    result = value or today
+    if result > today:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "future_as_of_not_allowed",
+                "message": "研究截止日期不能晚于北京时间今天",
+            },
+        )
+    return result
+
+
 def _store_error() -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -168,6 +185,32 @@ async def diagnosis(
         ) from error
     except AShareResearchStoreError as error:
         raise _store_error() from error
+
+
+@router.get("/{symbol}/cockpit", response_model=StockCockpitSnapshot)
+async def cockpit(
+    symbol: Annotated[AShareCode, Path()],
+    service: Annotated[object, Depends(get_a_share_cockpit_service)],
+    server_time: Annotated[datetime, Depends(get_server_time)],
+    as_of: date | None = None,
+) -> StockCockpitSnapshot:
+    try:
+        return await service.get(
+            symbol, _research_date_at(as_of, server_time), server_time
+        )
+    except UnknownAShareError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "a_share_not_found", "message": "未找到该 A 股"},
+        ) from error
+    except DecisionIntegrityError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "decision_integrity_error",
+                "message": "决策历史完整性校验失败",
+            },
+        ) from error
 
 @router.get("/{symbol}/snapshot", response_model=ResearchCard)
 async def snapshot(
