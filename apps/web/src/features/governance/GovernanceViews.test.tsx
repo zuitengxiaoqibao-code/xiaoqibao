@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { Dashboard } from "../dashboard/Dashboard";
@@ -6,6 +6,40 @@ import { Dashboard } from "../dashboard/Dashboard";
 const snapshot = () => new Promise<never>(() => undefined);
 
 describe("governance navigation", () => {
+  it("ignores a stale audit response after switching to compliance", async () => {
+    let resolveAudit!: (value: { state: string; findings: never[] }) => void;
+    const pendingAudit = new Promise<{ state: string; findings: never[] }>((resolve) => { resolveAudit = resolve; });
+    render(<Dashboard
+      loadSnapshot={snapshot}
+      loadAudit={() => pendingAudit}
+      loadCompliance={() => Promise.resolve({ policy_state: "current", sources: [], features: [] })}
+    />);
+
+    fireEvent.click(screen.getByRole("button", { name: /东厂/ }));
+    fireEvent.click(screen.getByRole("button", { name: /礼部/ }));
+    expect(await screen.findByRole("heading", { name: "来源权限与声明" })).toBeInTheDocument();
+
+    resolveAudit({ state: "ready", findings: [] });
+    await waitFor(() => expect(screen.getByRole("heading", { name: "来源权限与声明" })).toBeInTheDocument());
+    expect(screen.queryByRole("heading", { name: "独立审计发现" })).not.toBeInTheDocument();
+  });
+
+  it("does not render loaded audit data through the compliance view", async () => {
+    const pendingCompliance = new Promise<never>(() => undefined);
+    render(<Dashboard
+      loadSnapshot={snapshot}
+      loadAudit={() => Promise.resolve({ state: "ready", findings: [] })}
+      loadCompliance={() => pendingCompliance}
+    />);
+
+    fireEvent.click(screen.getByRole("button", { name: /东厂/ }));
+    expect(await screen.findByRole("heading", { name: "独立审计发现" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /礼部/ }));
+
+    expect(screen.getByText("正在加载...")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "独立审计发现" })).not.toBeInTheDocument();
+  });
+
   it("switches to an independent Xingbu view", async () => {
     render(<Dashboard loadSnapshot={snapshot} loadRisk={() => Promise.resolve({
       rule_version: "2026-07-13.1", limits: { max_position: "0.20" },
