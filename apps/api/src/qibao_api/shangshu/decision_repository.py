@@ -74,6 +74,10 @@ class DecisionRepository:
             raise DecisionIntegrityError("duplicate advice or plan id")
         if any(item.snapshot_id != snapshot_id for item in aggregate.advice):
             raise DecisionIntegrityError("advice references a different snapshot")
+        for advice in aggregate.advice:
+            evidence = advice.supporting_evidence + advice.contrary_evidence
+            if any(item.observed_at > aggregate.snapshot.window_end for item in evidence):
+                raise DecisionIntegrityError("advice evidence is after snapshot window end")
         for plan in aggregate.plans:
             advice = advice_by_id.get(plan.advice_id)
             if advice is None:
@@ -190,11 +194,13 @@ class DecisionRepository:
                 advice = tuple(self._validated_child(item, AdviceCard) for item in advice_rows)
                 plans = tuple(self._validated_child(item, SimulationPlan) for item in plan_rows)
                 for stored, model in zip(advice_rows, advice, strict=True):
-                    if (stored["snapshot_id"] != snapshot.snapshot_id
+                    if (stored["advice_id"] != model.advice_id
+                            or stored["snapshot_id"] != snapshot.snapshot_id
                             or stored["plan_id"] != model.simulation_plan_id):
                         raise DecisionIntegrityError("stored reciprocal plan link is corrupt")
                 for stored, model in zip(plan_rows, plans, strict=True):
-                    if (stored["snapshot_id"] != snapshot.snapshot_id
+                    if (stored["plan_id"] != model.plan_id
+                            or stored["snapshot_id"] != snapshot.snapshot_id
                             or stored["advice_id"] != model.advice_id):
                         raise DecisionIntegrityError("stored plan link is corrupt")
                 aggregate = DecisionCycleAggregate(snapshot=snapshot, advice=advice, plans=plans)

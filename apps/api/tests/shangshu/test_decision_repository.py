@@ -48,16 +48,39 @@ def aggregate(sequence: int = 1, previous: str | None = None, *, planned: bool =
     return DecisionCycleAggregate(snapshot=snapshot, advice=(advice,), plans=plans)
 
 
-def test_append_only_triggers_reject_update_and_delete(tmp_path: Path) -> None:
-    repository = DecisionRepository(tmp_path / "decisions.sqlite3")
-    repository.append_cycle(aggregate())
-    for statement in (
+@pytest.mark.parametrize(
+    "statement",
+    [
         "UPDATE decision_cycles SET payload='{}' WHERE snapshot_id='cycle-1'",
+        "DELETE FROM decision_cycles WHERE snapshot_id='cycle-1'",
+        "UPDATE decision_advice SET payload='{}' WHERE advice_id='advice-1'",
         "DELETE FROM decision_advice WHERE advice_id='advice-1'",
-    ):
-        with pytest.raises(sqlite3.IntegrityError):
-            repository.connection.execute(statement)
+        "UPDATE decision_plans SET payload='{}' WHERE plan_id='plan-1'",
+        "DELETE FROM decision_plans WHERE plan_id='plan-1'",
+    ],
+)
+def test_append_only_triggers_reject_update_and_delete(tmp_path: Path, statement: str) -> None:
+    repository = DecisionRepository(tmp_path / "decisions.sqlite3")
+    repository.append_cycle(aggregate(planned=True))
+    with pytest.raises(sqlite3.IntegrityError):
+        repository.connection.execute(statement)
     repository.close()
+
+
+@pytest.mark.parametrize("collection", ["supporting_evidence", "contrary_evidence"])
+def test_append_rejects_advice_evidence_after_cycle_window(
+    tmp_path: Path, collection: str,
+) -> None:
+    repository = DecisionRepository(tmp_path / "decisions.sqlite3")
+    item = aggregate()
+    future = item.advice[0].supporting_evidence[0].model_copy(
+        update={"observed_at": item.snapshot.window_end + timedelta(seconds=1)}
+    )
+    changes = {collection: (future,)}
+    bad_advice = item.advice[0].model_copy(update=changes)
+    with pytest.raises(DecisionIntegrityError, match="after snapshot window end"):
+        repository.append_cycle(item.model_copy(update={"advice": (bad_advice,)}))
+    assert repository.cycles() == []
 
 
 def test_restart_recovery_idempotency_and_conflicting_id(tmp_path: Path) -> None:
@@ -112,6 +135,25 @@ def test_read_detects_corruption(tmp_path: Path, corruption: str) -> None:
     else:
         repository.connection.execute("UPDATE decision_advice SET plan_id=NULL WHERE advice_id='advice-1'")
     with pytest.raises(DecisionIntegrityError):
+        repository.cycles()
+
+
+@pytest.mark.parametrize(
+    ("table", "id_column", "stored_id", "trigger"),
+    [
+        ("decision_advice", "advice_id", "advice-tampered", "reject_update_decision_advice"),
+        ("decision_plans", "plan_id", "plan-tampered", "reject_update_decision_plans"),
+    ],
+)
+def test_read_detects_stored_child_id_corruption(
+    tmp_path: Path, table: str, id_column: str, stored_id: str, trigger: str,
+) -> None:
+    repository = DecisionRepository(tmp_path / "decisions.sqlite3")
+    repository.append_cycle(aggregate(planned=True))
+    repository.connection.execute(f"DROP TRIGGER {trigger}")
+    repository.connection.execute("PRAGMA foreign_keys=OFF")
+    repository.connection.execute(f"UPDATE {table} SET {id_column}=?", (stored_id,))
+    with pytest.raises(DecisionIntegrityError, match="stored .* link is corrupt"):
         repository.cycles()
 
 
