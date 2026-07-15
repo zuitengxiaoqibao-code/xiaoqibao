@@ -14,7 +14,8 @@ class RepositoryPostcloseContextSource:
 
     def snapshot(self, trading_date: date, now: datetime) -> PostcloseContext:
         start = datetime.combine(trading_date, time(9, 25), CHINA_TZ)
-        outcomes = self.paper_repository.list_order_outcomes_between(start, now)
+        cutoff = min(now.astimezone(CHINA_TZ), datetime.combine(trading_date, time(15), CHINA_TZ))
+        outcomes = self.paper_repository.list_order_outcomes_between(start, cutoff)
         terminal = [
             item for item in outcomes if item["status"] in {"filled", "rejected"}
         ]
@@ -25,7 +26,7 @@ class RepositoryPostcloseContextSource:
         findings = [
             finding
             for finding in self.audit_repository.list_findings(asset=AssetKind.A_SHARE)
-            if start <= finding.detected_at <= now
+            if start <= finding.detected_at <= cutoff
         ]
         return PostcloseContext(
             signal_outcome_ids=tuple(str(item["order_id"]) for item in terminal),

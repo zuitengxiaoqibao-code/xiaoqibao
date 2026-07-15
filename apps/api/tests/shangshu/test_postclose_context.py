@@ -11,7 +11,7 @@ NOW = datetime(2026, 7, 14, 8, 0, tzinfo=UTC)
 class Paper:
     def list_order_outcomes_between(self, start, end):
         assert start == datetime(2026, 7, 14, 1, 25, tzinfo=UTC)
-        assert end == NOW
+        assert end == datetime(2026, 7, 14, 7, 0, tzinfo=UTC)
         return [
             {"order_id": "filled-1", "status": "filled", "rejection_reason": None},
             {"order_id": "rejected-1", "status": "rejected", "rejection_reason": "stale_quote"},
