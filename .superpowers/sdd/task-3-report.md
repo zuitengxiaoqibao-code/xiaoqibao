@@ -90,3 +90,14 @@ Implemented the A-share polling feed port, append-only persisted layered polling
 - Aggregate append is gated exclusively by specified advice/removal/membership/gate/plan semantic deltas. Source hash changes without a semantic delta return the existing latest aggregate.
 - Plan comparison excludes aggregate-local plan/advice IDs. Unchanged semantics preserve prior references when no advice delta exists; changed advice receives a newly reciprocal plan in its new aggregate.
 - Any failed or absent plan gate normalizes stale plan advice to a non-plan action, clears plan/risk references, and records stable failed-gate reasons.
+
+## Final Poll Persistence Review
+
+- RED: the identical-content execution regression failed because no `success_states` audit existed and content rows were appended on every execution.
+- RED: an older focus quote appended after a fresher universe quote, producing two rows and allowing sequence order to select stale content.
+- GREEN: the two persistence/freshness regressions -> `2 passed in 0.82s`.
+- FINAL GREEN: focused Task 3 suite -> `55 passed in 3.22s`.
+- FINAL FULL: API suite -> `462 passed in 29.06s`.
+- FINAL QUALITY: Ruff passed, mojibake scan returned no matches, and `git diff --check` exited 0.
+
+The append transaction now treats execution and content as separate identities. A unique execution always appends its success state, while canonical quote content excludes observation/fetch/source identity metadata and inserts only when the latest content for that scope/symbol differs. Freshness is enforced globally per symbol before the per-scope content comparison: an incoming `(observed_at, fetched_at)` older than the freshest retained payload is ignored, including focus/universe crossover and restart cases.

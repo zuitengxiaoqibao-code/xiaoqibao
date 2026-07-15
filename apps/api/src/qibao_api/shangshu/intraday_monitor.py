@@ -154,7 +154,7 @@ class PollStateRepository:
         CREATE TABLE IF NOT EXISTS intraday_market_snapshot_events (
           sequence INTEGER PRIMARY KEY AUTOINCREMENT,
           scope TEXT NOT NULL, symbol TEXT NOT NULL, observed_at TEXT NOT NULL,
-          source_snapshot_id TEXT, payload TEXT
+          source_snapshot_id TEXT, payload TEXT, content_hash TEXT
         );
         CREATE TABLE IF NOT EXISTS intraday_poll_batches (
           batch_id TEXT PRIMARY KEY, scope TEXT NOT NULL, occurred_at TEXT NOT NULL
@@ -180,6 +180,10 @@ class PollStateRepository:
         if "payload" not in columns:
             self.connection.execute(
                 "ALTER TABLE intraday_market_snapshot_events ADD COLUMN payload TEXT"
+            )
+        if "content_hash" not in columns:
+            self.connection.execute(
+                "ALTER TABLE intraday_market_snapshot_events ADD COLUMN content_hash TEXT"
             )
 
     def latest(self) -> PollState | None:
@@ -213,10 +217,6 @@ class PollStateRepository:
         self, batch_id: str, scope: Scope, snapshots, state: PollState,
         occurred_at: datetime,
     ) -> bool:
-        rows = [(
-            scope, item.symbol, item.observed_at.isoformat(),
-            getattr(item, "source_snapshot_id", None), self._snapshot_payload(item),
-        ) for item in snapshots]
         payload = json.dumps(state.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
         with self._lock, self.connection:
             existing = self.connection.execute(
@@ -228,11 +228,31 @@ class PollStateRepository:
                 "INSERT INTO intraday_poll_batches(batch_id,scope,occurred_at) VALUES(?,?,?)",
                 (batch_id, scope, occurred_at.isoformat()),
             )
-            self.connection.executemany(
-                """INSERT INTO intraday_market_snapshot_events(
-                scope,symbol,observed_at,source_snapshot_id,payload) VALUES(?,?,?,?,?)""",
-                rows,
-            )
+            for item in snapshots:
+                snapshot_payload = self._snapshot_payload(item)
+                content_hash = self._snapshot_content_hash(item)
+                if self._is_stale_snapshot(item):
+                    continue
+                prior = self.connection.execute(
+                    """SELECT content_hash,payload FROM intraday_market_snapshot_events
+                    WHERE scope=? AND symbol=? ORDER BY sequence DESC LIMIT 1""",
+                    (scope, item.symbol),
+                ).fetchone()
+                prior_hash = None if prior is None else prior["content_hash"]
+                if prior_hash is None and prior is not None and prior["payload"]:
+                    prior_hash = self._snapshot_content_hash(
+                        MarketFeedSnapshot.model_validate_json(prior["payload"])
+                    )
+                if prior_hash == content_hash:
+                    continue
+                self.connection.execute(
+                    """INSERT INTO intraday_market_snapshot_events(
+                    scope,symbol,observed_at,source_snapshot_id,payload,content_hash)
+                    VALUES(?,?,?,?,?,?)""",
+                    (scope, item.symbol, item.observed_at.isoformat(),
+                     getattr(item, "source_snapshot_id", None), snapshot_payload,
+                     content_hash),
+                )
             self.connection.execute(
                 "INSERT INTO intraday_poll_state_events(occurred_at,payload) VALUES(?,?)",
                 (occurred_at.isoformat(), payload),
@@ -246,6 +266,29 @@ class PollStateRepository:
         return json.dumps(
             snapshot.model_dump(mode="json"), sort_keys=True, separators=(",", ":")
         )
+
+    @staticmethod
+    def _snapshot_content_hash(snapshot) -> str:
+        if isinstance(snapshot, MarketFeedSnapshot):
+            value = snapshot.model_dump(mode="json")
+            for field in ("observed_at", "fetched_at", "source_snapshot_id"):
+                value.pop(field, None)
+        else:
+            value = {"symbol": snapshot.symbol}
+        payload = json.dumps(value, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(payload.encode()).hexdigest()
+
+    def _is_stale_snapshot(self, snapshot) -> bool:
+        rows = self.connection.execute(
+            """SELECT payload FROM intraday_market_snapshot_events
+            WHERE symbol=? AND payload IS NOT NULL""",
+            (snapshot.symbol,),
+        ).fetchall()
+        if not rows or not isinstance(snapshot, MarketFeedSnapshot):
+            return False
+        retained = [MarketFeedSnapshot.model_validate_json(row["payload"]) for row in rows]
+        freshest = max((item.observed_at, item.fetched_at) for item in retained)
+        return (snapshot.observed_at, snapshot.fetched_at) < freshest
 
     def latest_snapshots(
         self, cutoff: datetime, *, since: datetime | None = None,
@@ -272,6 +315,22 @@ class PollStateRepository:
                 FROM intraday_market_snapshot_events ORDER BY sequence"""
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def success_states(self, scope: Scope) -> list[PollState]:
+        field = f"last_{scope}_success_at"
+        with self._lock:
+            rows = self.connection.execute(
+                "SELECT payload FROM intraday_poll_state_events ORDER BY sequence"
+            ).fetchall()
+        results = []
+        previous = None
+        for row in rows:
+            state = PollState.model_validate_json(row["payload"])
+            value = getattr(state, field)
+            if value is not None and value != previous:
+                results.append(state)
+            previous = value
+        return results
 
 
 class IntradayMonitor:

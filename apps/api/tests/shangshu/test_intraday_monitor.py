@@ -181,6 +181,71 @@ def test_identical_snapshot_on_two_due_executions_advances_restart_due_time(tmp_
     assert restarted.due(second_at + timedelta(seconds=180)) == frozenset({"focus", "universe"})
 
 
+def test_due_executions_advance_state_but_persist_only_changed_quote_content(tmp_path) -> None:
+    class ContentFeed:
+        def __init__(self):
+            self.prices = {"000001": Decimal("10"), "300001": Decimal("20")}
+
+        def snapshot_many(self, symbols, *, cutoff=None):
+            return tuple(MarketFeedSnapshot(
+                symbol=symbol, price=self.prices[symbol], change=Decimal("0"),
+                change_percent=Decimal("0"), volume=Decimal("100"), source="test",
+                observed_at=cutoff, fetched_at=cutoff, quality="ready",
+                source_snapshot_id=f"execution-{int(cutoff.timestamp())}-{symbol}",
+            ) for symbol in symbols)
+
+    database = tmp_path / "content.sqlite3"
+    feed = ContentFeed()
+    value = IntradayMonitor(
+        feed=feed, calendar=Calendar(), state_repository=PollStateRepository(database),
+        focus_symbols=lambda now: (), universe_symbols=lambda now: ("000001", "300001"),
+    )
+    value.check(NOW, scopes=frozenset({"universe"}))
+    value.check(NOW + timedelta(seconds=180), scopes=frozenset({"universe"}))
+    assert len(value.state_repository.success_states("universe")) == 2
+    assert len(value.state_repository.snapshots()) == 2
+
+    feed.prices["000001"] = Decimal("10.1")
+    value.check(NOW + timedelta(seconds=360), scopes=frozenset({"universe"}))
+    reopened = PollStateRepository(database)
+    assert len(reopened.success_states("universe")) == 3
+    assert len(reopened.snapshots()) == 3
+    latest = {item.symbol: item for item in reopened.latest_snapshots(NOW + timedelta(seconds=360))}
+    assert latest["000001"].price == Decimal("10.1")
+    assert latest["300001"].price == Decimal("20")
+
+
+def test_older_focus_quote_cannot_replace_fresher_universe_quote_across_restart(tmp_path) -> None:
+    class CrossoverFeed:
+        def __init__(self):
+            self.stale = False
+
+        def snapshot_many(self, symbols, *, cutoff=None):
+            observed = NOW - timedelta(seconds=10) if self.stale else NOW
+            price = Decimal("9") if self.stale else Decimal("10")
+            return tuple(MarketFeedSnapshot(
+                symbol=symbol, price=price, change=Decimal("0"),
+                change_percent=Decimal("0"), volume=Decimal("100"), source="test",
+                observed_at=observed, fetched_at=cutoff, quality="ready",
+                source_snapshot_id=f"{'stale' if self.stale else 'fresh'}-{symbol}",
+            ) for symbol in symbols)
+
+    database = tmp_path / "crossover.sqlite3"
+    feed = CrossoverFeed()
+    value = IntradayMonitor(
+        feed=feed, calendar=Calendar(), state_repository=PollStateRepository(database),
+        focus_symbols=lambda now: ("000001",), universe_symbols=lambda now: ("000001",),
+    )
+    value.check(NOW, scopes=frozenset({"universe"}))
+    feed.stale = True
+    value.check(NOW + timedelta(seconds=60), scopes=frozenset({"focus"}))
+    reopened = PollStateRepository(database)
+    latest = reopened.latest_snapshots(NOW + timedelta(seconds=60))
+    assert len(reopened.snapshots()) == 1
+    assert latest[0].price == Decimal("10")
+    assert latest[0].observed_at == NOW
+
+
 def test_constrained_budget_persists_300_second_universe_cadence(tmp_path) -> None:
     value = IntradayMonitor(
         feed=Feed(), calendar=Calendar(),
