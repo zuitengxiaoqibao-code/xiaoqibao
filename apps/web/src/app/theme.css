@@ -280,6 +280,8 @@ body { font-size: 13px; }
 .stock-option small, .stock-option time { display: block; color: var(--muted); font-size: 11px; }
 .watch-button { position: absolute; top: 10px; right: 8px; width: 28px; height: 28px; border: 0; background: transparent; color: var(--muted); }
 .watch-button:hover { color: var(--signal); }
+.identity-retry { position: absolute; top: 10px; right: 38px; width: 28px; height: 28px; border: 0; background: transparent; color: var(--warning); }
+.stock-option:has(.identity-retry) > button:first-child { padding-right: 68px; }
 .stock-search-results { display: grid; margin: -6px 12px 12px; border: 1px solid var(--line); background: var(--ink-0); }
 .stock-search-results article { position: relative; border-bottom: 1px solid var(--line); }
 .stock-search-results article > button:first-child { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; width: 100%; padding: 10px 38px 10px 10px; border: 0; background: transparent; color: var(--text); text-align: left; font-size: 11px; }

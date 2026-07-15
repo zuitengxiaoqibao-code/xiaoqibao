@@ -14,11 +14,12 @@ type SelectedInstrument = {
 
 const SelectedInstrumentContext = createContext<SelectedInstrument | null>(null);
 const A_SHARE_SYMBOL = /^(?:(?:000|001|002|003|300|301|600|601|603|605|688|689|920)\d{3}|[48]\d{5})$/;
+export const isAShareSymbol = (symbol: string): boolean => A_SHARE_SYMBOL.test(symbol);
 
 function symbolFromLocation(): string | null {
   if (window.location.pathname === "/convertible-bonds") return null;
   const symbol = new URL(window.location.href).searchParams.get("symbol");
-  return symbol && A_SHARE_SYMBOL.test(symbol) ? symbol : null;
+  return symbol && isAShareSymbol(symbol) ? symbol : null;
 }
 
 export function SelectedInstrumentProvider({ children }: { children: ReactNode }) {
@@ -44,7 +45,7 @@ export function SelectedInstrumentProvider({ children }: { children: ReactNode }
     ...state,
     asset: "a_share",
     select(symbol, source) {
-      if (!A_SHARE_SYMBOL.test(symbol) || window.location.pathname === "/convertible-bonds") return;
+      if (!isAShareSymbol(symbol) || window.location.pathname === "/convertible-bonds") return;
       const url = new URL(window.location.href);
       url.searchParams.set("symbol", symbol);
       commitLocation(`${url.pathname}${url.search}${url.hash}`, source);

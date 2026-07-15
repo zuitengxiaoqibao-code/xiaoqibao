@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SelectedInstrumentProvider } from "../instrument-selection/SelectedInstrumentProvider";
@@ -123,10 +123,9 @@ describe("StockSelector", () => {
     vi.useFakeTimers();
     const loadCandidates = vi.fn(() => Promise.resolve(first));
     renderSelector({ loadCandidates, pollIntervalMs: 1000 });
-    await vi.advanceTimersByTimeAsync(0);
-    fireEvent.change(screen.getByRole("searchbox", { name: "搜索 A 股" }), { target: { value: "000001" } });
-    await vi.advanceTimersByTimeAsync(0);
-    fireEvent.click(screen.getByRole("option", { name: /000001.*平安银行/ }));
+    await vi.advanceTimersByTimeAsync(1);
+    fireEvent.click(screen.getByRole("tab", { name: "波段候选" }));
+    fireEvent.click(screen.getByRole("button", { pressed: false }));
     await vi.advanceTimersByTimeAsync(1000);
     expect(loadCandidates).toHaveBeenCalledTimes(2);
     expect(new URL(window.location.href).searchParams.get("symbol")).toBe("000001");
@@ -140,5 +139,65 @@ describe("StockSelector", () => {
     fireEvent.keyDown(short, { key: "ArrowRight" });
     expect(screen.getByRole("tab", { name: "波段候选" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tabpanel")).toHaveAttribute("aria-labelledby", "stock-selector-tab-swing");
+  });
+
+  it("invalidates an in-flight search immediately when a new debounced query is typed", async () => {
+    let resolveOld!: (value: InstrumentSearchResponse) => void;
+    const old = new Promise<InstrumentSearchResponse>((resolve) => { resolveOld = resolve; });
+    const search = vi.fn((query: string) => query === "旧词" ? old : Promise.resolve(searchResult));
+    renderSelector({ loadCandidates: () => Promise.resolve(empty), search });
+    fireEvent.change(screen.getByRole("searchbox", { name: "搜索 A 股" }), { target: { value: "旧词" } });
+    await waitFor(() => expect(search).toHaveBeenCalledWith("旧词"));
+    fireEvent.change(screen.getByRole("searchbox", { name: "搜索 A 股" }), { target: { value: "新词" } });
+    resolveOld({ ...searchResult, query: "旧词", items: [{ ...searchResult.items[0], name: "旧结果" }] });
+    await Promise.resolve();
+    expect(screen.queryByText("旧结果")).not.toBeInTheDocument();
+    expect(await screen.findByText("平安银行")).toBeInTheDocument();
+  });
+
+  it("keeps a watchlist identity error visible and retries that symbol", async () => {
+    localStorage.setItem("qibao.a_share.watchlist.v1", '["000001"]');
+    let attempts = 0;
+    const search = vi.fn((query: string) => {
+      if (query !== "000001") return Promise.resolve(puFaResult);
+      attempts += 1;
+      return attempts === 1 ? Promise.reject(new Error("身份目录离线")) : Promise.resolve(searchResult);
+    });
+    renderSelector({ loadCandidates: () => Promise.resolve(empty), search });
+    fireEvent.click(screen.getByRole("tab", { name: "自选股" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("身份目录离线");
+    fireEvent.click(screen.getByRole("button", { name: "重试 000001 身份" }));
+    expect(await screen.findByText("平安银行")).toBeInTheDocument();
+  });
+
+  it("removes convertible bonds and invalid codes from persisted A-share watchlist", () => {
+    localStorage.setItem("qibao.a_share.watchlist.v1", '["600000","113065","123001","not-code"]');
+    renderSelector({ loadCandidates: () => Promise.resolve(empty) });
+    expect(localStorage.getItem("qibao.a_share.watchlist.v1")).toBe('["600000"]');
+  });
+
+  it("ignores an older candidate refresh that resolves after a newer refresh", async () => {
+    let resolveOld!: (value: CandidateBoard) => void;
+    const old = new Promise<CandidateBoard>((resolve) => { resolveOld = resolve; });
+    const loadCandidates = vi.fn().mockReturnValueOnce(old).mockResolvedValue(empty);
+    renderSelector({ loadCandidates });
+    fireEvent.click(screen.getByRole("button", { name: "刷新候选" }));
+    expect(await screen.findByText("本地候选池为空")).toBeInTheDocument();
+    resolveOld(first);
+    await Promise.resolve();
+    expect(screen.queryByRole("button", { pressed: true })).not.toBeInTheDocument();
+  });
+
+  it("only handles horizontal arrow keys and prevents their default behavior", () => {
+    renderSelector();
+    const short = screen.getByRole("tab", { name: "短线候选" });
+    const vertical = new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true });
+    act(() => { short.dispatchEvent(vertical); });
+    expect(vertical.defaultPrevented).toBe(false);
+    expect(short).toHaveAttribute("aria-selected", "true");
+    const horizontal = new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true });
+    act(() => { short.dispatchEvent(horizontal); });
+    expect(horizontal.defaultPrevented).toBe(true);
+    expect(screen.getByRole("tab", { name: "波段候选" })).toHaveAttribute("aria-selected", "true");
   });
 });
