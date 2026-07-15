@@ -276,6 +276,35 @@ def test_snapshot_metadata_uses_only_attributed_inputs_inside_advice_window() ->
     assert result.aggregate.snapshot.source_observed_at == (inside,)
 
 
+def test_evidence_at_exact_advice_creation_time_is_excluded() -> None:
+    created = datetime(2026, 7, 14, 2, 0, tzinfo=UTC)
+    later = datetime(2026, 7, 14, 2, 1, tzinfo=UTC)
+    advice = _advice("strict-boundary", created)
+    exact = {"advice_id": "strict-boundary", "outcome_id": "exact",
+             "observed_at": created, "available": True, "direction": "adverse",
+             "invalidation_triggered": True}
+    after = {"advice_id": "strict-boundary", "outcome_id": "after",
+             "observed_at": later, "available": True, "direction": "favorable",
+             "invalidation_triggered": False}
+    clean_service, _ = _service((advice,), (after,))
+    boundary_service, _ = _service(
+        (advice,), (exact, after),
+        executions=({"advice_id": "strict-boundary", "execution_id": "execution-exact",
+                     "created_at": created, "status": "rejected"},),
+        decisions=({"advice_id": "strict-boundary", "decision_id": "risk-exact",
+                    "decided_at": created, "outcome": "reject"},),
+        findings=({"finding_id": "finding-exact", "input_snapshot_ids": ("strict-boundary",),
+                   "detected_at": created},),
+    )
+
+    clean = clean_service.run(TRADING_DATE, NOW)
+    bounded = boundary_service.run(TRADING_DATE, NOW)
+
+    assert bounded.outcomes[0].status == "correct"
+    assert bounded.outcomes[0].outcome_input_hash == clean.outcomes[0].outcome_input_hash
+    assert bounded.aggregate.snapshot.source_observed_at == (later,)
+
+
 def test_wrong_invalidated_and_risk_blocked_advice_are_withdrawn() -> None:
     created = datetime(2026, 7, 14, 2, 0, tzinfo=UTC)
     advice = tuple(_advice(value, created) for value in ("wrong", "invalid", "blocked"))

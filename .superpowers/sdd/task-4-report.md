@@ -72,3 +72,11 @@ All checks passed!
 ```
 
 The final combined pre-commit run completed with `10 passed in 0.59s`, `All checks passed!`, `mojibake scan: no matches`, and a zero exit status from `git diff --check`.
+
+### Exact advice-time boundary fix
+
+- Added a regression containing market outcome, simulated execution, risk decision, and East Factory finding records observed exactly at `AdviceCard.created_at`.
+- The red run (`.venv\Scripts\python.exe -m pytest apps/api/tests/zhongshu/test_postclose_review.py -q`) failed with `risk_blocked` instead of `correct`, proving exact-time evidence was admitted.
+- The shared canonical predicate now requires `observed_at > advice.created_at` while independently retaining the inclusive declared bounds `window_start <= observed_at <= window_end`.
+- Because status calculation, canonical hashing, `source_observed_at`, and risk-event metadata all consume the same canonical map, the strict advice boundary applies consistently to every output.
+- Final combined command results: focused pytest `11 passed in 1.09s`; Ruff `All checks passed!`; mojibake scan `no matches`; `git diff --check` exited zero.

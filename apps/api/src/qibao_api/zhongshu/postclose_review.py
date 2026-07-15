@@ -183,7 +183,13 @@ class PostcloseReviewService:
             linked = advice.advice_id in tuple(_value(item, "input_snapshot_ids", ())) if finding else (
                 _value(item, "advice_id") == advice.advice_id
             )
-            return linked and _within(item, max(advice.created_at, window_start), close)
+            observed = _observed_at(item)
+            return (
+                linked
+                and observed is not None
+                and observed > advice.created_at
+                and window_start <= observed <= close
+            )
 
         return {
             "market": tuple(sorted(
