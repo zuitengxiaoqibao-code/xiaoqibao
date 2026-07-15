@@ -186,6 +186,10 @@ class PollStateRepository:
                 "ALTER TABLE intraday_market_snapshot_events ADD COLUMN content_hash TEXT"
             )
 
+    def close(self) -> None:
+        with self._lock:
+            self.connection.close()
+
     def latest(self) -> PollState | None:
         with self._lock:
             row = self.connection.execute(

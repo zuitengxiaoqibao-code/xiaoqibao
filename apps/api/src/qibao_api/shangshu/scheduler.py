@@ -124,7 +124,7 @@ class DailyBriefingScheduler:
             slot=slot, trigger=trigger, attempt=attempt, status="completed",
             occurred_at=occurred_at, report_id=report.report_id,
         )
-        if phase == "premarket" and self.decision_workflow is not None:
+        if self.decision_workflow is not None:
             decision_job_key = f"{job_key}:decision"
             self.repository.append_attempt(
                 job_key=decision_job_key, phase=phase, trading_date=trading_date,
@@ -133,7 +133,7 @@ class DailyBriefingScheduler:
             )
             try:
                 decision = self.decision_workflow.run(
-                    "premarket", trading_date, now=workflow_now
+                    phase, trading_date, now=workflow_now
                 )
             except Exception as error:
                 self.repository.append_attempt(
@@ -143,7 +143,7 @@ class DailyBriefingScheduler:
                     error_code=_error_code(error),
                 )
             else:
-                snapshot = getattr(decision, "snapshot", None)
+                snapshot = getattr(decision, "snapshot", decision)
                 self.repository.append_attempt(
                     job_key=decision_job_key, phase=phase, trading_date=trading_date,
                     slot=f"{slot}:decision", trigger=trigger, attempt=attempt,

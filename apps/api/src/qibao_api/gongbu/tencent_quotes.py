@@ -15,6 +15,7 @@ class TencentMarketSnapshot(BaseModel):
     name: str
     price: Decimal = Field(gt=0)
     previous_close: Decimal = Field(gt=0)
+    volume: Decimal | None = Field(default=None, ge=0)
     observed_at: datetime
     turnover_rate: Decimal | None = Field(default=None, ge=0)
     pe_ttm: Decimal | None = None
@@ -42,6 +43,7 @@ def parse_tencent_snapshot(payload: str, source: str) -> TencentMarketSnapshot:
         name=fields[1],
         price=Decimal(fields[3]),
         previous_close=Decimal(fields[4]),
+        volume=_optional_decimal(fields[6]),
         observed_at=datetime.strptime(fields[30], "%Y%m%d%H%M%S"),
         turnover_rate=_optional_decimal(fields[38]),
         pe_ttm=_optional_decimal(fields[39]),

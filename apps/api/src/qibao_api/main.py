@@ -61,6 +61,22 @@ from qibao_api.gongbu.backup_service import BackupService
 from qibao_api.routes.operations import router as operations_router
 from qibao_api.routes.decisions import router as decisions_router
 from qibao_api.shangshu.decision_repository import DecisionRepository
+from qibao_api.shangshu.decision_runtime import (
+    CHINA_TZ,
+    CandidateFactorInputSource,
+    DecisionPhaseRunner,
+    DeterministicIntradayEvaluator,
+    RepositoryCandidateFactorSource,
+    RepositoryComplianceSource,
+    RepositoryEvidenceSource,
+    RepositoryMarketOutcomeSource,
+    RepositoryRiskSource,
+    TencentPollingMarketFeed,
+)
+from qibao_api.shangshu.intraday_monitor import IntradayMonitor, PollStateRepository
+from qibao_api.zhongshu.decision_ai import DecisionAIGateway
+from qibao_api.zhongshu.premarket_decision import PremarketDecisionService
+from qibao_api.zhongshu.postclose_review import PostcloseReviewService
 
 
 logger = logging.getLogger(__name__)
@@ -224,10 +240,78 @@ async def lifespan(application: FastAPI):
                 settings.data_dir / "operations.sqlite3"
             )
             application.state.operations_repository = operations_repository
+            decision_candidate_source = RepositoryCandidateFactorSource(
+                application.state.a_share_diagnosis_service
+            )
+            decision_compliance_source = RepositoryComplianceSource(compliance)
+            decision_risk_source = RepositoryRiskSource(audit_repository)
+            decision_evidence_source = RepositoryEvidenceSource(news_repository)
+            decision_market_feed = TencentPollingMarketFeed(history_client, compliance)
+            decision_evaluator = DeterministicIntradayEvaluator()
+            poll_state_repository = PollStateRepository(
+                settings.data_dir / "intraday-poll.sqlite3"
+            )
+            premarket_decision = PremarketDecisionService(
+                candidate_service=decision_candidate_source,
+                news_repository=news_repository,
+                compliance_checker=decision_compliance_source,
+                market_risk_summary=decision_risk_source,
+                ai_gateway=DecisionAIGateway(
+                    UnavailableNewsAIProvider(), provider_name="unconfigured",
+                    model="none", prompt_version="decision-v1",
+                ),
+                decision_repository=decision_repository,
+                trading_calendar=application.state.decision_calendar,
+                clock=lambda: datetime.now(timezone.utc),
+            )
+            def decision_symbols(_now):
+                values = {}
+                for phase in ("premarket", "intraday"):
+                    for cycle in decision_repository.cycles(_now.astimezone(CHINA_TZ).date(), phase):
+                        values.update({item.symbol: None for item in cycle.advice})
+                return tuple(values)
+
+            intraday_monitor = IntradayMonitor(
+                feed=decision_market_feed,
+                calendar=application.state.decision_calendar,
+                state_repository=poll_state_repository,
+                focus_symbols=decision_symbols,
+                universe_symbols=decision_symbols,
+                decision_repository=decision_repository,
+                evaluator=decision_evaluator,
+                candidate_factor_port=CandidateFactorInputSource(decision_candidate_source),
+                risk_port=decision_risk_source,
+                compliance_port=decision_compliance_source,
+                evidence_port=decision_evidence_source,
+            )
+            decision_outcome_source = RepositoryMarketOutcomeSource(
+                decision_repository, bar_repository
+            )
+            postclose_review = PostcloseReviewService(
+                decision_repository=decision_repository,
+                market_outcome_source=decision_outcome_source,
+                paper_repository=paper_repository,
+                audit_repository=audit_repository,
+            )
+            decision_phase_runner = DecisionPhaseRunner(
+                repository=decision_repository, premarket=premarket_decision,
+                intraday_monitor=intraday_monitor, postclose=postclose_review,
+            )
+            application.state.decision_candidate_source = decision_candidate_source
+            application.state.decision_compliance_source = decision_compliance_source
+            application.state.decision_risk_source = decision_risk_source
+            application.state.decision_evidence_source = decision_evidence_source
+            application.state.decision_market_feed = decision_market_feed
+            application.state.decision_evaluator = decision_evaluator
+            application.state.decision_outcome_source = decision_outcome_source
+            application.state.intraday_monitor = intraday_monitor
+            application.state.decision_phase_runner = decision_phase_runner
             application.state.scheduler = DailyBriefingScheduler(
                 application.state.briefing_workflow,
                 StoredTradingCalendar(bar_repository),
                 operations_repository,
+                decision_workflow=decision_phase_runner,
+                intraday_monitor=intraday_monitor,
             )
             application.state.backup_service = BackupService(
                 settings.data_dir, bar_repository
@@ -256,6 +340,7 @@ async def lifespan(application: FastAPI):
                 audit_repository.close()
                 operations_repository.close()
                 a_share_research_repository.close()
+                poll_state_repository.close()
                 decision_repository.close()
     engine.dispose()
 

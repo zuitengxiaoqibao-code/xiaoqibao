@@ -163,6 +163,39 @@ def test_scheduler_runs_optional_decision_workflow_after_successful_premarket(tm
     repository.close()
 
 
+def test_scheduler_dispatches_decision_runner_for_every_completed_phase(tmp_path) -> None:
+    repository = OperationsRepository(tmp_path / "operations.sqlite3")
+    decisions = DecisionWorkflow()
+    scheduler = DailyBriefingScheduler(
+        Workflow(), Calendar(), repository, decision_workflow=decisions,
+    )
+
+    scheduler.tick(datetime(2026, 7, 14, 8, 0, tzinfo=UTC))
+
+    assert [call[0] for call in decisions.calls] == [
+        "premarket", "intraday", "intraday", "intraday", "postclose"
+    ]
+    decision_jobs = [item for item in repository.jobs() if item["job_key"].endswith(":decision")]
+    assert len(decision_jobs) == 5
+    assert all(item["status"] == "completed" for item in decision_jobs)
+    repository.close()
+
+
+def test_manual_run_returns_phase_decision_result(tmp_path) -> None:
+    repository = OperationsRepository(tmp_path / "operations.sqlite3")
+    decisions = DecisionWorkflow()
+    scheduler = DailyBriefingScheduler(
+        Workflow(), Calendar(), repository, decision_workflow=decisions,
+    )
+    now = datetime(2026, 7, 14, 8, 1, tzinfo=UTC)
+
+    result = scheduler.run_manual("postclose", TRADE_DATE, now)
+
+    assert decisions.calls == [("postclose", TRADE_DATE, now)]
+    assert result is not None
+    repository.close()
+
+
 def test_decision_failure_does_not_overwrite_briefing_completion(tmp_path) -> None:
     repository = OperationsRepository(tmp_path / "operations.sqlite3")
     scheduler = DailyBriefingScheduler(

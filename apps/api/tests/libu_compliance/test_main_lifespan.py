@@ -7,6 +7,17 @@ from fastapi import FastAPI
 import qibao_api.main as main_module
 from qibao_api.libu_compliance.guard import AuthorizedHistorySource, AuthorizedQuoteSource
 from qibao_api.libu_compliance.repository import ComplianceRepository
+from qibao_api.shangshu.decision_repository import DecisionRepository
+from qibao_api.shangshu.decision_runtime import (
+    DecisionPhaseRunner,
+    DeterministicIntradayEvaluator,
+    RepositoryCandidateFactorSource,
+    RepositoryComplianceSource,
+    RepositoryEvidenceSource,
+    RepositoryMarketOutcomeSource,
+    RepositoryRiskSource,
+    TencentPollingMarketFeed,
+)
 
 
 class FakeSettings:
@@ -43,6 +54,19 @@ async def test_lifespan_injects_guarded_production_sources_and_closes_compliance
         assert application.state.news_service.repository is news_repository
         briefing_repository = application.state.briefing_repository
         assert application.state.briefing_workflow.briefing_repository is briefing_repository
+        decision_repository = application.state.decision_repository
+        assert isinstance(decision_repository, DecisionRepository)
+        assert application.state.decision_phase_runner.repository is decision_repository
+        assert isinstance(application.state.decision_phase_runner, DecisionPhaseRunner)
+        assert isinstance(application.state.decision_candidate_source, RepositoryCandidateFactorSource)
+        assert isinstance(application.state.decision_compliance_source, RepositoryComplianceSource)
+        assert isinstance(application.state.decision_risk_source, RepositoryRiskSource)
+        assert isinstance(application.state.decision_evidence_source, RepositoryEvidenceSource)
+        assert isinstance(application.state.decision_market_feed, TencentPollingMarketFeed)
+        assert isinstance(application.state.decision_evaluator, DeterministicIntradayEvaluator)
+        assert isinstance(application.state.decision_outcome_source, RepositoryMarketOutcomeSource)
+        assert application.state.scheduler.decision_workflow is application.state.decision_phase_runner
+        assert application.state.scheduler.intraday_monitor is application.state.intraday_monitor
 
     with pytest.raises(sqlite3.ProgrammingError, match="closed"):
         compliance.list_feature_source_history("realtime_quotes", "a_share")
@@ -50,6 +74,8 @@ async def test_lifespan_injects_guarded_production_sources_and_closes_compliance
         news_repository.events()
     with pytest.raises(sqlite3.ProgrammingError, match="closed"):
         briefing_repository.reports()
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        decision_repository.cycles()
 
 
 @pytest.mark.asyncio
