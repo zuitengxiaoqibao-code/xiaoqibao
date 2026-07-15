@@ -1,0 +1,100 @@
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+
+import { SelectedInstrumentProvider } from "../instrument-selection/SelectedInstrumentProvider";
+import { StockDecisionCockpit } from "./StockDecisionCockpit";
+import type { Advice } from "../decision-workbench/types";
+import type { CockpitSection, StockCockpitSnapshot } from "./types";
+
+const advice = (overrides: Partial<Advice> = {}): Advice => ({
+  advice_id: "advice-intraday", snapshot_id: "cycle-2", symbol: "600000", horizon: "intraday",
+  action: "simulated_plan", conclusion: "等待量价确认后继续观察", confidence: "0.72",
+  supporting_evidence: [{ evidence_id: "e1", source: "tencent", snapshot_id: "quote-1", summary: "价格位于短期均线上方", observed_at: "2026-07-15T10:29:00+08:00" }],
+  contrary_evidence: [{ evidence_id: "e2", source: "bars", snapshot_id: "bars-1", summary: "成交量尚未放大", observed_at: "2026-07-15T10:28:00+08:00" }],
+  risks: ["大盘回落可能压制银行板块"], invalidation_conditions: ["跌破 10 日均线"],
+  plain_language_explanation: "信号有支持，但确认条件还不完整。", strategy_version: "strategy-v1",
+  created_at: "2026-07-15T10:30:00+08:00", simulation_plan_id: "missing-plan", risk_decision_id: "missing-gate",
+  previous_advice_id: "advice-premarket", changed_fields: ["conclusion", "risks"], ...overrides,
+});
+
+const section = (status: CockpitSection["status"] = "ready", reason: string | null = null): CockpitSection => ({
+  status, source: "fixture", observed_at: status === "unavailable" ? null : "2026-07-15T10:29:00+08:00",
+  snapshot_id: status === "unavailable" ? null : "diagnosis-1", reason,
+  payload: { explanation: "已读取确定性指标", metrics: { latest_price: "10.25", change_percent: "1.49", pe_ttm: "5.8" }, evidence_ids: ["e1"] },
+});
+
+const snapshot = (overrides: Partial<StockCockpitSnapshot> = {}): StockCockpitSnapshot => ({
+  symbol: "600000", as_of: "2026-07-15", cutoff: "2026-07-15T10:30:00+08:00", overall_quality: "partial",
+  instrument: { asset: "a_share", symbol: "600000", name: "浦发银行", exchange: "sh", observed_at: "2026-07-15T10:29:00+08:00", quote_quality: "ready" },
+  candidate_membership: ["short_term"], current_advice: [advice()],
+  sections: {
+    market: section(), price_volume: section(), trend: section(), valuation: section(), fundamentals: section(),
+    funds: section("unavailable", "fund_data_not_connected"), news: section(), industry: section(), risk: section(),
+    backtest: section("unavailable", "backtest_not_run"),
+  },
+  phases: {
+    premarket: { advice: [advice({ advice_id: "advice-premarket", snapshot_id: "cycle-1", horizon: "swing", action: "observe", conclusion: "盘前等待", previous_advice_id: null, changed_fields: [] })], change_stream: [{ snapshot_id: "cycle-1", sequence: 1, generated_at: "2026-07-15T09:00:00+08:00", status: "ready" }] },
+    intraday: { advice: [advice()], change_stream: [{ snapshot_id: "cycle-2", sequence: 2, generated_at: "2026-07-15T10:30:00+08:00", status: "partial" }] },
+    postclose: { advice: [], change_stream: [] },
+  }, ...overrides,
+});
+
+function renderCockpit(load: (symbol: string, asOf?: string, signal?: AbortSignal) => Promise<StockCockpitSnapshot> = () => Promise.resolve(snapshot())) {
+  window.history.replaceState({}, "", "/?symbol=600000");
+  return render(<SelectedInstrumentProvider><StockDecisionCockpit load={load} /></SelectedInstrumentProvider>);
+}
+
+describe("StockDecisionCockpit", () => {
+  it("shows the beginner conclusion before all deterministic sections", async () => {
+    renderCockpit();
+    expect(await screen.findByRole("heading", { name: /浦发银行.*600000/ })).toBeInTheDocument();
+    for (const text of ["当前判断", "支持证据", "反方证据", "关键风险", "失效条件"]) expect(screen.getByText(text)).toBeInTheDocument();
+    const headings = screen.getAllByRole("heading").map((item) => item.textContent);
+    expect(headings.indexOf("当前判断")).toBeLessThan(headings.indexOf("实时行情"));
+  });
+
+  it("never shows a simulation plan without an authoritative ready gate", async () => {
+    renderCockpit();
+    expect(await screen.findByText(/仅观察/)).toBeInTheDocument();
+    expect(screen.queryByText("模拟操作计划")).not.toBeInTheDocument();
+  });
+
+  it("prioritizes the deterministic intraday advice over swing advice", async () => {
+    const swing = advice({ advice_id: "swing", horizon: "swing", conclusion: "波段继续观察", created_at: "2026-07-15T10:31:00+08:00" });
+    const intraday = advice({ advice_id: "intraday", horizon: "intraday", conclusion: "盘中等待确认", created_at: "2026-07-15T10:30:00+08:00" });
+    renderCockpit(() => Promise.resolve(snapshot({ current_advice: [swing, intraday] })));
+    expect(await screen.findByRole("heading", { name: "盘中等待确认" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "波段继续观察" })).not.toBeInTheDocument();
+  });
+
+  it("renders all ten sections and explicit unavailable reasons", async () => {
+    renderCockpit();
+    for (const title of ["实时行情", "量价", "趋势", "估值", "基本面", "资金", "新闻与事件", "行业与题材", "风险", "回测"]) {
+      expect(await screen.findByRole("heading", { name: title })).toBeInTheDocument();
+    }
+    expect(screen.getByText("资金数据尚未接入")).toBeInTheDocument();
+    expect(screen.getByText("尚未为该股票运行回测")).toBeInTheDocument();
+    expect(screen.getAllByText(/来源：fixture/).length).toBeGreaterThan(0);
+  });
+
+  it("keeps the last successful snapshot and marks it stale after refresh failure", async () => {
+    const load = vi.fn().mockResolvedValueOnce(snapshot()).mockRejectedValueOnce(new Error("链路中断"));
+    renderCockpit(load);
+    await screen.findByRole("heading", { name: /浦发银行/ });
+    fireEvent.click(screen.getByRole("button", { name: "刷新驾驶舱" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("链路中断");
+    expect(screen.getByRole("heading", { name: /浦发银行/ })).toBeInTheDocument();
+    expect(screen.getByText("当前内容已陈旧")).toBeInTheDocument();
+  });
+
+  it("does not let an old symbol response replace a newer selection", async () => {
+    let resolveOld!: (value: StockCockpitSnapshot) => void;
+    const load = vi.fn((symbol: string) => symbol === "600000" ? new Promise<StockCockpitSnapshot>((resolve) => { resolveOld = resolve; }) : Promise.resolve(snapshot({ symbol: "000001", instrument: { ...snapshot().instrument, symbol: "000001", name: "平安银行", exchange: "sz" } })));
+    renderCockpit(load);
+    window.history.pushState({}, "", "/?symbol=000001");
+    fireEvent(window, new PopStateEvent("popstate"));
+    expect(await screen.findByRole("heading", { name: /平安银行.*000001/ })).toBeInTheDocument();
+    resolveOld(snapshot());
+    expect(screen.queryByRole("heading", { name: /浦发银行/ })).not.toBeInTheDocument();
+  });
+});

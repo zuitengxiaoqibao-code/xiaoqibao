@@ -10,7 +10,7 @@ import { createBackup, loadOperationsStatus, runManualJob, setSchedulerPaused, v
 import { loadAShareCandidates, loadAShareDiagnosis } from "../features/a-shares/api";
 import { loadCurrentDecision, loadDecisionDate } from "../features/decision-workbench/api";
 import { SelectedInstrumentProvider } from "../features/instrument-selection/SelectedInstrumentProvider";
-import { searchAShareInstruments } from "../features/stock-cockpit/api";
+import { loadStockCockpit, searchAShareInstruments } from "../features/stock-cockpit/api";
 
 export function App() {
   return <SelectedInstrumentProvider><Dashboard
@@ -26,6 +26,7 @@ export function App() {
     loadOperationsStatus={loadOperationsStatus} setSchedulerPaused={setSchedulerPaused} createBackup={createBackup} verifyBackup={verifyBackup} runManualJob={runManualJob}
     loadAShareCandidates={loadAShareCandidates} loadAShareDiagnosis={loadAShareDiagnosis}
     searchAShareInstruments={searchAShareInstruments}
+    loadStockCockpit={loadStockCockpit}
     loadDecisionCurrent={loadCurrentDecision} loadDecisionDate={loadDecisionDate}
   /></SelectedInstrumentProvider>;
 }

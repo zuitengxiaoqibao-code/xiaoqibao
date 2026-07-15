@@ -24,7 +24,8 @@ import type { AShareDiagnosis, CandidateBoard } from "../a-shares/types";
 import { DecisionWorkbench } from "../decision-workbench/DecisionWorkbench";
 import type { DecisionResponse } from "../decision-workbench/types";
 import { StockSelector } from "../stock-cockpit/StockSelector";
-import type { InstrumentSearchResponse } from "../stock-cockpit/types";
+import { StockDecisionCockpit } from "../stock-cockpit/StockDecisionCockpit";
+import type { InstrumentSearchResponse, StockCockpitSnapshot } from "../stock-cockpit/types";
 import { commitLocation } from "../instrument-selection/location";
 
 type ViewState =
@@ -58,6 +59,7 @@ type Props = {
   loadDecisionCurrent?: () => Promise<DecisionResponse>;
   loadDecisionDate?: (date: string) => Promise<DecisionResponse>;
   searchAShareInstruments?: (query: string) => Promise<InstrumentSearchResponse>;
+  loadStockCockpit?: (symbol: string, asOf?: string, signal?: AbortSignal) => Promise<StockCockpitSnapshot>;
 };
 
 type ActiveView = "dashboard" | "a_shares" | "xingbu" | "libu" | "dongchang" | "bonds" | "news" | "operations";
@@ -136,7 +138,7 @@ function ResearchPanel({ card }: { card: ResearchCard }) {
   );
 }
 
-export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadPaperPortfolio, createPaperAccount, submitPaperOrder, loadRisk, loadCompliance, loadAudit, complianceAction, loadBondDashboard, loadBondDiagnosis, loadBondCandidates, loadNewsIntelligence, syncNews, createNewsCorrection, loadOperationsStatus, setSchedulerPaused, createBackup, verifyBackup, runManualJob, loadAShareCandidates, loadAShareDiagnosis, loadDecisionCurrent, loadDecisionDate, searchAShareInstruments }: Props) {
+export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadPaperPortfolio, createPaperAccount, submitPaperOrder, loadRisk, loadCompliance, loadAudit, complianceAction, loadBondDashboard, loadBondDiagnosis, loadBondCandidates, loadNewsIntelligence, syncNews, createNewsCorrection, loadOperationsStatus, setSchedulerPaused, createBackup, verifyBackup, runManualJob, loadAShareCandidates, loadAShareDiagnosis, loadDecisionCurrent, loadDecisionDate, searchAShareInstruments, loadStockCockpit }: Props) {
   const [state, setState] = useState<ViewState>({ kind: "idle" });
   const [symbol, setSymbol] = useState("600000");
   const [dataState, setDataState] = useState<DataStatusState>({ kind: "idle" });
@@ -218,7 +220,7 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadPaperPor
 
       {activeView === "dashboard" && loadDecisionCurrent && <div className="stock-workbench-layout">
         {loadAShareCandidates && searchAShareInstruments && <StockSelector loadCandidates={loadAShareCandidates} search={searchAShareInstruments} />}
-        <DecisionWorkbench loadCurrent={loadDecisionCurrent} loadDate={loadDecisionDate} />
+        {loadStockCockpit ? <StockDecisionCockpit load={loadStockCockpit} /> : <DecisionWorkbench loadCurrent={loadDecisionCurrent} loadDate={loadDecisionDate} />}
       </div>}
 
       {activeView === "dashboard" && !loadDecisionCurrent && <main className="command-center">

@@ -248,7 +248,7 @@ body { font-size: 13px; }
 .stock-workbench-layout {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(280px, 320px) minmax(0, 1fr);
+  grid-template-columns: 320px minmax(0, 1fr);
   gap: 16px;
   padding: 18px;
   overflow: hidden;
@@ -292,4 +292,69 @@ body { font-size: 13px; }
 @media (max-width: 900px) {
   .stock-workbench-layout { grid-template-columns: minmax(0, 1fr); padding: 10px; }
   .stock-options { max-height: 360px; }
+}
+
+/* Single-stock decision cockpit */
+.stock-cockpit { min-width: 0; overflow: hidden; color: var(--text); font-size: 12px; }
+.cockpit-identity { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; padding: 20px 22px; border: 1px solid var(--line); border-left: 3px solid var(--signal); background: linear-gradient(90deg, #101a21, var(--ink-1)); }
+.cockpit-identity h1 { margin: 4px 0 8px; font-size: 24px; letter-spacing: 0; overflow-wrap: anywhere; }
+.cockpit-identity h1 span { margin-left: 6px; color: var(--muted); font: 15px Consolas, monospace; }
+.cockpit-quote { display: flex; align-items: baseline; gap: 12px; }
+.cockpit-quote strong { font: 25px Consolas, monospace; }
+.cockpit-quote span { display: inline-flex; align-items: center; gap: 5px; font: 13px Consolas, monospace; }
+.cockpit-quality { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(110px, auto) 34px; align-items: stretch; min-width: min(440px, 48%); border: 1px solid var(--line); background: var(--ink-0); }
+.cockpit-quality > div { display: grid; align-content: center; gap: 3px; min-width: 0; padding: 10px 12px; border-right: 1px solid var(--line); }
+.cockpit-quality > div:first-child { grid-template-columns: auto 1fr; }
+.cockpit-quality svg { grid-row: 1 / 3; align-self: center; margin-right: 4px; color: var(--signal); }
+.cockpit-quality span, .cockpit-quality small { color: var(--muted); font-size: 11px; }
+.cockpit-quality b { overflow-wrap: anywhere; font-size: 11px; }
+.cockpit-quality button { width: 34px; border: 0; background: transparent; color: var(--signal); cursor: pointer; }
+.cockpit-error { display: flex; align-items: center; gap: 9px; margin-top: 10px; padding: 10px 12px; border: 1px solid #6b3c43; background: #1b1317; color: var(--danger); font-size: 11px; }
+.cockpit-error b { margin-left: auto; color: var(--warning); }
+.cockpit-conclusion, .cockpit-data, .stock-phase-timeline { margin-top: 14px; border: 1px solid var(--line); background: rgba(13, 19, 27, .94); }
+.cockpit-conclusion > header, .cockpit-block-title { display: flex; align-items: flex-end; justify-content: space-between; gap: 14px; padding: 15px 17px; border-bottom: 1px solid var(--line); }
+.cockpit-conclusion h2, .cockpit-block-title h2 { margin: 3px 0 0; font-size: 17px; letter-spacing: 0; }
+.advice-confidence { display: grid; justify-items: end; gap: 3px; color: var(--muted); font-size: 11px; }
+.advice-confidence strong { color: var(--signal); font: 20px Consolas, monospace; }
+.advice-verdict { display: grid; grid-template-columns: minmax(0, 1fr) 180px; gap: 18px; align-items: center; padding: 18px 17px; border-bottom: 1px solid var(--line); }
+.advice-verdict > div:first-child > span { color: var(--signal); font-size: 11px; }
+.advice-verdict h3 { margin: 5px 0 7px; font-size: 18px; letter-spacing: 0; overflow-wrap: anywhere; }
+.advice-verdict p { margin: 0; color: var(--text-soft); font-size: 12px; line-height: 1.65; }
+.observe-seal { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 3px 8px; padding: 12px; border: 1px solid #6d5532; background: #1c1814; color: var(--warning); }
+.observe-seal svg { grid-row: 1 / 3; }.observe-seal b { font-size: 13px; }.observe-seal small { font-size: 11px; }
+.advice-evidence-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.advice-evidence-grid section { min-width: 0; padding: 15px 17px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.advice-evidence-grid section:nth-child(2n) { border-right: 0; }
+.advice-evidence-grid h3 { display: flex; align-items: center; gap: 7px; margin: 0 0 9px; color: var(--ok); font-size: 12px; letter-spacing: 0; }
+.advice-evidence-grid .contrary h3 { color: var(--warning); }.advice-evidence-grid .risk h3 { color: var(--danger); }
+.advice-evidence-grid p { margin: 6px 0; color: var(--text-soft); font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
+.advice-evidence-grid small { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; }
+.cockpit-conclusion > footer { display: flex; justify-content: space-between; gap: 10px; padding: 10px 17px; color: var(--muted); font-size: 11px; }
+.no-advice { display: flex; align-items: center; gap: 12px; padding: 22px 17px; color: var(--warning); }.no-advice p { margin: 4px 0 0; color: var(--muted); }
+.cockpit-block-title > span { color: var(--signal); font: 12px Consolas, monospace; }
+.cockpit-section-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.cockpit-section { min-width: 0; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.cockpit-section:nth-child(2n) { border-right: 0; }
+.cockpit-section > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 43px; padding: 0 14px; border-bottom: 1px solid var(--line); }
+.cockpit-section > header > div { display: flex; align-items: center; gap: 7px; }.cockpit-section h3 { margin: 0; font-size: 13px; letter-spacing: 0; }
+.cockpit-section > header span { color: var(--ok); font-size: 11px; }.cockpit-section.status-unavailable > header span, .cockpit-section.status-blocked > header span { color: var(--warning); }
+.section-summary { min-height: 52px; margin: 0; padding: 12px 14px; color: var(--text-soft); font-size: 11px; line-height: 1.65; }
+.section-degraded { display: flex; align-items: center; gap: 9px; min-height: 70px; padding: 12px 14px; color: var(--warning); }.section-degraded p { margin: 0; font-size: 11px; }
+.cockpit-section details { border-top: 1px solid var(--line); }.cockpit-section summary { display: flex; align-items: center; gap: 6px; padding: 10px 14px; color: var(--signal); font-size: 11px; cursor: pointer; }
+.cockpit-section details[open] summary svg { transform: rotate(180deg); }.cockpit-section dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0; border-top: 1px solid var(--line); }
+.cockpit-section dl div { min-width: 0; padding: 9px 14px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }.cockpit-section dt { color: var(--muted); font-size: 11px; }.cockpit-section dd { margin: 4px 0 0; overflow-wrap: anywhere; color: var(--text-soft); font-size: 11px; }
+.cockpit-section > footer { display: flex; flex-wrap: wrap; gap: 6px 14px; padding: 9px 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.phase-lanes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.phase-lane { min-width: 0; border-right: 1px solid var(--line); }.phase-lane:last-child { border-right: 0; }
+.phase-lane > header { min-height: 68px; padding: 12px 14px; border-bottom: 1px solid var(--line); }.phase-lane > header div { display: flex; align-items: center; gap: 7px; }.phase-lane h3 { margin: 0; font-size: 13px; letter-spacing: 0; }.phase-lane > header p { margin: 5px 0 0; color: var(--muted); font-size: 11px; }
+.phase-empty { min-height: 92px; margin: 0; padding: 18px 14px; color: var(--muted); font-size: 11px; }
+.phase-records article { padding: 12px 14px; border-bottom: 1px solid var(--line); }.phase-record-time { display: flex; align-items: center; gap: 6px; color: var(--signal); font: 11px Consolas, monospace; }.phase-record-time span { margin-left: auto; color: var(--muted); }
+.phase-record-body header { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; }.phase-record-body header b { color: var(--ok); }.phase-record-body header span { color: var(--muted); }.phase-record-body h4 { margin: 6px 0; font-size: 12px; letter-spacing: 0; overflow-wrap: anywhere; }.phase-record-body p { margin: 4px 0; color: var(--muted); font-size: 11px; line-height: 1.55; overflow-wrap: anywhere; }.phase-record-body .phase-trigger { color: var(--text-soft); }
+.empty-cockpit, .cockpit-loading { min-height: 420px; display: grid; place-items: center; align-content: center; gap: 8px; border: 1px solid var(--line); background: var(--ink-1); text-align: center; }.empty-cockpit h1, .cockpit-loading h1 { margin: 0; font-size: 17px; }.empty-cockpit p, .cockpit-loading p { max-width: 420px; margin: 0; color: var(--muted); font-size: 11px; }.cockpit-loading button { min-height: 36px; padding: 0 14px; border: 1px solid var(--signal); background: transparent; color: var(--signal); cursor: pointer; }
+.spin { animation: cockpit-spin .8s linear infinite; } @keyframes cockpit-spin { to { transform: rotate(360deg); } }
+@media (max-width: 900px) {
+  .cockpit-identity { align-items: stretch; flex-direction: column; padding: 16px; }.cockpit-quality { min-width: 0; width: 100%; }.cockpit-section-list, .phase-lanes { grid-template-columns: minmax(0, 1fr); }.cockpit-section, .phase-lane { border-right: 0; }.phase-lane { border-bottom: 1px solid var(--line); }
+}
+@media (max-width: 520px) {
+  .stock-workbench-layout { width: 100%; padding: 8px; gap: 10px; }.cockpit-identity h1 { font-size: 20px; }.cockpit-quality { grid-template-columns: minmax(0, 1fr) 34px; }.cockpit-quality > div { border-bottom: 1px solid var(--line); }.cockpit-quality > div:nth-child(2) { grid-column: 1; }.cockpit-quality button { grid-column: 2; grid-row: 1 / 3; height: 100%; }.advice-verdict, .advice-evidence-grid { grid-template-columns: minmax(0, 1fr); }.observe-seal { width: 100%; }.advice-evidence-grid section { border-right: 0; }.cockpit-conclusion > header, .cockpit-block-title { align-items: flex-start; flex-direction: column; }.advice-confidence { justify-items: start; }.cockpit-conclusion > footer { align-items: flex-start; flex-direction: column; }.cockpit-section dl { grid-template-columns: minmax(0, 1fr); }
 }
