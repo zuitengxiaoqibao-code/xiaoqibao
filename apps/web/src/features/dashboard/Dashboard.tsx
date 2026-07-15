@@ -1,6 +1,6 @@
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { type ComponentProps, FormEvent, useCallback, useEffect, useState } from "react";
 import {
-  Activity, Archive, BookOpenCheck, Boxes, BriefcaseBusiness, Building2,
+  Activity, Archive, BarChart3, BookOpenCheck, Boxes, BriefcaseBusiness, Building2,
   ChevronRight, CircleDollarSign, Database, Gauge, Landmark, Radar, Search,
   RefreshCw, ShieldAlert, ShieldCheck, Siren, Workflow,
 } from "lucide-react";
@@ -27,7 +27,7 @@ import { StockSelector } from "../stock-cockpit/StockSelector";
 import { StockDecisionCockpit } from "../stock-cockpit/StockDecisionCockpit";
 import type { InstrumentSearchResponse, StockCockpitSnapshot } from "../stock-cockpit/types";
 import { commitLocation } from "../instrument-selection/location";
-import { useSelectedInstrument } from "../instrument-selection/SelectedInstrumentProvider";
+import { useOptionalSelectedInstrument, useSelectedInstrument } from "../instrument-selection/SelectedInstrumentProvider";
 
 type ViewState =
   | { kind: "idle" }
@@ -63,12 +63,16 @@ type Props = {
   loadStockCockpit?: (symbol: string, asOf?: string, signal?: AbortSignal) => Promise<StockCockpitSnapshot>;
 };
 
-type ActiveView = "dashboard" | "a_shares" | "xingbu" | "libu" | "dongchang" | "bonds" | "news" | "operations";
+type ActiveView = "dashboard" | "a_shares" | "xingbu" | "libu" | "dongchang" | "bonds" | "news" | "backtest" | "operations";
 
 function viewFromPath(path: string): ActiveView {
   if (path === "/a-shares") return "a_shares";
   if (path === "/convertible-bonds") return "bonds";
   if (path === "/news-intelligence") return "news";
+  if (path === "/risk") return "xingbu";
+  if (path === "/compliance") return "libu";
+  if (path === "/audit") return "dongchang";
+  if (path === "/backtest") return "backtest";
   if (path === "/operations") return "operations";
   return "dashboard";
 }
@@ -157,6 +161,24 @@ function CoordinatedStockWorkbench({ loadCockpit, loadCurrent, loadDate }: {
   </div>;
 }
 
+function SelectedNewsWorkspace({ loadBundle, syncNews, createCorrection, openNewsCompliance }: {
+  loadBundle: () => Promise<NewsIntelligenceBundle>; syncNews: () => Promise<Record<string, number>>;
+  createCorrection: (input: CorrectionInput) => Promise<unknown>; openNewsCompliance: () => void;
+}) {
+  const { symbol } = useSelectedInstrument();
+  return <NewsIntelligenceView selectedSymbol={symbol} loadBundle={loadBundle} syncNews={syncNews} createCorrection={createCorrection} openNewsCompliance={openNewsCompliance} />;
+}
+
+function SelectedGovernanceWorkspace(props: ComponentProps<typeof GovernanceView>) {
+  const symbol = useOptionalSelectedInstrument()?.symbol ?? null;
+  return <div className="selected-governance-workspace">{symbol && <span className="selected-symbol-context">当前标的 {symbol}</span>}<GovernanceView {...props} /></div>;
+}
+
+function SelectedBacktestWorkspace({ runBacktest }: { runBacktest: (symbol: string) => Promise<BacktestResult> }) {
+  const { symbol } = useSelectedInstrument();
+  return <main className="command-center"><BacktestPanel symbol={symbol ?? ""} runBacktest={runBacktest} /></main>;
+}
+
 export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadPaperPortfolio, createPaperAccount, submitPaperOrder, loadRisk, loadCompliance, loadAudit, complianceAction, loadBondDashboard, loadBondDiagnosis, loadBondCandidates, loadNewsIntelligence, syncNews, createNewsCorrection, loadOperationsStatus, setSchedulerPaused, createBackup, verifyBackup, runManualJob, loadAShareCandidates, loadAShareDiagnosis, loadDecisionCurrent, loadDecisionDate, searchAShareInstruments, loadStockCockpit }: Props) {
   const [state, setState] = useState<ViewState>({ kind: "idle" });
   const [symbol, setSymbol] = useState("600000");
@@ -168,9 +190,12 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadPaperPor
     window.addEventListener("popstate", syncPath);
     return () => window.removeEventListener("popstate", syncPath);
   }, []);
-  function navigate(view: "dashboard" | "a_shares" | "bonds" | "news" | "operations") {
-    const paths = { dashboard: "/", a_shares: "/a-shares", bonds: "/convertible-bonds", news: "/news-intelligence", operations: "/operations" };
-    commitLocation(paths[view]);
+  function navigate(view: ActiveView) {
+    const paths: Record<ActiveView, string> = { dashboard: "/", a_shares: "/a-shares", xingbu: "/risk", libu: "/compliance", dongchang: "/audit", bonds: "/convertible-bonds", news: "/news-intelligence", backtest: "/backtest", operations: "/operations" };
+    const next = new URL(paths[view], window.location.origin);
+    const selectedSymbol = new URL(window.location.href).searchParams.get("symbol");
+    if (view !== "bonds" && selectedSymbol) next.searchParams.set("symbol", selectedSymbol);
+    commitLocation(`${next.pathname}${next.search}`);
     setActiveView(view);
   }
 
@@ -215,11 +240,14 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadPaperPor
         <nav aria-label="部门导航">
           <p className="nav-label">中央机构</p>
           {departments.map(({ name, detail, icon: Icon }) => { const target = name === "刑部" ? "xingbu" : name === "礼部" ? "libu" : name === "东厂" ? "dongchang" : name === "中书省" ? "news" : name === "工部" ? "operations" : name === "今日工作台" ? "dashboard" : null; return (
-            <button className={target === activeView ? "nav-item active" : "nav-item"} key={name} type="button" onClick={() => target && (target === "dashboard" || target === "news" || target === "operations" ? navigate(target) : setActiveView(target))}>
+            <button className={target === activeView ? "nav-item active" : "nav-item"} key={name} type="button" onClick={() => target && navigate(target)}>
               <Icon size={16} strokeWidth={1.7} />
               <span><b>{name}</b><small>{detail}</small></span>
             </button>
           )})}
+          <button className={activeView === "backtest" ? "nav-item active" : "nav-item"} type="button" onClick={() => navigate("backtest")}>
+            <BarChart3 size={16} strokeWidth={1.7} /><span><b>历史回测</b><small>固定策略验证</small></span>
+          </button>
         </nav>
         <button className={activeView === "bonds" ? "bond-entry active" : "bond-entry"} type="button" onClick={() => navigate("bonds")}>
           <Boxes size={16} /><span><b>可转债专区</b><small>独立资产域</small></span><ChevronRight size={15} />
@@ -227,13 +255,15 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadPaperPor
         <div className="sidebar-foot"><span className="pulse-dot" />系统本地运行</div>
       </aside>
 
-      {activeView !== "dashboard" && activeView !== "a_shares" && activeView !== "bonds" && activeView !== "news" && activeView !== "operations" && <GovernanceView view={activeView} initialAsset={complianceAsset} loadRisk={loadRisk} loadCompliance={loadCompliance} loadAudit={loadAudit} complianceAction={complianceAction} />}
+      {(activeView === "xingbu" || activeView === "libu" || activeView === "dongchang") && <SelectedGovernanceWorkspace view={activeView} initialAsset={complianceAsset} loadRisk={loadRisk} loadCompliance={loadCompliance} loadAudit={loadAudit} complianceAction={complianceAction} />}
 
       {activeView === "a_shares" && loadAShareCandidates && loadAShareDiagnosis && <AShareResearchView loadCandidates={loadAShareCandidates} loadDiagnosis={loadAShareDiagnosis} />}
 
-      {activeView === "bonds" && loadBondDashboard && loadBondDiagnosis && loadBondCandidates && <ConvertibleBondView loadDashboard={loadBondDashboard} loadDiagnosis={loadBondDiagnosis} loadCandidates={loadBondCandidates} openBondCompliance={() => { setComplianceAsset("convertible_bond"); setActiveView("libu"); }} />}
+      {activeView === "bonds" && loadBondDashboard && loadBondDiagnosis && loadBondCandidates && <ConvertibleBondView loadDashboard={loadBondDashboard} loadDiagnosis={loadBondDiagnosis} loadCandidates={loadBondCandidates} openBondCompliance={() => { setComplianceAsset("convertible_bond"); navigate("libu"); }} />}
 
-      {activeView === "news" && loadNewsIntelligence && syncNews && createNewsCorrection && <NewsIntelligenceView loadBundle={loadNewsIntelligence} syncNews={syncNews} createCorrection={createNewsCorrection} openNewsCompliance={() => { setComplianceAsset("a_share"); setActiveView("libu"); }} />}
+      {activeView === "news" && loadNewsIntelligence && syncNews && createNewsCorrection && <SelectedNewsWorkspace loadBundle={loadNewsIntelligence} syncNews={syncNews} createCorrection={createNewsCorrection} openNewsCompliance={() => { setComplianceAsset("a_share"); navigate("libu"); }} />}
+
+      {activeView === "backtest" && runBacktest && <SelectedBacktestWorkspace runBacktest={runBacktest} />}
 
       {activeView === "operations" && loadOperationsStatus && setSchedulerPaused && createBackup && verifyBackup && runManualJob && <OperationsView loadStatus={loadOperationsStatus} setSchedulerPaused={setSchedulerPaused} createBackup={createBackup} verifyBackup={verifyBackup} runManualJob={runManualJob} />}
 

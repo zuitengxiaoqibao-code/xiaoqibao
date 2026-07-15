@@ -143,8 +143,8 @@ describe("Dashboard", () => {
   });
 
   it("navigates to the news intelligence deep link", async () => {
-    window.history.replaceState({}, "", "/");
-    render(<Dashboard
+    window.history.replaceState({}, "", "/?symbol=600000");
+    render(<SelectedInstrumentProvider><Dashboard
       loadSnapshot={() => Promise.resolve(freshCard)}
       loadNewsIntelligence={() => Promise.resolve({
         events: [], interpretations: [], corrections: [], briefings: [],
@@ -152,20 +152,39 @@ describe("Dashboard", () => {
       })}
       syncNews={() => Promise.resolve({ fetched: 0 })}
       createNewsCorrection={() => Promise.resolve()}
-    />);
+    /></SelectedInstrumentProvider>);
 
     fireEvent.click(screen.getByRole("button", { name: /中书省/ }));
 
     expect(await screen.findByRole("heading", { name: "每日情报流" })).toBeInTheDocument();
+    expect(screen.getByText("当前标的 600000")).toBeInTheDocument();
     expect(window.location.pathname).toBe("/news-intelligence");
+    expect(new URL(window.location.href).searchParams.get("symbol")).toBe("600000");
+  });
+
+  it("inherits the selected A-share in risk and backtest workspaces", async () => {
+    window.history.replaceState({}, "", "/?symbol=600000");
+    render(<SelectedInstrumentProvider><Dashboard
+      loadSnapshot={() => Promise.resolve(freshCard)}
+      loadRisk={() => Promise.resolve({ rule_version: "v1", limits: {}, recent_rejections: [] })}
+      runBacktest={() => Promise.resolve({} as never)}
+    /></SelectedInstrumentProvider>);
+
+    fireEvent.click(screen.getByRole("button", { name: /刑部/ }));
+    expect(await screen.findByText("当前标的 600000")).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/risk");
+    fireEvent.click(screen.getByRole("button", { name: /历史回测/ }));
+    expect(await screen.findByRole("textbox", { name: "回测 A 股代码" })).toHaveValue("600000");
+    expect(window.location.pathname).toBe("/backtest");
+    expect(new URL(window.location.href).searchParams.get("symbol")).toBe("600000");
   });
 
   it("navigates to the independent convertible-bond domain", async () => {
-    window.history.replaceState({}, "", "/");
-    render(<Dashboard loadSnapshot={() => Promise.resolve(freshCard)}
+    window.history.replaceState({}, "", "/?symbol=600000");
+    render(<SelectedInstrumentProvider><Dashboard loadSnapshot={() => Promise.resolve(freshCard)}
       loadBondDashboard={() => Promise.resolve({ status: "empty", bond_count: 0, bond_codes: [] })}
       loadBondDiagnosis={() => Promise.reject(new Error("unused"))}
-      loadBondCandidates={() => Promise.resolve({ status: "empty", items: [] })} />);
+      loadBondCandidates={() => Promise.resolve({ status: "empty", items: [] })} /></SelectedInstrumentProvider>);
 
     fireEvent.click(screen.getByRole("button", { name: /可转债专区/ }));
 
@@ -173,6 +192,19 @@ describe("Dashboard", () => {
     expect(screen.queryByRole("heading", { name: "今日情报态势" })).not.toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "候选池" })).toBeInTheDocument();
     expect(window.location.pathname).toBe("/convertible-bonds");
+    expect(new URL(window.location.href).searchParams.has("symbol")).toBe(false);
+  });
+
+  it("restores A-share workspace selection across browser history", async () => {
+    window.history.replaceState({}, "", "/news-intelligence?symbol=600000");
+    render(<SelectedInstrumentProvider><Dashboard loadSnapshot={() => Promise.resolve(freshCard)}
+      loadNewsIntelligence={() => Promise.resolve({ events: [], interpretations: [], corrections: [], briefings: [], quality: { article_count: 0, cluster_count: 0, event_count: 0, interpretation_count: 0, correction_count: 0, citation_coverage: "1", duplicate_rate: "0", invalid_json_rate: "0", provider_error_rate: "0", human_correction_rate: "0" } })}
+      syncNews={() => Promise.resolve({ fetched: 0 })} createNewsCorrection={() => Promise.resolve()}
+      runBacktest={() => Promise.resolve({} as never)} /></SelectedInstrumentProvider>);
+    expect(await screen.findByText("当前标的 600000")).toBeInTheDocument();
+    window.history.pushState({}, "", "/backtest?symbol=000001");
+    fireEvent(window, new PopStateEvent("popstate"));
+    expect(await screen.findByRole("textbox", { name: "回测 A 股代码" })).toHaveValue("000001");
   });
 
   it("keeps a convertible-bond deep link after refresh and responds to popstate", async () => {

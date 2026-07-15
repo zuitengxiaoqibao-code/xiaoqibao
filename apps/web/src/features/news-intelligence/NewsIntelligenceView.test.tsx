@@ -33,6 +33,35 @@ const bundle: NewsIntelligenceBundle = {
 
 
 describe("NewsIntelligenceView", () => {
+  it("defaults to the selected A-share and excludes events bound to another stock", async () => {
+    const filteredBundle: NewsIntelligenceBundle = {
+      ...bundle,
+      events: [
+        ...bundle.events,
+        { ...bundle.events[0], event_id: "event-other", headline: "其他股票事件", affected_instruments: [["a_share", "000001"]] },
+        { ...bundle.events[0], event_id: "event-market", headline: "全市场事件", affected_instruments: [] },
+      ],
+    };
+    render(<NewsIntelligenceView selectedSymbol="600000" loadBundle={() => Promise.resolve(filteredBundle)} syncNews={() => Promise.resolve({ fetched: 0 })} createCorrection={() => Promise.resolve()} />);
+
+    expect(await screen.findByText("当前标的 600000")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "先进制造专项政策发布" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "全市场事件" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "其他股票事件" })).not.toBeInTheDocument();
+  });
+
+  it("reloads on same-route symbol history changes without accepting the stale response", async () => {
+    let resolveOld!: (value: NewsIntelligenceBundle) => void;
+    const oldRequest = new Promise<NewsIntelligenceBundle>((resolve) => { resolveOld = resolve; });
+    const loadBundle = vi.fn().mockReturnValueOnce(oldRequest).mockResolvedValueOnce({ ...bundle, events: [{ ...bundle.events[0], affected_instruments: [["a_share", "000001"]], headline: "新标的事件" }] });
+    const view = render(<NewsIntelligenceView selectedSymbol="600000" loadBundle={loadBundle} syncNews={() => Promise.resolve({})} createCorrection={() => Promise.resolve()} />);
+    view.rerender(<NewsIntelligenceView selectedSymbol="000001" loadBundle={loadBundle} syncNews={() => Promise.resolve({})} createCorrection={() => Promise.resolve()} />);
+    expect(await screen.findByRole("heading", { name: "新标的事件" })).toBeInTheDocument();
+    resolveOld(bundle);
+    await Promise.resolve();
+    expect(screen.getByRole("heading", { name: "新标的事件" })).toBeInTheDocument();
+  });
+
   it("separates facts, interpretation, uncertainty, and contrary evidence", async () => {
     render(<NewsIntelligenceView loadBundle={() => Promise.resolve(bundle)} syncNews={() => Promise.resolve({ fetched: 0 })} createCorrection={() => Promise.resolve()} />);
 

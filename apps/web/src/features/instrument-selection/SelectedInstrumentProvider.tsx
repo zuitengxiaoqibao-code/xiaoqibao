@@ -65,3 +65,7 @@ export function useSelectedInstrument(): SelectedInstrument {
   if (!value) throw new Error("useSelectedInstrument must be used inside SelectedInstrumentProvider");
   return value;
 }
+
+export function useOptionalSelectedInstrument(): SelectedInstrument | null {
+  return useContext(SelectedInstrumentContext);
+}

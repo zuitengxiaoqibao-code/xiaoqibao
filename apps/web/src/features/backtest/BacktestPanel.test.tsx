@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { BacktestPanel } from "./BacktestPanel";
 
@@ -22,6 +22,18 @@ const result = {
 };
 
 describe("BacktestPanel", () => {
+  it("defaults to the selected symbol without overwriting an explicit edit", async () => {
+    const runBacktest = vi.fn(() => Promise.resolve(result));
+    const view = render(<BacktestPanel symbol="600000" runBacktest={runBacktest} />);
+    const input = screen.getByRole("textbox", { name: "回测 A 股代码" });
+    expect(input).toHaveValue("600000");
+    fireEvent.change(input, { target: { value: "000001" } });
+    view.rerender(<BacktestPanel symbol="600519" runBacktest={runBacktest} />);
+    expect(input).toHaveValue("000001");
+    fireEvent.click(screen.getByRole("button", { name: "运行回测" }));
+    expect(runBacktest).toHaveBeenCalledWith("000001");
+  });
+
   it("shows losses, drawdown and costs without positive framing", async () => {
     render(<BacktestPanel symbol="600000" runBacktest={() => Promise.resolve(result)} />);
 

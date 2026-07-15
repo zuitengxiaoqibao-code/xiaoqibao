@@ -1,15 +1,15 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, ArrowDownRight, ArrowUpRight, BookOpen, CheckCircle2, Clock3, FileSearch, RefreshCw, Scale, ShieldAlert, X } from "lucide-react";
 
 import type { CorrectionInput, NewsEvent, NewsIntelligenceBundle } from "./types";
 
-type Props = { loadBundle: () => Promise<NewsIntelligenceBundle>; syncNews: () => Promise<Record<string, number>>; createCorrection: (input: CorrectionInput) => Promise<unknown>; openNewsCompliance?: () => void };
+type Props = { selectedSymbol?: string | null; loadBundle: () => Promise<NewsIntelligenceBundle>; syncNews: () => Promise<Record<string, number>>; createCorrection: (input: CorrectionInput) => Promise<unknown>; openNewsCompliance?: () => void };
 type Tab = "timeline" | "briefings" | "quality";
 const phaseName = { premarket: "盘前", intraday: "盘中", postclose: "盘后" };
 const directionName = { positive: "偏正面", negative: "偏负面", neutral: "中性", uncertain: "方向不确定" };
 const percent = (value: string) => `${(Number(value) * 100).toFixed(2)}%`;
 
-export function NewsIntelligenceView({ loadBundle, syncNews, createCorrection, openNewsCompliance }: Props) {
+export function NewsIntelligenceView({ selectedSymbol, loadBundle, syncNews, createCorrection, openNewsCompliance }: Props) {
   const [bundle, setBundle] = useState<NewsIntelligenceBundle | null>(null);
   const [tab, setTab] = useState<Tab>("timeline");
   const [selected, setSelected] = useState<NewsEvent | null>(null);
@@ -17,15 +17,27 @@ export function NewsIntelligenceView({ loadBundle, syncNews, createCorrection, o
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
-  async function reload() { setLoading(true); setError(""); try { setBundle(await loadBundle()); } catch (cause) { setError(cause instanceof Error ? cause.message : "情报流暂不可用"); } finally { setLoading(false); } }
-  useEffect(() => { void reload(); }, [loadBundle]);
+  const requestVersion = useRef(0);
+  async function loadSelectedBundle() {
+    const loaded = await loadBundle();
+    if (!selectedSymbol) return loaded;
+    return { ...loaded, events: loaded.events.filter((event) => event.affected_instruments.length === 0 || event.affected_instruments.some(([asset, code]) => asset === "a_share" && code === selectedSymbol)) };
+  }
+  async function reload() {
+    const request = ++requestVersion.current;
+    setLoading(true); setError("");
+    try { const loaded = await loadSelectedBundle(); if (request === requestVersion.current) setBundle(loaded); }
+    catch (cause) { if (request === requestVersion.current) setError(cause instanceof Error ? cause.message : "情报流暂不可用"); }
+    finally { if (request === requestVersion.current) setLoading(false); }
+  }
+  useEffect(() => { void reload(); return () => { requestVersion.current += 1; }; }, [loadBundle, selectedSymbol]);
   const interpretationByEvent = useMemo(() => new Map(bundle?.interpretations.map((item) => [item.event_id, item]) ?? []), [bundle]);
-  async function collect() { setLoading(true); setError(""); try { await syncNews(); setBundle(await loadBundle()); } catch (cause) { setError(cause instanceof Error ? cause.message : "新闻同步失败"); } finally { setLoading(false); } }
-  async function saveCorrection() { if (!selected || !reason.trim()) return; setSaving(true); try { await createCorrection({ event_id: selected.event_id, reason: reason.trim(), review_state: "verified", affected_instruments: selected.affected_instruments, industries: selected.industries, themes: selected.themes }); setReason(""); setBundle(await loadBundle()); } catch (cause) { setError(cause instanceof Error ? cause.message : "复核存档失败"); } finally { setSaving(false); } }
+  async function collect() { setLoading(true); setError(""); try { await syncNews(); setBundle(await loadSelectedBundle()); } catch (cause) { setError(cause instanceof Error ? cause.message : "新闻同步失败"); } finally { setLoading(false); } }
+  async function saveCorrection() { if (!selected || !reason.trim()) return; setSaving(true); try { await createCorrection({ event_id: selected.event_id, reason: reason.trim(), review_state: "verified", affected_instruments: selected.affected_instruments, industries: selected.industries, themes: selected.themes }); setReason(""); setBundle(await loadSelectedBundle()); } catch (cause) { setError(cause instanceof Error ? cause.message : "复核存档失败"); } finally { setSaving(false); } }
   const selectedInterpretation = selected ? interpretationByEvent.get(selected.event_id) : undefined;
   const contrary = selected?.citations.filter((item) => selectedInterpretation?.contrary_citation_ids.includes(item.citation_id)) ?? [];
   return <main className="news-domain">
-    <header className="news-header"><div><p className="eyebrow">中书省 / NEWS INTELLIGENCE</p><h1>每日情报流</h1><p>证据、解释、关联与风险分层归档</p></div><button className="news-sync" onClick={() => void collect()} disabled={loading}><RefreshCw size={15}/>{loading ? "核验中" : "同步新闻"}</button></header>
+    <header className="news-header"><div><p className="eyebrow">中书省 / NEWS INTELLIGENCE</p><h1>每日情报流</h1><p>{selectedSymbol ? `当前标的 ${selectedSymbol}` : "全市场情报 · 尚未选择 A 股"}</p></div><button className="news-sync" onClick={() => void collect()} disabled={loading}><RefreshCw size={15}/>{loading ? "核验中" : "同步新闻"}</button></header>
     <div className="news-tabs" role="tablist"><button role="tab" aria-selected={tab === "timeline"} onClick={() => setTab("timeline")}>事件时间线</button><button role="tab" aria-selected={tab === "briefings"} onClick={() => setTab("briefings")}>每日简报</button><button role="tab" aria-selected={tab === "quality"} onClick={() => setTab("quality")}>质量监测</button></div>
     {error && <div className="news-error" role="alert"><AlertTriangle size={17}/><span>{error}</span>{error.includes("授权") && openNewsCompliance && <button onClick={openNewsCompliance}>前往礼部授权</button>}</div>}
     {loading && !bundle && <div className="news-loading"><Clock3 size={18}/>正在读取冻结情报...</div>}

@@ -1,5 +1,5 @@
 import { BarChart3, Play, ShieldAlert } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { BacktestResult } from "./types";
 
@@ -14,16 +14,20 @@ const regimeName = { bull: "上行阶段", bear: "下行阶段", sideways: "震�
 
 export function BacktestPanel({ symbol, runBacktest }: { symbol: string; runBacktest: (symbol: string) => Promise<BacktestResult> }) {
   const [state, setState] = useState<State>({ kind: "idle" });
+  const [requestedSymbol, setRequestedSymbol] = useState(symbol);
+  const explicitlyEdited = useRef(false);
+  useEffect(() => { if (!explicitlyEdited.current) setRequestedSymbol(symbol); }, [symbol]);
   async function run() {
     setState({ kind: "loading" });
-    try { setState({ kind: "ready", result: await runBacktest(symbol) }); }
+    try { setState({ kind: "ready", result: await runBacktest(requestedSymbol) }); }
     catch (error) { setState({ kind: "error", message: error instanceof Error ? error.message : "未知错误" }); }
   }
   return (
     <section className="backtest-panel">
       <div className="backtest-heading">
         <div><p className="eyebrow">中书省 / 固定策略模板</p><h2>双均线历史回测</h2><p>5 日快线 × 20 日慢线 · 次日开盘成交 · 已计佣金与滑点</p></div>
-        <button type="button" onClick={() => void run()} disabled={state.kind === "loading"}><Play size={15} />运行回测</button>
+        <label>回测 A 股代码<input aria-label="回测 A 股代码" inputMode="numeric" maxLength={6} pattern="\d{6}" value={requestedSymbol} onChange={(event) => { explicitlyEdited.current = true; setRequestedSymbol(event.target.value.replace(/\D/g, "")); }} /></label>
+        <button type="button" onClick={() => void run()} disabled={state.kind === "loading" || !/^\d{6}$/.test(requestedSymbol)}><Play size={15} />运行回测</button>
       </div>
       {state.kind === "idle" && <div className="backtest-empty">使用本地历史日线，不调用 AI，不承诺收益。</div>}
       {state.kind === "loading" && <div className="backtest-empty" aria-busy="true">正在复算历史交易...</div>}
