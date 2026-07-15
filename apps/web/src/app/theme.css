@@ -177,3 +177,70 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--signal); ou
 .change-stream { margin-top: 10px; border-top: 1px solid var(--line); }.change-stream h4 { margin: 10px 0 2px; color: var(--signal); font-size: 9px; }
 .change-stream details { border-bottom: 1px solid var(--line); }.change-stream summary { padding: 9px 0; color: var(--text-soft); font-size: 8px; cursor: pointer; }.change-stream article { padding: 8px; border-left: 2px solid var(--signal); background: var(--ink-1); }.change-stream article + article { margin-top: 6px; }.change-stream article b, .change-stream article span { display: block; overflow-wrap: anywhere; }.change-stream article b { color: var(--text-soft); font-size: 9px; }.change-stream article span { margin-top: 5px; color: var(--muted); font-size: 8px; }.change-stream article p { display: block; padding: 6px 0 0; border: 0; line-height: 1.5; }.change-stream article small { display: block; margin-top: 3px; }
 @media (max-width: 760px) { .decision-workbench { padding: 16px 12px 28px; }.decision-header { align-items: stretch; flex-direction: column; }.decision-date-controls { display: grid; grid-template-columns: 1fr auto; }.decision-header input, .decision-date-controls button { width: 100%; min-height: 44px; }.session-status { align-items: flex-start; flex-direction: column; padding: 10px; }.session-status > div { flex-wrap: wrap; }.phase-tabs button { min-height: 44px; }.decision-columns { grid-template-columns: 1fr; }.decision-rail { position: static; grid-row: 1; }.simulation-plan dl { grid-template-columns: repeat(2, minmax(0,1fr)); }.decision-advice > header h3 { overflow-wrap: anywhere; }.decision-advice > footer { align-items: flex-start; flex-direction: column; } }
+
+/* Keep dense operational views readable on ordinary laptop and mobile displays. */
+body { font-size: 13px; }
+.brand-block span,
+.domain-switcher small,
+.nav-label,
+.nav-item small,
+.bond-entry small,
+.sidebar-foot,
+.eyebrow { font-size: 11px; }
+.domain-switcher b,
+.nav-item b,
+.bond-entry b { font-size: 13px; }
+
+.a-share-header > div > p:last-child,
+.research-freeze span,
+.candidate-tabs button,
+.a-candidate > button > span:first-child small,
+.candidate-move,
+.a-candidate summary,
+.a-candidate details dl div,
+.a-candidate dd,
+.candidate-message,
+.candidate-message p,
+.candidate-exclusions,
+.snapshot-foot,
+.diagnosis-status,
+.diagnosis-wait p,
+.diagnosis-summary span,
+.diagnosis-summary b,
+.diagnosis-section > header span,
+.diagnosis-section > header small,
+.diagnosis-section > header > b,
+.diagnosis-metrics dt,
+.diagnosis-metrics dd,
+.section-explanation,
+.diagnosis-section > footer,
+.section-unavailable strong,
+.section-unavailable p,
+.a-share-error { font-size: 11px; }
+.a-candidate > button { min-height: 64px; }
+.candidate-message b,
+.diagnosis-wait b { font-size: 13px; }
+
+.decision-header label,
+.session-status,
+.decision-message p,
+.stale-banner,
+.quality-banner,
+.quality-banner span,
+.decision-advice > header span,
+.plain-explanation,
+.decision-advice h4,
+.decision-advice section p,
+.decision-advice section p small,
+.observation-only,
+.simulation-plan dt,
+.simulation-plan dd,
+.simulation-plan small,
+.decision-advice > footer,
+.decision-rail p,
+.change-stream h4,
+.change-stream summary,
+.change-stream article b,
+.change-stream article span { font-size: 11px; }
+.plain-explanation,
+.decision-advice section p { line-height: 1.7; }
