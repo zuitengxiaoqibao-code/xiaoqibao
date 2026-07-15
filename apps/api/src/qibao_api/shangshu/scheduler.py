@@ -46,7 +46,8 @@ class DailyBriefingScheduler:
                             occurred_at=now,
                             trigger="scheduled",
                         )
-                        if phase == "intraday" and self.intraday_monitor is not None:
+                        if (phase == "intraday" and self.intraday_monitor is not None
+                                and trading_date == local_now.date()):
                             self._run_monitor(
                                 trading_date, slot, scheduled_at, now, "scheduled"
                             )
@@ -55,6 +56,8 @@ class DailyBriefingScheduler:
         if self.intraday_monitor is None or self.repository.paused():
             return None
         local_now = now.astimezone(CHINA_TZ)
+        if not self.calendar.is_trading_day(local_now.date()):
+            return None
         slot = local_now.strftime("%H%M%S")
         with self._run_lock:
             return self._run_monitor(local_now.date(), slot, now, now, "background")

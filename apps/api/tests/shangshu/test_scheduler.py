@@ -211,3 +211,32 @@ def test_monitor_failure_does_not_overwrite_briefing_or_decision(tmp_path) -> No
     assert any(item["status"] == "completed" and ":monitor" not in item["job_key"] for item in jobs)
     assert any(item["status"] == "failed" and ":monitor" in item["job_key"] for item in jobs)
     repository.close()
+
+
+def test_scheduler_catchup_never_runs_live_monitor_for_historical_day(tmp_path) -> None:
+    class TwoDayCalendar:
+        def is_trading_day(self, value):
+            return value in {date(2026, 7, 13), TRADE_DATE}
+
+    repository = OperationsRepository(tmp_path / "operations.sqlite3")
+    monitor = Monitor()
+    scheduler = DailyBriefingScheduler(
+        Workflow(), TwoDayCalendar(), repository, intraday_monitor=monitor,
+        catchup_days=1,
+    )
+    scheduler.tick(datetime(2026, 7, 14, 8, 0, tzinfo=UTC))
+    assert len(monitor.calls) == 3
+    assert all(call.astimezone(timezone(timedelta(hours=8))).date() == TRADE_DATE for call in monitor.calls)
+    repository.close()
+
+
+def test_background_monitor_tick_skips_unconfirmed_trading_day(tmp_path) -> None:
+    repository = OperationsRepository(tmp_path / "operations.sqlite3")
+    monitor = Monitor()
+    scheduler = DailyBriefingScheduler(
+        Workflow(), Calendar(), repository, intraday_monitor=monitor,
+    )
+    scheduler.tick_intraday(datetime(2026, 7, 15, 2, 30, tzinfo=UTC))
+    assert monitor.calls == []
+    assert repository.jobs() == []
+    repository.close()

@@ -48,5 +48,25 @@ Implemented the A-share polling feed port, append-only persisted layered polling
 
 ## Concerns
 
-- The source-budget hook for increasing the normal universe interval from 180 toward 300 seconds is represented by the persisted interval field and the 300-second failure cap, but no provider budget interface exists in Tasks 1/2 to drive a non-failure increase.
-- Full aggregate recomputation requires application-specific factor/risk/compliance/evidence adapters. This task supplies cutoff validation, exact diffing, invalidation, polling, and persistence without inventing those unavailable adapter contracts.
+- Production wiring must provide concrete implementations of the explicit candidate/factor, risk, compliance, evidence, and deterministic evaluation ports. The monitor now owns the complete aggregate lifecycle once those domain adapters are injected.
+
+## Review Fix Evidence
+
+- RED: imports failed for missing `DeterministicPollingCadence` and `IntradayEvaluationResult` before the reviewed boundary contracts were added.
+- RED: real `DecisionRepository` integration initially rejected a malformed test baseline with `advice references a different snapshot`; the fixture was corrected without weakening repository validation.
+- RED: unchanged canonical source content incorrectly hid a changed evaluator conclusion (`expected 2 cycles, got 1`); normalized advice and gate output are now part of the canonical hash.
+- RED: background `tick_intraday` called the monitor on an unconfirmed trading day; scheduler-level calendar validation now prevents both the call and job event.
+- GREEN: reviewed focused suite -> `40 passed in 2.70s` before the final scheduler regression was added.
+- FULL: reviewed API suite -> `447 passed in 24.45s` before the final scheduler regression was added.
+- FINAL GREEN: focused Task 3 suite -> `41 passed in 1.64s`.
+- FINAL FULL: API suite -> `448 passed in 32.18s`.
+- FINAL LINT/ENCODING/DIFF: Ruff passed, mojibake scan returned no matches, and `git diff --check` exited 0.
+
+## Review Design Decisions
+
+- `IntradayEvaluationPort` receives current reconstructed advice, validated quotes, exact Beijing-market window, and values from explicit candidate/factor, risk, compliance, and evidence ports.
+- The monitor loads premarket plus all intraday deltas to reconstruct current advice, applies exact deterministic diffs and stable `candidate_removed` reason codes, builds reciprocal plans, and appends through Task 1's repository.
+- Canonical hashing includes normalized quote values, evaluator source content, advice fields, and gate inputs while excluding ephemeral IDs and timestamps.
+- Successful snapshot batches and their resulting state event share one SQLite transaction and stable batch identity; duplicate batches are no-ops across restart.
+- A market-feed cadence port deterministically selects 180 or 300 seconds from source budget, and stream delivery is capability-negotiated without invoking polling.
+- Simulation-plan identity hashes complete immutable levels, references, and level-derived validity timestamps; builder invocation time does not alter the plan body or ID.

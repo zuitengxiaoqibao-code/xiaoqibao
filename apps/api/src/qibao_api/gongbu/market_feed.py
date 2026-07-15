@@ -33,8 +33,23 @@ class MarketFeedPort(Protocol):
     capabilities: frozenset[str]
 
     def snapshot(self, symbol: str) -> MarketFeedSnapshot: ...
-    def snapshot_many(self, symbols: tuple[str, ...]) -> tuple[MarketFeedSnapshot, ...]: ...
+    def snapshot_many(
+        self, symbols: tuple[str, ...], *, cutoff: datetime | None = None,
+    ) -> tuple[MarketFeedSnapshot, ...]: ...
     def subscribe(self, symbols: tuple[str, ...]): ...
+
+
+class MarketFeedCadencePort(Protocol):
+    def universe_interval_seconds(
+        self, *, source_budget: Literal["available", "constrained"],
+    ) -> int: ...
+
+
+class DeterministicPollingCadence:
+    def universe_interval_seconds(
+        self, *, source_budget: Literal["available", "constrained"],
+    ) -> int:
+        return 180 if source_budget == "available" else 300
 
 
 class PollingMarketFeed:

@@ -1,4 +1,5 @@
 import hashlib
+import json
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Literal
@@ -81,7 +82,16 @@ class SimulationPlanBuilder:
         risk_id = context.risk_decision_id
         compliance_id = context.compliance_snapshot_id
         assert risk_id is not None and compliance_id is not None
-        identity = "|".join((context.advice_id, risk_id, compliance_id, levels.calculation_version))
+        valid_from = levels.calculated_at
+        valid_until = levels.calculated_at + self.max_level_age
+        identity = json.dumps({
+            "advice_id": context.advice_id,
+            "risk_decision_id": risk_id,
+            "compliance_snapshot_id": compliance_id,
+            "levels": levels.model_dump(mode="json"),
+            "valid_from": valid_from.isoformat(),
+            "valid_until": valid_until.isoformat(),
+        }, sort_keys=True, separators=(",", ":"))
         plan_id = f"simulation-{hashlib.sha256(identity.encode()).hexdigest()[:24]}"
         return SimulationPlan(
             plan_id=plan_id, advice_id=context.advice_id, risk_decision_id=risk_id,
@@ -90,7 +100,7 @@ class SimulationPlanBuilder:
             stop_loss=levels.stop_loss, take_profit=levels.take_profit,
             tranches=levels.tranches, max_position=levels.max_position,
             invalidation_conditions=("quantitative_levels_changed",),
-            valid_from=levels.calculated_at, valid_until=self.now + timedelta(minutes=5),
+            valid_from=valid_from, valid_until=valid_until,
             strategy_version=levels.calculation_version,
             risk_version=risk_id, compliance_version=compliance_id,
         )

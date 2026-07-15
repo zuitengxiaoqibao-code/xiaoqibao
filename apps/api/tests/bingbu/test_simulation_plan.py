@@ -56,6 +56,20 @@ def test_plan_copies_levels_exactly_and_binds_versions() -> None:
     assert plan.compliance_version == "compliance-1"
 
 
+def test_same_immutable_input_produces_same_plan_and_changes_change_identity() -> None:
+    first = SimulationPlanBuilder(now=NOW).build(context())
+    later = SimulationPlanBuilder(now=NOW + timedelta(minutes=1)).build(context())
+    changed = SimulationPlanBuilder(now=NOW).build(context(
+        levels=levels(watch_price_high=Decimal("10.31")),
+    ))
+    timestamp_changed = SimulationPlanBuilder(now=NOW + timedelta(seconds=1)).build(context(
+        levels=levels(calculated_at=NOW + timedelta(seconds=1)),
+    ))
+    assert first == later
+    assert changed is not None and changed.plan_id != first.plan_id
+    assert timestamp_changed is not None and timestamp_changed.plan_id != first.plan_id
+
+
 def test_invalid_and_stale_levels_raise_validation_error() -> None:
     with pytest.raises(ValidationError):
         levels(watch_price_low=Decimal("11"), watch_price_high=Decimal("10"))
