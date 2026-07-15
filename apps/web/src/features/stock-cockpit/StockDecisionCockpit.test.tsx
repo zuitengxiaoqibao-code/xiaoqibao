@@ -7,14 +7,14 @@ import type { Advice } from "../decision-workbench/types";
 import type { CockpitSection, StockCockpitSnapshot } from "./types";
 
 const advice = (overrides: Partial<Advice> = {}): Advice => ({
-  advice_id: "advice-intraday", snapshot_id: "cycle-2", symbol: "600000", horizon: "intraday",
+  advice_id: "advice-intraday", snapshot_id: "cycle-2", asset: "a_share", symbol: "600000", horizon: "intraday", observation_state: "watching",
   action: "simulated_plan", conclusion: "等待量价确认后继续观察", confidence: "0.72",
   supporting_evidence: [{ evidence_id: "e1", source: "tencent", snapshot_id: "quote-1", summary: "价格位于短期均线上方", observed_at: "2026-07-15T10:29:00+08:00" }],
   contrary_evidence: [{ evidence_id: "e2", source: "bars", snapshot_id: "bars-1", summary: "成交量尚未放大", observed_at: "2026-07-15T10:28:00+08:00" }],
   risks: ["大盘回落可能压制银行板块"], invalidation_conditions: ["跌破 10 日均线"],
-  plain_language_explanation: "信号有支持，但确认条件还不完整。", strategy_version: "strategy-v1",
+  plain_language_explanation: "信号有支持，但确认条件还不完整。", quantitative_result: {}, ai_interpretation_id: null, strategy_version: "strategy-v1",
   created_at: "2026-07-15T10:30:00+08:00", simulation_plan_id: "missing-plan", risk_decision_id: "missing-gate",
-  previous_advice_id: "advice-premarket", changed_fields: ["conclusion", "risks"], ...overrides,
+  simulation_gate: null, previous_advice_id: "advice-premarket", changed_fields: ["conclusion", "risks"], ...overrides,
 });
 
 const section = (status: CockpitSection["status"] = "ready", reason: string | null = null): CockpitSection => ({
@@ -25,7 +25,7 @@ const section = (status: CockpitSection["status"] = "ready", reason: string | nu
 
 const snapshot = (overrides: Partial<StockCockpitSnapshot> = {}): StockCockpitSnapshot => ({
   symbol: "600000", as_of: "2026-07-15", cutoff: "2026-07-15T10:30:00+08:00", overall_quality: "partial",
-  instrument: { asset: "a_share", symbol: "600000", name: "浦发银行", exchange: "sh", observed_at: "2026-07-15T10:29:00+08:00", quote_quality: "ready" },
+  instrument: { symbol: "600000", name: "浦发银行", exchange: "sh", observed_at: "2026-07-15T10:29:00+08:00", quote_quality: "ready" },
   candidate_membership: ["short_term"], current_advice: [advice()],
   sections: {
     market: section(), price_volume: section(), trend: section(), valuation: section(), fundamentals: section(),
@@ -75,6 +75,35 @@ describe("StockDecisionCockpit", () => {
     expect(screen.getByText("资金数据尚未接入")).toBeInTheDocument();
     expect(screen.getByText("尚未为该股票运行回测")).toBeInTheDocument();
     expect(screen.getAllByText(/来源：fixture/).length).toBeGreaterThan(0);
+  });
+
+  it("shows partial and stale section reasons instead of hiding degradation", async () => {
+    const partial = snapshot();
+    partial.sections.trend = { ...section("partial", "trend_window_incomplete"), payload: { explanation: "短周期不足", metrics: {} } };
+    partial.sections.news = { ...section("stale", "news_snapshot_stale"), payload: { explanation: "新闻快照较旧", metrics: {} } };
+    renderCockpit(() => Promise.resolve(partial));
+    expect(await screen.findByText("trend_window_incomplete")).toBeInTheDocument();
+    expect(screen.getByText("news_snapshot_stale")).toBeInTheDocument();
+  });
+
+  it("uses market section time and quality instead of directory identity time", async () => {
+    const data = snapshot();
+    data.instrument.observed_at = "2026-07-15T08:00:00+08:00";
+    data.sections.market = { ...section("stale", "market_snapshot_stale"), observed_at: "2026-07-15T10:12:00+08:00" };
+    renderCockpit(() => Promise.resolve(data));
+    expect(await screen.findByText("行情陈旧")).toBeInTheDocument();
+    expect(screen.getAllByText(/2026\/7\/15 10:12:00/).length).toBeGreaterThan(0);
+  });
+
+  it("shows candidate membership and only reveals a plan reference after every authoritative gate passes", async () => {
+    const gated = advice({
+      simulation_gate: { quote_state: "ready", compliance_state: "ready", evidence_state: "ready", risk_state: "approve", risk_decision_id: "missing-gate", compliance_snapshot_id: "compliance-1" },
+    });
+    renderCockpit(() => Promise.resolve(snapshot({ candidate_membership: ["short_term", "swing"], current_advice: [gated] })));
+    expect(await screen.findByText("短线候选")).toBeInTheDocument();
+    expect(screen.getByText("波段候选")).toBeInTheDocument();
+    expect(screen.getByText("模拟操作计划")).toBeInTheDocument();
+    expect(screen.getByText(/missing-plan/)).toBeInTheDocument();
   });
 
   it("keeps the last successful snapshot and marks it stale after refresh failure", async () => {

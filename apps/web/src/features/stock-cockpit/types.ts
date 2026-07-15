@@ -2,7 +2,6 @@ import type { CandidateBoard } from "../a-shares/types";
 import type { Advice, DecisionPhase } from "../decision-workbench/types";
 
 export type AShareInstrument = {
-  asset: "a_share";
   symbol: string;
   name: string;
   exchange: "sh" | "sz" | "bj";

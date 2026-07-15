@@ -1,18 +1,25 @@
 export type DecisionPhase = "premarket" | "intraday" | "postclose";
 export type Evidence = { evidence_id: string; source: string; snapshot_id: string; summary: string; observed_at: string };
+export type SimulationGateAudit = {
+  quote_state: "ready" | "blocked"; compliance_state: "ready" | "blocked";
+  evidence_state: "ready" | "blocked"; risk_state: "approve" | "reject";
+  risk_decision_id: string | null; compliance_snapshot_id: string | null;
+};
 export type Advice = {
-  advice_id: string; snapshot_id: string; symbol: string; horizon: "intraday" | "swing";
+  advice_id: string; snapshot_id: string; asset: "a_share" | "convertible_bond"; symbol: string; horizon: "intraday" | "swing";
+  observation_state: string;
   action: "observe" | "wait" | "avoid" | "invalidated" | "simulated_plan";
   conclusion: string; confidence: string; supporting_evidence: Evidence[]; contrary_evidence: Evidence[];
-  risks: string[]; invalidation_conditions: string[]; plain_language_explanation?: string | null;
-  strategy_version: string; created_at: string; simulation_plan_id?: string | null; risk_decision_id?: string | null;
-  previous_advice_id?: string | null; changed_fields?: string[];
+  risks: string[]; invalidation_conditions: string[]; plain_language_explanation: string | null;
+  quantitative_result: Record<string, string | null>; ai_interpretation_id: string | null;
+  strategy_version: string; created_at: string; simulation_plan_id: string | null; risk_decision_id: string | null;
+  simulation_gate: SimulationGateAudit | null; previous_advice_id: string | null; changed_fields: string[];
 };
 export type SimulationPlan = {
   plan_id: string; advice_id: string; risk_decision_id: string; compliance_snapshot_id: string;
   watch_price_low: string; watch_price_high: string; stop_loss: string; take_profit: string[];
   tranches: string[]; max_position: string; invalidation_conditions: string[];
-  strategy_version: string; risk_version: string; compliance_version: string;
+  valid_from: string; valid_until: string; strategy_version: string; risk_version: string; compliance_version: string;
 };
 export type PlanReadiness = {
   ready: boolean; reasons: string[]; quote_state: "ready" | "blocked";

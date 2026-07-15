@@ -220,7 +220,7 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadPaperPor
 
       {activeView === "dashboard" && loadDecisionCurrent && <div className="stock-workbench-layout">
         {loadAShareCandidates && searchAShareInstruments && <StockSelector loadCandidates={loadAShareCandidates} search={searchAShareInstruments} />}
-        {loadStockCockpit ? <StockDecisionCockpit load={loadStockCockpit} /> : <DecisionWorkbench loadCurrent={loadDecisionCurrent} loadDate={loadDecisionDate} />}
+        <div className="stock-workbench-main">{loadStockCockpit && <StockDecisionCockpit load={loadStockCockpit} />}<DecisionWorkbench loadCurrent={loadDecisionCurrent} loadDate={loadDecisionDate} /></div>
       </div>}
 
       {activeView === "dashboard" && !loadDecisionCurrent && <main className="command-center">

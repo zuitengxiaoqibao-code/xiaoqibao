@@ -40,9 +40,11 @@ function SectionBand({ sectionKey, title, section }: { sectionKey: string; title
   if (!section) section = { status: "unavailable", source: "cockpit", observed_at: null, snapshot_id: null, reason: "diagnosis_section_unavailable", payload: {} };
   const metrics = section.payload.metrics && typeof section.payload.metrics === "object" ? Object.entries(section.payload.metrics as Record<string, unknown>) : [];
   const explanation = typeof section.payload.explanation === "string" ? section.payload.explanation : null;
+  const reason = section.reason ? reasonNames[section.reason] ?? section.reason : null;
   return <section className={`cockpit-section status-${section.status}`} aria-labelledby={`cockpit-${sectionKey}`}>
     <header><div><Database size={15} /><h3 id={`cockpit-${sectionKey}`}>{title}</h3></div><span>{statusNames[section.status]}</span></header>
-    {section.status === "unavailable" || section.status === "blocked" ? <div className="section-degraded"><ShieldAlert size={16} /><p>{reasonNames[section.reason ?? ""] ?? section.reason ?? "当前没有可验证数据"}</p></div> : <>
+    {reason && <div className="section-reason"><ShieldAlert size={15} /><p>{reason}</p></div>}
+    {section.status === "unavailable" || section.status === "blocked" ? !reason && <div className="section-degraded"><ShieldAlert size={16} /><p>当前没有可验证数据</p></div> : <>
       {explanation && <p className="section-summary">{explanation}</p>}
       {metrics.length > 0 ? <details><summary><ChevronDown size={14} />查看详细指标</summary><dl>{metrics.map(([key, value]) => <div key={key}><dt>{metricNames[key] ?? key}</dt><dd>{renderValue(value)}</dd></div>)}</dl></details> : <p className="section-summary">当前快照没有可展开的指标。</p>}
     </>}

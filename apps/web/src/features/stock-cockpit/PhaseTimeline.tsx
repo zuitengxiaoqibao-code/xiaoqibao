@@ -22,8 +22,9 @@ export function PhaseTimeline({ phases: histories, symbol }: { phases: StockCock
           return <article key={item.advice_id}><div className="phase-record-time"><Clock3 size={13} /><time>{new Date(item.created_at).toLocaleTimeString("zh-CN", { hour12: false })}</time><span>{version ? `版本 #${version.sequence}` : "版本未标注"}</span></div>
             <div className="phase-record-body"><header><b>{actions[item.action]}</b><span>{item.horizon === "intraday" ? "短期" : "波段"}</span></header><h4>{item.conclusion}</h4>
               <p>变更字段：{item.changed_fields?.length ? item.changed_fields.join("、") : "首次记录或未标注"}</p><p>前序建议：{item.previous_advice_id ?? "无"}</p>
-              {item.supporting_evidence.map((evidence) => <p className="phase-trigger" key={evidence.evidence_id}>触发证据：{evidence.summary}</p>)}
-              {phase === "postclose" && <p>盘后归因：{item.plain_language_explanation || "当前记录未提供盘后归因"}</p>}
+              {item.supporting_evidence.map((evidence) => <p className="phase-trigger" key={evidence.evidence_id}>触发证据：{evidence.summary}<small>{evidence.source} · {new Date(evidence.observed_at).toLocaleString("zh-CN", { hour12: false })}</small></p>)}
+              {item.plain_language_explanation && <p>通俗解释：{item.plain_language_explanation}</p>}
+              {phase === "postclose" && <p>盘后归因：后端当前未提供独立归因字段</p>}
             </div></article>;
         })}</div>}
       </section>;

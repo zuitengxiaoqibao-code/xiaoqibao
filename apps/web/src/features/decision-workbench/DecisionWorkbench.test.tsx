@@ -44,14 +44,14 @@ describe("DecisionWorkbench", () => {
 
   it("shows a simulation plan only when reciprocal references and gates are complete", async () => {
     const advice = {
-      advice_id: "a1", snapshot_id: "s1", symbol: "600000", horizon: "swing" as const,
+      advice_id: "a1", snapshot_id: "s1", asset: "a_share" as const, symbol: "600000", horizon: "swing" as const, observation_state: "watching",
       action: "simulated_plan" as const, conclusion: "仅用于模拟观察", confidence: "0.72",
       supporting_evidence: [{ evidence_id: "e1", source: "tencent", snapshot_id: "q1", summary: "价格快照有效", observed_at: "2026-07-15T10:29:00+08:00" }],
       contrary_evidence: [], risks: ["市场波动"], invalidation_conditions: ["跌破观察区间"],
-      plain_language_explanation: "条件满足后也只进入模拟计划。", strategy_version: "strategy-v1", created_at: "2026-07-15T10:30:00+08:00",
-      simulation_plan_id: "p1", risk_decision_id: "r1",
+      plain_language_explanation: "条件满足后也只进入模拟计划。", quantitative_result: {}, ai_interpretation_id: null, strategy_version: "strategy-v1", created_at: "2026-07-15T10:30:00+08:00",
+      simulation_plan_id: "p1", risk_decision_id: "r1", simulation_gate: { quote_state: "ready" as const, compliance_state: "ready" as const, evidence_state: "ready" as const, risk_state: "approve" as const, risk_decision_id: "r1", compliance_snapshot_id: "c1" }, previous_advice_id: null, changed_fields: [],
     };
-    const plan = { plan_id: "p1", advice_id: "a1", risk_decision_id: "r1", compliance_snapshot_id: "c1", watch_price_low: "10", watch_price_high: "10.2", stop_loss: "9.8", take_profit: ["10.6"], tranches: ["0.2"], max_position: "0.2", invalidation_conditions: ["跌破观察区间"], strategy_version: "strategy-v1", risk_version: "risk-v1", compliance_version: "compliance-v1" };
+    const plan = { plan_id: "p1", advice_id: "a1", risk_decision_id: "r1", compliance_snapshot_id: "c1", watch_price_low: "10", watch_price_high: "10.2", stop_loss: "9.8", take_profit: ["10.6"], tranches: ["0.2"], max_position: "0.2", invalidation_conditions: ["跌破观察区间"], valid_from: "2026-07-15T10:30:00+08:00", valid_until: "2026-07-15T15:00:00+08:00", strategy_version: "strategy-v1", risk_version: "risk-v1", compliance_version: "compliance-v1" };
     const intraday = { ...emptySlot, phase_status: "ready" as const, quality: "ready" as const, aggregate_version: "s1", ai_status: "ready" as const, advice: [advice], plans: [plan], plan_readiness: { a1: { ready: true, reasons: [], quote_state: "ready" as const, compliance_state: "ready" as const, evidence_state: "ready" as const, risk_state: "approve" as const } } };
     render(<DecisionWorkbench loadCurrent={() => Promise.resolve(response({ phases: { premarket: emptySlot, intraday, postclose: emptySlot } }))} />);
 
@@ -88,13 +88,13 @@ describe("DecisionWorkbench", () => {
     ["missing gate", undefined],
   ])("hides a simulation plan for %s", async (_label, readiness) => {
     const advice = {
-      advice_id: "a1", snapshot_id: "s1", symbol: "600000", horizon: "swing" as const,
+      advice_id: "a1", snapshot_id: "s1", asset: "a_share" as const, symbol: "600000", horizon: "swing" as const, observation_state: "watching",
       action: "simulated_plan" as const, conclusion: "观察", confidence: "0.7",
       supporting_evidence: [{ evidence_id: "e1", source: "tencent", snapshot_id: "q1", summary: "有效", observed_at: "2026-07-15T10:29:00+08:00" }],
-      contrary_evidence: [], risks: ["波动"], invalidation_conditions: ["条件变化"], strategy_version: "v1",
-      created_at: "2026-07-15T10:30:00+08:00", simulation_plan_id: "p1", risk_decision_id: "r1",
+      contrary_evidence: [], risks: ["波动"], invalidation_conditions: ["条件变化"], plain_language_explanation: null, quantitative_result: {}, ai_interpretation_id: null, strategy_version: "v1",
+      created_at: "2026-07-15T10:30:00+08:00", simulation_plan_id: "p1", risk_decision_id: "r1", simulation_gate: null, previous_advice_id: null, changed_fields: [],
     };
-    const plan = { plan_id: "p1", advice_id: "a1", risk_decision_id: "r1", compliance_snapshot_id: "c1", watch_price_low: "10", watch_price_high: "10.2", stop_loss: "9.8", take_profit: ["10.6"], tranches: ["0.2"], max_position: "0.2", invalidation_conditions: ["条件变化"], strategy_version: "v1", risk_version: "r1", compliance_version: "c1" };
+    const plan = { plan_id: "p1", advice_id: "a1", risk_decision_id: "r1", compliance_snapshot_id: "c1", watch_price_low: "10", watch_price_high: "10.2", stop_loss: "9.8", take_profit: ["10.6"], tranches: ["0.2"], max_position: "0.2", invalidation_conditions: ["条件变化"], valid_from: "2026-07-15T10:30:00+08:00", valid_until: "2026-07-15T15:00:00+08:00", strategy_version: "v1", risk_version: "r1", compliance_version: "c1" };
     const readinessMap: Record<string, PlanReadiness> = readiness ? { a1: readiness } : {};
     const slot = { ...emptySlot, phase_status: "partial" as const, quality: "partial" as const, aggregate_version: "s1", ai_status: "unavailable" as const, advice: [advice], plans: [plan], plan_readiness: readinessMap };
     render(<DecisionWorkbench loadCurrent={() => Promise.resolve(response({ phases: { premarket: emptySlot, intraday: slot, postclose: emptySlot } }))} />);
@@ -150,11 +150,11 @@ describe("DecisionWorkbench", () => {
 
   it("explains ordered change lineage with symbols, fields, conclusions, and evidence", async () => {
     const transition = (id: string, symbol: string, conclusion: string, previous: string | null, fields: string[], reason: string) => ({
-      advice_id: id, snapshot_id: `snapshot-${id}`, symbol, horizon: "intraday" as const,
+      advice_id: id, snapshot_id: `snapshot-${id}`, asset: "a_share" as const, symbol, horizon: "intraday" as const, observation_state: "watching",
       action: "wait" as const, conclusion, confidence: "0.5",
       supporting_evidence: [{ evidence_id: `e-${id}`, source: "tencent", snapshot_id: `q-${id}`, summary: reason, observed_at: "2026-07-15T10:29:00+08:00" }],
-      contrary_evidence: [], risks: ["波动风险"], invalidation_conditions: ["条件变化"],
-      strategy_version: "v1", created_at: "2026-07-15T10:30:00+08:00",
+      contrary_evidence: [], risks: ["波动风险"], invalidation_conditions: ["条件变化"], plain_language_explanation: null, quantitative_result: {}, ai_interpretation_id: null,
+      risk_decision_id: null, simulation_plan_id: null, simulation_gate: null, strategy_version: "v1", created_at: "2026-07-15T10:30:00+08:00",
       previous_advice_id: previous, changed_fields: fields,
     });
     const first = transition("a2", "600000", "等待量价确认", "a1", ["action", "conclusion"], "成交量尚未确认");

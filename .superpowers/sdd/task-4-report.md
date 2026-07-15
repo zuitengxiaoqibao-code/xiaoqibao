@@ -50,3 +50,26 @@ Result: no mojibake matches; diff check passed.
 ## Concerns
 
 None. Browser viewport acceptance remains Task 5 as planned.
+
+## Review Fixes
+
+Review findings were addressed in a second TDD pass:
+
+- The existing `DecisionWorkbench` now remains mounted below the stock cockpit, preserving polling, phase tabs, historical dates, degradation semantics, and full authoritative plan rendering.
+- Partial and stale sections render their degradation reason.
+- Timeline evidence includes source and observation time. Plain-language explanation is labeled as explanation and is never presented as postclose attribution; the missing backend attribution field is stated explicitly.
+- Header quote time and quality come from the market section. Instrument-directory observation time is no longer treated as a market timestamp.
+- Frontend DTOs now match `AShareInstrument`, `AdviceCard`, `SimulationGateAudit`, and `SimulationPlan`, including all nullable and required fields.
+- The cockpit only displays a simulation-plan reference when action, plan reference, reciprocal risk reference, and all immutable gate fields pass. It does not invent plan details absent from the cockpit API.
+- Contrary evidence includes source and observation time, and candidate membership is visible as short-term, swing, or not-current.
+
+Review-fix verification:
+
+```powershell
+pnpm --filter @qibao/web test
+pnpm --filter @qibao/web build
+rg -n '�|锟|烫烫|\?\?\?' apps/api/src/qibao_api apps/api/tests apps/web/src README.md
+git diff --check
+```
+
+Result: 16 files and 90 tests passed; production build passed; encoding and diff checks passed.

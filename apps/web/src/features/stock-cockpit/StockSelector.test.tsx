@@ -21,7 +21,7 @@ const first: CandidateBoard = {
 const empty: CandidateBoard = { ...first, universe_status: "empty", snapshot_id: null, short_term: [], swing: [] };
 const searchResult: InstrumentSearchResponse = {
   query: "平安", source_status: "ready", server_time: "2026-07-15T09:30:00+08:00",
-  items: [{ asset: "a_share", symbol: "000001", name: "平安银行", exchange: "sz", observed_at: "2026-07-15T09:29:00+08:00", quote_quality: "ready" }],
+  items: [{ symbol: "000001", name: "平安银行", exchange: "sz", observed_at: "2026-07-15T09:29:00+08:00", quote_quality: "ready" }],
 };
 const puFaResult: InstrumentSearchResponse = {
   ...searchResult, query: "600000",

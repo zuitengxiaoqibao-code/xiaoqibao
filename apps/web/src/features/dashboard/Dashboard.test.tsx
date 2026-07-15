@@ -22,6 +22,15 @@ const freshCard = {
 };
 
 describe("Dashboard", () => {
+  it("keeps the authoritative three-phase workbench mounted with the single-stock cockpit", async () => {
+    window.history.replaceState({}, "", "/");
+    render(<SelectedInstrumentProvider><Dashboard loadSnapshot={() => Promise.resolve(freshCard)}
+      loadDecisionCurrent={() => new Promise(() => undefined)}
+      loadStockCockpit={() => new Promise(() => undefined)}
+    /></SelectedInstrumentProvider>);
+    expect(screen.getByRole("heading", { name: "先选择一只 A 股" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "今日判断与三阶段跟踪" })).toBeInTheDocument();
+  });
   it("keeps the three-phase workbench beside an empty candidate selector without guessing", async () => {
     window.history.replaceState({}, "", "/");
     render(<SelectedInstrumentProvider><Dashboard
