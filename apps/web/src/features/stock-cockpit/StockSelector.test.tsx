@@ -23,10 +23,14 @@ const searchResult: InstrumentSearchResponse = {
   query: "平安", source_status: "ready", server_time: "2026-07-15T09:30:00+08:00",
   items: [{ asset: "a_share", symbol: "000001", name: "平安银行", exchange: "sz", observed_at: "2026-07-15T09:29:00+08:00", quote_quality: "ready" }],
 };
+const puFaResult: InstrumentSearchResponse = {
+  ...searchResult, query: "600000",
+  items: [{ ...searchResult.items[0], symbol: "600000", name: "浦发银行", exchange: "sh" }],
+};
 
 function renderSelector(props: Partial<React.ComponentProps<typeof StockSelector>> = {}) {
   return render(<SelectedInstrumentProvider><StockSelector
-    loadCandidates={() => Promise.resolve(first)} search={() => Promise.resolve(searchResult)} {...props}
+    loadCandidates={() => Promise.resolve(first)} search={(query) => Promise.resolve(query === "600000" ? puFaResult : searchResult)} {...props}
   /></SelectedInstrumentProvider>);
 }
 
@@ -36,9 +40,10 @@ describe("StockSelector", () => {
   it("offers candidates and searches by code or name after 250ms", async () => {
     const search = vi.fn(() => Promise.resolve(searchResult));
     renderSelector({ search });
-    expect(await screen.findByRole("button", { name: /600000/ })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { pressed: true })).toHaveTextContent("600000");
+    const callsBeforeInput = search.mock.calls.length;
     fireEvent.change(screen.getByRole("searchbox", { name: "搜索 A 股" }), { target: { value: "平安" } });
-    expect(search).not.toHaveBeenCalled();
+    expect(search).toHaveBeenCalledTimes(callsBeforeInput);
     expect(await screen.findByRole("option", { name: /000001.*平安银行/ })).toBeInTheDocument();
     expect(search).toHaveBeenCalledWith("平安");
   });
@@ -50,9 +55,9 @@ describe("StockSelector", () => {
 
   it("does not replace an explicit selection when candidates refresh", async () => {
     const view = renderSelector();
-    await screen.findByRole("button", { name: /600000/ });
+    await screen.findByRole("button", { pressed: true });
     fireEvent.click(screen.getByRole("tab", { name: "波段候选" }));
-    fireEvent.click(screen.getByRole("button", { name: /000001/ }));
+    fireEvent.click(screen.getByRole("button", { pressed: false }));
     expect(new URL(window.location.href).searchParams.get("symbol")).toBe("000001");
     view.rerender(<SelectedInstrumentProvider><StockSelector loadCandidates={() => Promise.resolve(empty)} search={() => Promise.resolve(searchResult)} /></SelectedInstrumentProvider>);
     await screen.findByText("本地候选池为空");
@@ -68,9 +73,72 @@ describe("StockSelector", () => {
 
   it("stores watchlist symbols under the A-share-only key", async () => {
     renderSelector();
-    await screen.findByRole("button", { name: /600000/ });
-    fireEvent.click(screen.getByRole("button", { name: "加入自选" }));
+    await screen.findByRole("button", { pressed: true });
+    fireEvent.click(screen.getByRole("button", { name: "将 600000 加入自选" }));
     await waitFor(() => expect(localStorage.getItem("qibao.a_share.watchlist.v1")).toBe('["600000"]'));
     expect(localStorage.getItem("qibao.watchlist")).toBeNull();
+  });
+
+  it("restores watchlist identity after the stock leaves all candidate lists", async () => {
+    localStorage.setItem("qibao.a_share.watchlist.v1", '["000001"]');
+    renderSelector({ loadCandidates: () => Promise.resolve(empty) });
+    fireEvent.click(screen.getByRole("tab", { name: "自选股" }));
+    expect(await screen.findByText("平安银行")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /000001.*平安银行/ })).toBeInTheDocument();
+  });
+
+  it("shows a search failure reason and retries the same query", async () => {
+    let attempts = 0;
+    const search = vi.fn((query: string) => {
+      if (query !== "平安") return Promise.resolve(query === "600000" ? puFaResult : searchResult);
+      attempts += 1;
+      return attempts === 1 ? Promise.reject(new Error("目录暂不可用")) : Promise.resolve(searchResult);
+    });
+    renderSelector({ search });
+    fireEvent.change(screen.getByRole("searchbox", { name: "搜索 A 股" }), { target: { value: "平安" } });
+    expect(await screen.findByRole("alert")).toHaveTextContent("目录暂不可用");
+    fireEvent.click(screen.getByRole("button", { name: "重试搜索" }));
+    expect(await screen.findByRole("option", { name: /000001.*平安银行/ })).toBeInTheDocument();
+    expect(search.mock.calls.filter(([query]) => query === "平安")).toHaveLength(2);
+  });
+
+  it("adds a search result to watchlist", async () => {
+    renderSelector();
+    fireEvent.change(screen.getByRole("searchbox", { name: "搜索 A 股" }), { target: { value: "平安" } });
+    await screen.findByRole("option", { name: /000001.*平安银行/ });
+    fireEvent.click(screen.getByRole("button", { name: "将 000001 加入自选" }));
+    expect(localStorage.getItem("qibao.a_share.watchlist.v1")).toBe('["000001"]');
+  });
+
+  it("labels unavailable live quote fields instead of presenting five-day return as current change", async () => {
+    renderSelector();
+    await screen.findByRole("button", { pressed: true });
+    expect(await screen.findByText(/浦发银行/)).toBeInTheDocument();
+    expect(screen.getByText("最新价不可用")).toBeInTheDocument();
+    expect(screen.getByText("当前涨跌不可用")).toBeInTheDocument();
+    expect(screen.getByText(/近 5 日 \+1\.49%/)).toBeInTheDocument();
+  });
+
+  it("polls candidates without replacing an explicit search selection", async () => {
+    vi.useFakeTimers();
+    const loadCandidates = vi.fn(() => Promise.resolve(first));
+    renderSelector({ loadCandidates, pollIntervalMs: 1000 });
+    await vi.advanceTimersByTimeAsync(0);
+    fireEvent.change(screen.getByRole("searchbox", { name: "搜索 A 股" }), { target: { value: "000001" } });
+    await vi.advanceTimersByTimeAsync(0);
+    fireEvent.click(screen.getByRole("option", { name: /000001.*平安银行/ }));
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(loadCandidates).toHaveBeenCalledTimes(2);
+    expect(new URL(window.location.href).searchParams.get("symbol")).toBe("000001");
+    vi.useRealTimers();
+  });
+
+  it("links tabs to their panel and supports arrow-key switching", async () => {
+    renderSelector();
+    const short = screen.getByRole("tab", { name: "短线候选" });
+    expect(short).toHaveAttribute("aria-controls", "stock-selector-panel");
+    fireEvent.keyDown(short, { key: "ArrowRight" });
+    expect(screen.getByRole("tab", { name: "波段候选" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tabpanel")).toHaveAttribute("aria-labelledby", "stock-selector-tab-swing");
   });
 });

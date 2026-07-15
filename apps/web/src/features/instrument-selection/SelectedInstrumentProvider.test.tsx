@@ -1,7 +1,8 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { SelectedInstrumentProvider, useSelectedInstrument } from "./SelectedInstrumentProvider";
+import { commitLocation } from "./location";
 
 function Probe() {
   const selection = useSelectedInstrument();
@@ -38,6 +39,15 @@ describe("SelectedInstrumentProvider", () => {
     fireEvent(window, new PopStateEvent("popstate"));
     expect(screen.getByText("600000")).toBeInTheDocument();
     expect(screen.getByText("url")).toBeInTheDocument();
+  });
+
+  it("immediately follows same-tab application navigation because the URL is authoritative", async () => {
+    window.history.replaceState({}, "", "/?symbol=600000");
+    render(<SelectedInstrumentProvider><Probe /></SelectedInstrumentProvider>);
+    commitLocation("/");
+    await waitFor(() => expect(screen.getByText("未选择")).toBeInTheDocument());
+    commitLocation("/?symbol=000001");
+    await waitFor(() => expect(screen.getByText("000001")).toBeInTheDocument());
   });
 
   it("rejects non A-share symbols and ignores symbol state on the bond route", () => {

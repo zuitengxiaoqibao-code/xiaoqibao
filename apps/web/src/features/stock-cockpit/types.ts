@@ -1,5 +1,5 @@
 import type { CandidateBoard } from "../a-shares/types";
-import type { Advice, DecisionPhase, PhaseSlot } from "../decision-workbench/types";
+import type { Advice, DecisionPhase } from "../decision-workbench/types";
 
 export type AShareInstrument = {
   asset: "a_share";
@@ -35,7 +35,19 @@ export type StockCockpitSnapshot = {
   candidate_membership: Array<"short_term" | "swing">;
   current_advice: Advice[];
   sections: Record<string, CockpitSection>;
-  phases: Record<DecisionPhase, PhaseSlot>;
+  phases: Record<DecisionPhase, StockPhaseHistory>;
+};
+
+export type DecisionVersion = {
+  snapshot_id: string;
+  sequence: number;
+  generated_at: string;
+  status: "ready" | "partial" | "blocked";
+};
+
+export type StockPhaseHistory = {
+  advice: Advice[];
+  change_stream: DecisionVersion[];
 };
 
 export type CandidateLoader = () => Promise<CandidateBoard>;

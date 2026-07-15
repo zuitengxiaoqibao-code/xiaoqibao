@@ -1,4 +1,5 @@
 import { createContext, ReactNode, useContext, useEffect, useMemo, useState } from "react";
+import { commitLocation, LOCATION_CHANGE_EVENT } from "./location";
 
 export type SelectionSource = "candidate" | "search" | "watchlist" | "url";
 
@@ -29,12 +30,14 @@ export function SelectedInstrumentProvider({ children }: { children: ReactNode }
   });
 
   useEffect(() => {
-    const restore = () => {
+    const restore = (event?: Event) => {
       const symbol = symbolFromLocation();
-      setState({ symbol, source: symbol ? "url" : null, selectedAt: symbol ? new Date().toISOString() : null });
+      const requestedSource = event instanceof CustomEvent ? event.detail?.source as SelectionSource | undefined : undefined;
+      setState({ symbol, source: symbol ? requestedSource ?? "url" : null, selectedAt: symbol ? new Date().toISOString() : null });
     };
     window.addEventListener("popstate", restore);
-    return () => window.removeEventListener("popstate", restore);
+    window.addEventListener(LOCATION_CHANGE_EVENT, restore);
+    return () => { window.removeEventListener("popstate", restore); window.removeEventListener(LOCATION_CHANGE_EVENT, restore); };
   }, []);
 
   const value = useMemo<SelectedInstrument>(() => ({
@@ -44,14 +47,12 @@ export function SelectedInstrumentProvider({ children }: { children: ReactNode }
       if (!A_SHARE_SYMBOL.test(symbol) || window.location.pathname === "/convertible-bonds") return;
       const url = new URL(window.location.href);
       url.searchParams.set("symbol", symbol);
-      window.history.pushState({}, "", `${url.pathname}${url.search}${url.hash}`);
-      setState({ symbol, source, selectedAt: new Date().toISOString() });
+      commitLocation(`${url.pathname}${url.search}${url.hash}`, source);
     },
     clear() {
       const url = new URL(window.location.href);
       url.searchParams.delete("symbol");
-      window.history.pushState({}, "", `${url.pathname}${url.search}${url.hash}`);
-      setState({ symbol: null, source: null, selectedAt: null });
+      commitLocation(`${url.pathname}${url.search}${url.hash}`);
     },
   }), [state]);
 

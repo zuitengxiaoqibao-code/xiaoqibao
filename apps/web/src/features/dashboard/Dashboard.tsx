@@ -25,6 +25,7 @@ import { DecisionWorkbench } from "../decision-workbench/DecisionWorkbench";
 import type { DecisionResponse } from "../decision-workbench/types";
 import { StockSelector } from "../stock-cockpit/StockSelector";
 import type { InstrumentSearchResponse } from "../stock-cockpit/types";
+import { commitLocation } from "../instrument-selection/location";
 
 type ViewState =
   | { kind: "idle" }
@@ -148,7 +149,7 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadPaperPor
   }, []);
   function navigate(view: "dashboard" | "a_shares" | "bonds" | "news" | "operations") {
     const paths = { dashboard: "/", a_shares: "/a-shares", bonds: "/convertible-bonds", news: "/news-intelligence", operations: "/operations" };
-    window.history.pushState({}, "", paths[view]);
+    commitLocation(paths[view]);
     setActiveView(view);
   }
 

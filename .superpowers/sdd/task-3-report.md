@@ -7,27 +7,33 @@
 - Added stock cockpit API/types consumed by later cockpit UI work.
 - Mounted the provider in `App` and composed the selector beside the existing three-phase workbench without changing convertible-bond state or Task 4 cockpit rendering.
 - Added responsive selector styling with an 11 px text floor.
+- Review fixes centralize same-tab navigation notifications so the provider always re-reads the authoritative URL, including Dashboard route changes that remove `symbol`.
+- Corrected the cockpit phase contract to the backend `StockPhaseHistory` and `DecisionVersion` payloads.
+- Added candidate polling/manual refresh, retryable search errors, independent watchlist identity restoration, search-result watchlist controls, and complete tab ARIA/keyboard behavior.
+- Candidate identity is resolved through the search API. Because neither the candidate nor search contract contains a live price/current change, those fields are explicitly unavailable; the five-day return remains separately and accurately labeled.
 
 ## TDD Evidence
 
 - RED: the provider and selector suites first failed because their production modules did not exist.
 - RED: the first-candidate initialization test then failed with a missing URL symbol before the one-time initialization behavior was added.
+- RED review cycle: URL same-tab navigation, independent watchlist recovery, search retry, search-result watchlist, truthful quote labels, polling stability, and tab keyboard/ARIA tests all failed against the initial implementation before their fixes.
 - GREEN: all focused and full frontend suites pass.
 
 ## Verification
 
-- `pnpm --filter @qibao/web exec vitest run src/features/instrument-selection/SelectedInstrumentProvider.test.tsx src/features/stock-cockpit/StockSelector.test.tsx src/features/dashboard/Dashboard.test.tsx` -> 3 files, 20 tests passed.
-- `pnpm --filter @qibao/web test` -> 14 files, 65 tests passed.
+- `pnpm --filter @qibao/web exec vitest run src/features/instrument-selection/SelectedInstrumentProvider.test.tsx src/features/stock-cockpit/StockSelector.test.tsx src/features/dashboard/Dashboard.test.tsx` -> 3 files, 27 tests passed.
+- `pnpm --filter @qibao/web test` -> 14 files, 72 tests passed.
 - `pnpm --filter @qibao/web build` -> TypeScript and Vite production build passed.
 - `rg -n '�|锟|烫烫|\?\?\?' apps/api/src/qibao_api apps/api/tests apps/web/src README.md` -> no matches.
 - `git diff --check` -> passed; only Git line-ending notices were emitted.
 
 ## Risks / Follow-up
 
-- Watchlist storage intentionally contains symbols only; display metadata remains API-owned.
-- Candidate rows do not invent names because the existing candidate contract does not provide them; verified names appear in search results.
+- Watchlist storage intentionally contains symbols only; identity metadata is restored through exact-code search and missing identity is visibly degraded.
+- Live price and current change remain explicitly unavailable until an API contract exposes them; factor close and five-day return are not presented as live data.
 - Task 4 still owns the detailed selected-stock cockpit rendering and request-isolation UI.
 
 ## Commit
 
-- `feat(web): add global A-share selection` (this commit)
+- `f77ce34 feat(web): add global A-share selection`
+- `fix(web): harden global A-share selection` (review-fix commit)
