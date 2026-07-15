@@ -6,6 +6,7 @@ export type Advice = {
   conclusion: string; confidence: string; supporting_evidence: Evidence[]; contrary_evidence: Evidence[];
   risks: string[]; invalidation_conditions: string[]; plain_language_explanation?: string | null;
   strategy_version: string; created_at: string; simulation_plan_id?: string | null; risk_decision_id?: string | null;
+  previous_advice_id?: string | null; changed_fields?: string[];
 };
 export type SimulationPlan = {
   plan_id: string; advice_id: string; risk_decision_id: string; compliance_snapshot_id: string;

@@ -136,3 +136,11 @@ Focused RED/GREEN evidence:
 - Route test initially failed with missing `change_stream` after materializing two intraday deltas.
 - Current refresh/retry regression was added before the explicit refresh control and discriminator-aware retry implementation.
 - Focused GREEN: `10` route tests and `12` workbench tests passed; the full frontend suite contained `54` passing tests.
+
+## Change Stream Explanation Fix
+
+- The frontend `Advice` type now includes persisted `previous_advice_id` and `changed_fields` lineage.
+- Every ordered change-stream version renders as an accessible disclosure. Its transition records show affected symbol, current action/conclusion, exact stored changed-field names, predecessor advice ID, and stored supporting evidence. When evidence is absent, the UI falls back to persisted risk or invalidation reasons and explicitly says when no specific reason exists.
+- The UI does not infer or invent previous values. It identifies the predecessor record so the append-only chain remains honest.
+- RED: the new two-delta component test failed because only version counts/timestamps were rendered.
+- Focused GREEN: `13` workbench tests passed; the full web suite contained `55` tests at this stage.

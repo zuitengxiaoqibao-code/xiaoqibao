@@ -147,4 +147,36 @@ describe("DecisionWorkbench", () => {
     expect(screen.getByText(/焦点 60s/)).toBeInTheDocument();
     expect(screen.getByText(/全域 240s/)).toBeInTheDocument();
   });
+
+  it("explains ordered change lineage with symbols, fields, conclusions, and evidence", async () => {
+    const transition = (id: string, symbol: string, conclusion: string, previous: string | null, fields: string[], reason: string) => ({
+      advice_id: id, snapshot_id: `snapshot-${id}`, symbol, horizon: "intraday" as const,
+      action: "wait" as const, conclusion, confidence: "0.5",
+      supporting_evidence: [{ evidence_id: `e-${id}`, source: "tencent", snapshot_id: `q-${id}`, summary: reason, observed_at: "2026-07-15T10:29:00+08:00" }],
+      contrary_evidence: [], risks: ["波动风险"], invalidation_conditions: ["条件变化"],
+      strategy_version: "v1", created_at: "2026-07-15T10:30:00+08:00",
+      previous_advice_id: previous, changed_fields: fields,
+    });
+    const first = transition("a2", "600000", "等待量价确认", "a1", ["action", "conclusion"], "成交量尚未确认");
+    const second = transition("a3", "000001", "风险条件变化", "a0", ["risks"], "风险规则触发");
+    const slot = {
+      ...emptySlot, phase_status: "partial" as const, quality: "partial" as const,
+      aggregate_version: "intra-2", ai_status: "not_requested" as const,
+      advice: [first, second],
+      change_stream: [
+        { snapshot_id: "intra-1", sequence: 1, generated_at: "2026-07-15T10:30:00+08:00", delta_advice: [first], delta_plans: [] },
+        { snapshot_id: "intra-2", sequence: 2, generated_at: "2026-07-15T11:00:00+08:00", delta_advice: [second], delta_plans: [] },
+      ],
+    };
+    render(<DecisionWorkbench loadCurrent={() => Promise.resolve(response({ phases: { premarket: emptySlot, intraday: slot, postclose: emptySlot } }))} />);
+
+    const versions = await screen.findAllByText(/变化版本 #/);
+    expect(versions.map((item) => item.textContent)).toEqual([expect.stringContaining("#1"), expect.stringContaining("#2")]);
+    expect(screen.getByText(/600000 · 等待 · 等待量价确认/)).toBeInTheDocument();
+    expect(screen.getByText(/变更字段：action、conclusion/)).toBeInTheDocument();
+    expect(screen.getByText(/前序建议：a1/)).toBeInTheDocument();
+    expect(screen.getByText("成交量尚未确认")).toBeInTheDocument();
+    expect(screen.getByText(/000001 · 等待 · 风险条件变化/)).toBeInTheDocument();
+    expect(screen.getByText("风险规则触发")).toBeInTheDocument();
+  });
 });
