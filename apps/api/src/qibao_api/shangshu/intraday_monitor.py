@@ -233,11 +233,18 @@ class PollStateRepository:
                 content_hash = self._snapshot_content_hash(item)
                 if self._is_stale_snapshot(item):
                     continue
-                prior = self.connection.execute(
-                    """SELECT content_hash,payload FROM intraday_market_snapshot_events
-                    WHERE scope=? AND symbol=? ORDER BY sequence DESC LIMIT 1""",
+                prior_rows = self.connection.execute(
+                    """SELECT content_hash,payload,observed_at
+                    FROM intraday_market_snapshot_events
+                    WHERE scope=? AND symbol=? ORDER BY sequence DESC""",
                     (scope, item.symbol),
-                ).fetchone()
+                ).fetchall()
+                trading_date = item.observed_at.astimezone(CHINA_TZ).date()
+                prior = next((
+                    row for row in prior_rows
+                    if datetime.fromisoformat(row["observed_at"]).astimezone(CHINA_TZ).date()
+                    == trading_date
+                ), None)
                 prior_hash = None if prior is None else prior["content_hash"]
                 if prior_hash is None and prior is not None and prior["payload"]:
                     prior_hash = self._snapshot_content_hash(
@@ -287,6 +294,13 @@ class PollStateRepository:
         if not rows or not isinstance(snapshot, MarketFeedSnapshot):
             return False
         retained = [MarketFeedSnapshot.model_validate_json(row["payload"]) for row in rows]
+        trading_date = snapshot.observed_at.astimezone(CHINA_TZ).date()
+        retained = [
+            item for item in retained
+            if item.observed_at.astimezone(CHINA_TZ).date() == trading_date
+        ]
+        if not retained:
+            return False
         freshest = max((item.observed_at, item.fetched_at) for item in retained)
         return (snapshot.observed_at, snapshot.fetched_at) < freshest
 

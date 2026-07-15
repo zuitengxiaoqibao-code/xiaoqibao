@@ -246,6 +246,45 @@ def test_older_focus_quote_cannot_replace_fresher_universe_quote_across_restart(
     assert latest[0].observed_at == NOW
 
 
+def test_identical_content_persists_once_per_beijing_trading_date_across_restart(tmp_path) -> None:
+    next_day = NOW + timedelta(days=1)
+
+    class TwoDayCalendar:
+        def is_trading_day(self, value):
+            return value in {date(2026, 7, 14), date(2026, 7, 15)}
+
+    class SameContentFeed:
+        def snapshot_many(self, symbols, *, cutoff=None):
+            return tuple(MarketFeedSnapshot(
+                symbol=symbol, price=Decimal("10"), change=Decimal("0"),
+                change_percent=Decimal("0"), volume=Decimal("100"), source="test",
+                observed_at=cutoff, fetched_at=cutoff, quality="ready",
+                source_snapshot_id=f"daily-{cutoff.date()}-{symbol}",
+            ) for symbol in symbols)
+
+    database = tmp_path / "daily-content.sqlite3"
+    value = IntradayMonitor(
+        feed=SameContentFeed(), calendar=TwoDayCalendar(),
+        state_repository=PollStateRepository(database), focus_symbols=lambda now: (),
+        universe_symbols=lambda now: ("300001",),
+    )
+    value.check(NOW, scopes=frozenset({"universe"}))
+    value.check(next_day, scopes=frozenset({"universe"}))
+
+    reopened_repository = PollStateRepository(database)
+    current_start = datetime(2026, 7, 15, 1, 25, tzinfo=UTC)
+    current = reopened_repository.latest_snapshots(next_day, since=current_start)
+    restarted = IntradayMonitor(
+        feed=SameContentFeed(), calendar=TwoDayCalendar(),
+        state_repository=reopened_repository, focus_symbols=lambda now: (),
+        universe_symbols=lambda now: ("300001",),
+    )
+    assert len(reopened_repository.snapshots()) == 2
+    assert len(current) == 1 and current[0].observed_at == next_day
+    assert len(reopened_repository.success_states("universe")) == 2
+    assert restarted.due(next_day + timedelta(seconds=179)) == frozenset({"focus"})
+
+
 def test_constrained_budget_persists_300_second_universe_cadence(tmp_path) -> None:
     value = IntradayMonitor(
         feed=Feed(), calendar=Calendar(),

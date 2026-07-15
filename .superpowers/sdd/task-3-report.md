@@ -101,3 +101,13 @@ Implemented the A-share polling feed port, append-only persisted layered polling
 - FINAL QUALITY: Ruff passed, mojibake scan returned no matches, and `git diff --check` exited 0.
 
 The append transaction now treats execution and content as separate identities. A unique execution always appends its success state, while canonical quote content excludes observation/fetch/source identity metadata and inserts only when the latest content for that scope/symbol differs. Freshness is enforced globally per symbol before the per-scope content comparison: an incoming `(observed_at, fetched_at)` older than the freshest retained payload is ignored, including focus/universe crossover and restart cases.
+
+## Trading-date Content Scope
+
+- RED: identical valid content on the next Beijing trading day was suppressed by the prior day's per-scope hash (`expected 2 content rows, got 1`).
+- GREEN: all monitor tests -> `28 passed in 2.21s` before final verification.
+- FINAL GREEN: focused Task 3 suite -> `56 passed in 3.00s`.
+- FINAL FULL: API suite -> `463 passed in 24.36s`.
+- FINAL QUALITY: Ruff passed, mojibake scan returned no matches, and `git diff --check` exited 0.
+
+Per-scope content deduplication and the global per-symbol freshness baseline are now restricted to the incoming snapshot's Beijing trading date. This preserves same-day duplicate suppression and stale crossover rejection while ensuring the first valid poll of each new confirmed trading day persists current-day content. A transient unrelated DuckDB path decode failure appeared once in the full suite; its route parameterization then passed `4 passed in 3.03s`, and the fresh full rerun passed completely.
