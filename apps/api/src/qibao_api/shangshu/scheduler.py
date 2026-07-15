@@ -108,14 +108,30 @@ class DailyBriefingScheduler:
             occurred_at=occurred_at, report_id=report.report_id,
         )
         if phase == "premarket" and self.decision_workflow is not None:
+            decision_job_key = f"{job_key}:decision"
+            self.repository.append_attempt(
+                job_key=decision_job_key, phase=phase, trading_date=trading_date,
+                slot=f"{slot}:decision", trigger=trigger, attempt=attempt,
+                status="started", occurred_at=occurred_at,
+            )
             try:
-                self.decision_workflow.run("premarket", trading_date, now=workflow_now)
+                decision = self.decision_workflow.run(
+                    "premarket", trading_date, now=workflow_now
+                )
             except Exception as error:
                 self.repository.append_attempt(
-                    job_key=job_key, phase=phase, trading_date=trading_date,
-                    slot=slot, trigger=trigger, attempt=attempt,
-                    status="decision_failed", occurred_at=occurred_at,
-                    report_id=report.report_id, error_code=_error_code(error),
+                    job_key=decision_job_key, phase=phase, trading_date=trading_date,
+                    slot=f"{slot}:decision", trigger=trigger, attempt=attempt,
+                    status="failed", occurred_at=occurred_at,
+                    error_code=_error_code(error),
+                )
+            else:
+                snapshot = getattr(decision, "snapshot", None)
+                self.repository.append_attempt(
+                    job_key=decision_job_key, phase=phase, trading_date=trading_date,
+                    slot=f"{slot}:decision", trigger=trigger, attempt=attempt,
+                    status="completed", occurred_at=occurred_at,
+                    report_id=getattr(snapshot, "snapshot_id", None),
                 )
         return report
 

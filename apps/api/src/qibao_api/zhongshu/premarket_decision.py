@@ -71,10 +71,17 @@ class PremarketDecisionService:
         candidates = self.candidate_service.candidates(trading_date)
         compliance = self.compliance_checker.check(trading_date, window_end)
         risk = self.market_risk_summary.summarize(trading_date, window_end)
+        candidate_symbols = {
+            item.symbol for item in (*candidates.board.short_term, *candidates.board.swing)
+        }
         events = tuple(
             event for event in self.news_repository.events()
             if event.review_state == "verified"
             and event.occurred_at <= window_end and event.normalized_at <= window_end
+            and any(
+                asset is AssetKind.A_SHARE and symbol in candidate_symbols
+                for asset, symbol in event.affected_instruments
+            )
         )
         interpretations = tuple(
             item for item in self.news_repository.interpretations()
@@ -175,17 +182,17 @@ class PremarketDecisionService:
                     event for event in events
                     if (AssetKind.A_SHARE, item.symbol) in event.affected_instruments
                 )
-                positive = tuple(event for event in related if "利好" in event.headline)
-                action = "observe" if positive else "wait"
-                evidence = [_factor_evidence(candidates, item)]
-                evidence.extend(_news_evidence(event) for event in related)
+                adverse = tuple(event for event in related if _is_risk_event(event))
+                action = "wait" if adverse else "observe"
+                supporting = (_factor_evidence(candidates, item),)
+                contrary = tuple(_news_evidence(event) for event in adverse)
                 results.append(AdviceCard(
                     advice_id=f"advice-{snapshot_id}-{horizon}-{item.symbol}", snapshot_id=snapshot_id,
                     asset=AssetKind.A_SHARE, symbol=item.symbol, horizon=horizon,
                     observation_state="watching" if action == "observe" else "waiting",
                     action=action, conclusion="保留观察" if action == "observe" else "等待核验正向证据",
                     confidence=Decimal("0.6") if action == "observe" else Decimal("0.3"),
-                    supporting_evidence=tuple(evidence), contrary_evidence=(),
+                    supporting_evidence=supporting, contrary_evidence=contrary,
                     risks=tuple(dict.fromkeys((*risk.risks, *compliance.risks))) or ("数据可能变化",),
                     invalidation_conditions=("候选因子或核验新闻发生变化",),
                     quantitative_result={"candidate_score": item.score},
@@ -208,6 +215,10 @@ def _news_evidence(event) -> EvidenceReference:
         evidence_id=f"news-{event.event_id}", source=event.citations[0].publisher,
         snapshot_id=event.event_id, summary=event.headline, observed_at=event.normalized_at,
     )
+
+
+def _is_risk_event(event) -> bool:
+    return "risk" in event.event_type or "风险事件" in event.themes
 
 
 def _unique_evidence(advice):

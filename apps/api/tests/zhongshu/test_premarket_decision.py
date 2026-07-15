@@ -43,16 +43,20 @@ def candidate_input(*, captured_at=NOW, history_available=True, changed=False):
     )
 
 
-def news(*, occurred_at=NOW - timedelta(minutes=20), normalized_at=NOW - timedelta(minutes=10)):
+def news(
+    *, headline="已核验公告", event_id="news-1", symbol="600000",
+    asset=AssetKind.A_SHARE, event_type="announcement", themes=(),
+    occurred_at=NOW - timedelta(minutes=20), normalized_at=NOW - timedelta(minutes=10),
+):
     citation = EvidenceCitation(
         citation_id="citation-1", article_id="article-1", canonical_url="https://example.com/1",
         publisher="交易所", published_at=occurred_at, quoted_text="已核验公告",
         content_hash="a" * 64,
     )
     return NormalizedNewsEvent(
-        event_id="news-1", event_type="announcement", headline="已核验利好公告",
+        event_id=event_id, event_type=event_type, headline=headline,
         occurred_at=occurred_at, normalized_at=normalized_at,
-        affected_instruments=((AssetKind.A_SHARE, "600000"),), citations=(citation,),
+        affected_instruments=((asset, symbol),), themes=themes, citations=(citation,),
         association_confidence="1", review_state="verified",
     )
 
@@ -135,8 +139,53 @@ def test_short_term_and_swing_remain_separate_and_future_news_is_excluded(tmp_pa
     ]
     assert result.snapshot.news_event_ids == ("news-1",)
     assert result.advice[0].action == "observe"
-    assert result.advice[1].action == "wait"
+    assert result.advice[1].action == "observe"
     assert result.plans == ()
+
+
+@pytest.mark.parametrize("headline", ["并非利好", "利好出尽"])
+def test_headline_words_never_upgrade_or_downgrade_ranked_candidate(tmp_path, headline) -> None:
+    subject, _ = service(tmp_path, events=(news(headline=headline),))
+    result = subject.run(TRADE_DATE, NOW)
+    advice = next(item for item in result.advice if item.symbol == "600000")
+    assert advice.action == "observe"
+    assert all(evidence.source == "frozen-history" for evidence in advice.supporting_evidence)
+    assert advice.contrary_evidence == ()
+
+
+def test_adverse_risk_event_is_contrary_and_downgrades_observation(tmp_path) -> None:
+    adverse = news(event_type="company_risk", themes=("风险事件",))
+    subject, _ = service(tmp_path, events=(adverse,))
+    result = subject.run(TRADE_DATE, NOW)
+    advice = next(item for item in result.advice if item.symbol == "600000")
+    assert advice.action == "wait"
+    assert [item.evidence_id for item in advice.contrary_evidence] == ["news-news-1"]
+    assert all(item.evidence_id != "news-news-1" for item in advice.supporting_evidence)
+
+
+def test_mixed_news_never_places_adverse_or_unknown_event_in_supporting_evidence(tmp_path) -> None:
+    unknown = news(event_id="unknown", headline="方向未明")
+    adverse = news(event_id="adverse", event_type="risk_notice")
+    subject, _ = service(tmp_path, events=(unknown, adverse))
+    result = subject.run(TRADE_DATE, NOW)
+    advice = next(item for item in result.advice if item.symbol == "600000")
+    assert [item.evidence_id for item in advice.supporting_evidence] == [
+        "factor-candidates-1-short_term-600000"
+    ]
+    assert [item.evidence_id for item in advice.contrary_evidence] == ["news-adverse"]
+
+
+def test_unrelated_and_bond_news_do_not_change_hash_or_append_cycle(tmp_path) -> None:
+    subject, repository = service(tmp_path)
+    first = subject.run(TRADE_DATE, NOW)
+    subject.news_repository._events = (
+        news(event_id="unrelated", symbol="600519"),
+        news(event_id="bond", symbol="110000", asset=AssetKind.CONVERTIBLE_BOND),
+    )
+    second = subject.run(TRADE_DATE, NOW)
+    assert second == first
+    assert second.snapshot.news_event_ids == ()
+    assert len(repository.cycles()) == 1
 
 
 @pytest.mark.parametrize("port", ["candidate", "compliance", "risk"])

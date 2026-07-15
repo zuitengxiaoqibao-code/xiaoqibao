@@ -68,8 +68,9 @@ class DecisionAIResult(BaseModel):
 
 
 _PLAN_LANGUAGE = re.compile(
-    r"(?:buy|sell|entry|exit|stop[- ]?loss|take[- ]?profit|position|score|"
-    r"买入|卖出|止损|止盈|仓位|评分|目标价|买入价|卖出价)", re.IGNORECASE,
+    r"(?:buy|sell|entry|exit|price|target|weight|allocation|stop[- ]?loss|"
+    r"take[- ]?profit|position|score|买入|卖出|价格|目标|止损|止盈|仓位|"
+    r"权重|分配资金|评分|点位)", re.IGNORECASE,
 )
 _NUMBER = re.compile(r"(?<![\w])[-+]?\d+(?:\.\d+)?%?")
 
@@ -132,13 +133,8 @@ class DecisionAIGateway:
         text = " ".join([payload.summary, *(item.text for item in payload.statements)])
         if _PLAN_LANGUAGE.search(text):
             raise ValueError("provider attempted to create a numeric decision")
-        allowed_numbers = {
-            match.group() for value in (
-                *(item.summary for item in request.evidence), *request.deterministic_conclusions,
-            ) for match in _NUMBER.finditer(value)
-        }
-        if any(match.group() not in allowed_numbers for match in _NUMBER.finditer(text)):
-            raise ValueError("provider introduced an unsupported numeric fact")
+        if _NUMBER.search(text):
+            raise ValueError("provider introduced a numeric fact")
 
     def _unavailable(
         self, request: DecisionAIRequest, *, invalid: int = 0, provider_errors: int = 0,

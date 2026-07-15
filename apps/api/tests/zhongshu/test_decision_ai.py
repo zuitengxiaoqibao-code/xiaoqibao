@@ -32,6 +32,14 @@ def request() -> DecisionAIRequest:
     )
 
 
+def numeric_request() -> DecisionAIRequest:
+    return DecisionAIRequest(
+        generated_at=NOW,
+        evidence=(DecisionAIEvidence(evidence_id="ev-1", summary="已核验数值为 10"),),
+        deterministic_conclusions=("仅观察",),
+    )
+
+
 def gateway(response: str | Exception, *, api_key: str | None = None):
     provider = Provider(response)
     return DecisionAIGateway(
@@ -87,3 +95,20 @@ def test_invalid_json_and_provider_error_have_distinct_counters() -> None:
     result = failed.explain(request())
     assert result.provider_error_count == 1
     assert result.invalid_output_count == 0
+
+
+def test_rejects_number_even_when_same_token_exists_in_evidence() -> None:
+    subject, _ = gateway(json.dumps({
+        "summary": "已核验数值为 10",
+        "statements": [{"kind": "fact", "text": "数值 10", "evidence_ids": ["ev-1"]}],
+    }, ensure_ascii=False))
+    assert subject.explain(numeric_request()).status == "unavailable"
+
+
+@pytest.mark.parametrize("text", [
+    "Set the price", "Define a target", "Increase the weight", "Change the allocation",
+    "给出价格", "设定目标", "调整权重", "分配资金", "市场点位",
+])
+def test_rejects_plan_and_market_semantics_in_both_languages(text: str) -> None:
+    subject, _ = gateway(json.dumps({"summary": text, "statements": []}, ensure_ascii=False))
+    assert subject.explain(request()).status == "unavailable"

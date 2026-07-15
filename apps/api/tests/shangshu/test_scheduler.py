@@ -142,6 +142,12 @@ def test_scheduler_runs_optional_decision_workflow_after_successful_premarket(tm
     now = datetime(2026, 7, 14, 1, 21, tzinfo=UTC)
     scheduler.tick(now)
     assert decisions.calls == [("premarket", TRADE_DATE, datetime(2026, 7, 14, 9, 20, tzinfo=timezone(timedelta(hours=8))))]
+    jobs = {item["job_key"]: item for item in repository.jobs()}
+    assert jobs["2026-07-14:premarket:0920"]["status"] == "completed"
+    assert jobs["2026-07-14:premarket:0920:decision"]["status"] == "completed"
+    assert [item["status"] for item in repository.attempts_for(
+        "2026-07-14:premarket:0920:decision"
+    )] == ["started", "completed"]
     repository.close()
 
 
@@ -151,7 +157,12 @@ def test_decision_failure_does_not_overwrite_briefing_completion(tmp_path) -> No
         Workflow(), Calendar(), repository, decision_workflow=DecisionWorkflow(fail=True),
     )
     scheduler.tick(datetime(2026, 7, 14, 1, 21, tzinfo=UTC))
-    events = repository.attempts_for("2026-07-14:premarket:0920")
-    assert [item["status"] for item in events] == ["started", "completed", "decision_failed"]
-    assert events[-1]["error_code"] == "runtime_error"
+    briefing = repository.attempts_for("2026-07-14:premarket:0920")
+    decision = repository.attempts_for("2026-07-14:premarket:0920:decision")
+    assert [item["status"] for item in briefing] == ["started", "completed"]
+    assert [item["status"] for item in decision] == ["started", "failed"]
+    assert decision[-1]["error_code"] == "runtime_error"
+    jobs = {item["job_key"]: item for item in repository.jobs()}
+    assert jobs["2026-07-14:premarket:0920"]["status"] == "completed"
+    assert jobs["2026-07-14:premarket:0920:decision"]["status"] == "failed"
     repository.close()
