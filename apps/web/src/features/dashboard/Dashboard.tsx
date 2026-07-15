@@ -144,13 +144,16 @@ function CoordinatedStockWorkbench({ loadCockpit, loadCurrent, loadDate }: {
   loadCurrent: () => Promise<DecisionResponse>; loadDate?: (date: string) => Promise<DecisionResponse>;
 }) {
   const { symbol } = useSelectedInstrument();
-  const [asOf, setAsOf] = useState("");
+  const [displayAsOf, setDisplayAsOf] = useState("");
+  const [historicalAsOf, setHistoricalAsOf] = useState<string | undefined>();
   const [refreshToken, setRefreshToken] = useState(0);
-  const changeAsOf = useCallback((date: string) => setAsOf(date), []);
+  const selectHistory = useCallback((date: string) => { setDisplayAsOf(date); setHistoricalAsOf(date); }, []);
+  const resolveDate = useCallback((date: string) => setDisplayAsOf(date), []);
+  const returnLive = useCallback(() => setHistoricalAsOf(undefined), []);
   const refreshBoth = useCallback(() => setRefreshToken((value) => value + 1), []);
   return <div className="stock-workbench-main">
-    {loadCockpit && <StockDecisionCockpit load={loadCockpit} asOf={asOf} refreshToken={refreshToken} onRefreshRequest={refreshBoth} />}
-    <DecisionWorkbench loadCurrent={loadCurrent} loadDate={loadDate} selectedSymbol={symbol} asOf={asOf} onAsOfChange={changeAsOf} refreshToken={refreshToken} onRefresh={refreshBoth} />
+    {loadCockpit && <StockDecisionCockpit load={loadCockpit} asOf={historicalAsOf} refreshToken={refreshToken} onRefreshRequest={refreshBoth} />}
+    <DecisionWorkbench loadCurrent={loadCurrent} loadDate={loadDate} selectedSymbol={symbol} asOf={displayAsOf} onAsOfChange={selectHistory} onResolvedAsOf={resolveDate} onReturnLive={returnLive} refreshToken={refreshToken} onRefresh={refreshBoth} />
   </div>;
 }
 

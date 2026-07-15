@@ -52,6 +52,16 @@ describe("Dashboard", () => {
     expect(loadCockpit).toHaveBeenCalledWith("600000", "2026-07-14", expect.any(AbortSignal));
   });
 
+  it("loads the live cockpit only once while the current trading date initializes", async () => {
+    window.history.replaceState({}, "", "/?symbol=600000");
+    const loadCockpit = vi.fn(() => new Promise<never>(() => undefined));
+    render(<SelectedInstrumentProvider><Dashboard loadSnapshot={() => Promise.resolve(freshCard)} loadDecisionCurrent={() => Promise.resolve(coordinatedDecision)} loadStockCockpit={loadCockpit} /></SelectedInstrumentProvider>);
+    await screen.findByRole("tab", { name: "盘中监测" });
+    await act(async () => { await Promise.resolve(); });
+    expect(loadCockpit).toHaveBeenCalledTimes(1);
+    expect(loadCockpit).toHaveBeenCalledWith("600000", undefined, expect.any(AbortSignal));
+  });
+
   it("uses the workbench polling clock to refresh both views", async () => {
     vi.useFakeTimers();
     try {

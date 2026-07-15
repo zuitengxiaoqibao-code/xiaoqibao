@@ -94,3 +94,14 @@ git diff --check
 ```
 
 Result: 16 files and 94 tests passed; production build passed; encoding and diff checks passed.
+
+## Live And History Mode Fixes
+
+- Replaced the historical-mode ref with render state so entering history immediately tears down the live polling interval, even when a historical response reports an open market session.
+- Added an explicit `返回实时` command. It clears historical mode, requests the current endpoint, and restores polling only after returning live.
+- Split the displayed trading date from the explicit historical API date. The current trading date can populate the date input without being sent back to the cockpit as `as_of`.
+- The live cockpit now performs exactly one initial request with the API's default date behavior; only explicit history selection causes a dated cockpit request.
+
+Added fake-timer coverage for stopped history polling and resumed live polling, plus a request-count assertion for the single live cockpit load.
+
+Final verification after these fixes: 16 files and 96 tests passed; production build passed; encoding scan and `git diff --check` passed.

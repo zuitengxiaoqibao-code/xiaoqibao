@@ -192,4 +192,27 @@ describe("DecisionWorkbench", () => {
     expect(await screen.findByText(/600000 · 等待 · 浦发等待/)).toBeInTheDocument();
     expect(screen.queryByText(/000001|平安建议|转债建议/)).not.toBeInTheDocument();
   });
+
+  it("stops polling in explicit history mode and resumes only after returning live", async () => {
+    vi.useFakeTimers();
+    try {
+      const loadCurrent = vi.fn().mockResolvedValue(response());
+      const loadDate = vi.fn().mockResolvedValue(response());
+      render(<DecisionWorkbench loadCurrent={loadCurrent} loadDate={loadDate} />);
+      await vi.runOnlyPendingTimersAsync();
+      fireEvent.change(screen.getByLabelText("交易日期"), { target: { value: "2026-07-14" } });
+      await vi.runOnlyPendingTimersAsync();
+      const currentBeforeHistoryWait = loadCurrent.mock.calls.length;
+      const historyBeforeWait = loadDate.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(loadCurrent).toHaveBeenCalledTimes(currentBeforeHistoryWait);
+      expect(loadDate).toHaveBeenCalledTimes(historyBeforeWait);
+
+      fireEvent.click(screen.getByRole("button", { name: "返回实时" }));
+      await vi.runOnlyPendingTimersAsync();
+      const currentAfterReturn = loadCurrent.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(loadCurrent.mock.calls.length).toBeGreaterThan(currentAfterReturn);
+    } finally { vi.useRealTimers(); }
+  });
 });
