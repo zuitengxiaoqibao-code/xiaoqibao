@@ -37,6 +37,18 @@ class DecisionWorkflow:
             raise RuntimeError("decision failure")
 
 
+class Monitor:
+    def __init__(self, *, fail=False):
+        self.calls = []
+        self.fail = fail
+
+    def check(self, now):
+        self.calls.append(now)
+        if self.fail:
+            raise RuntimeError("monitor failure")
+        return type("Check", (), {"result_id": f"check-{len(self.calls)}"})()
+
+
 def test_scheduler_runs_due_slots_once_and_survives_restart(tmp_path) -> None:
     repository = OperationsRepository(tmp_path / "operations.sqlite3")
     workflow = Workflow()
@@ -165,4 +177,37 @@ def test_decision_failure_does_not_overwrite_briefing_completion(tmp_path) -> No
     jobs = {item["job_key"]: item for item in repository.jobs()}
     assert jobs["2026-07-14:premarket:0920"]["status"] == "completed"
     assert jobs["2026-07-14:premarket:0920:decision"]["status"] == "failed"
+    repository.close()
+
+
+def test_monitor_tick_has_separate_status_and_does_not_duplicate_briefing(tmp_path) -> None:
+    repository = OperationsRepository(tmp_path / "operations.sqlite3")
+    workflow = Workflow()
+    monitor = Monitor()
+    scheduler = DailyBriefingScheduler(
+        workflow, Calendar(), repository, intraday_monitor=monitor,
+    )
+    now = datetime(2026, 7, 14, 2, 31, tzinfo=UTC)
+    scheduler.tick(now)
+    scheduler.tick_intraday(now)
+    scheduler.tick_intraday(now)
+    assert [call[0] for call in workflow.calls] == ["premarket", "intraday"]
+    jobs = {item["job_key"]: item for item in repository.jobs()}
+    assert jobs["2026-07-14:intraday:1030:monitor"]["status"] == "completed"
+    assert any(key.startswith("2026-07-14:monitor:") for key in jobs)
+    repository.close()
+
+
+def test_monitor_failure_does_not_overwrite_briefing_or_decision(tmp_path) -> None:
+    repository = OperationsRepository(tmp_path / "operations.sqlite3")
+    scheduler = DailyBriefingScheduler(
+        Workflow(), Calendar(), repository,
+        decision_workflow=DecisionWorkflow(), intraday_monitor=Monitor(fail=True),
+    )
+    now = datetime(2026, 7, 14, 2, 31, tzinfo=UTC)
+    scheduler.tick(now)
+    scheduler.tick_intraday(now)
+    jobs = repository.jobs()
+    assert any(item["status"] == "completed" and ":monitor" not in item["job_key"] for item in jobs)
+    assert any(item["status"] == "failed" and ":monitor" in item["job_key"] for item in jobs)
     repository.close()

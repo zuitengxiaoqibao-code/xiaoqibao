@@ -17,6 +17,7 @@ class DailyBriefingScheduler:
     def __init__(
         self, workflow, calendar, repository, *,
         max_attempts: int = 3, catchup_days: int = 7, decision_workflow=None,
+        intraday_monitor=None,
     ) -> None:
         self.workflow = workflow
         self.calendar = calendar
@@ -24,6 +25,7 @@ class DailyBriefingScheduler:
         self.max_attempts = max_attempts
         self.catchup_days = catchup_days
         self.decision_workflow = decision_workflow
+        self.intraday_monitor = intraday_monitor
         self._run_lock = threading.RLock()
 
     def tick(self, now: datetime) -> None:
@@ -44,6 +46,18 @@ class DailyBriefingScheduler:
                             occurred_at=now,
                             trigger="scheduled",
                         )
+                        if phase == "intraday" and self.intraday_monitor is not None:
+                            self._run_monitor(
+                                trading_date, slot, scheduled_at, now, "scheduled"
+                            )
+
+    def tick_intraday(self, now: datetime):
+        if self.intraday_monitor is None or self.repository.paused():
+            return None
+        local_now = now.astimezone(CHINA_TZ)
+        slot = local_now.strftime("%H%M%S")
+        with self._run_lock:
+            return self._run_monitor(local_now.date(), slot, now, now, "background")
 
     def run_manual(
         self, phase: str, trading_date: date, now: datetime
@@ -147,6 +161,32 @@ class DailyBriefingScheduler:
             )
             if report.generated_at == generated_at
         ), None)
+
+    def _run_monitor(self, trading_date, slot, workflow_now, occurred_at, trigger):
+        job_key = f"{trading_date.isoformat()}:monitor:{slot}"
+        if trigger == "scheduled":
+            job_key = f"{trading_date.isoformat()}:intraday:{slot}:monitor"
+        events = self.repository.attempts_for(job_key)
+        if any(item["status"] == "completed" for item in events):
+            return None
+        attempt = max((item["attempt"] for item in events), default=0) + 1
+        values = dict(
+            job_key=job_key, phase="intraday_monitor", trading_date=trading_date,
+            slot=f"{slot}:monitor", trigger=trigger, attempt=attempt,
+            occurred_at=occurred_at,
+        )
+        self.repository.append_attempt(**values, status="started")
+        try:
+            result = self.intraday_monitor.check(workflow_now)
+        except Exception as error:
+            self.repository.append_attempt(
+                **values, status="failed", error_code=_error_code(error)
+            )
+            return None
+        self.repository.append_attempt(
+            **values, status="completed", report_id=getattr(result, "result_id", None)
+        )
+        return result
 
 
 def _error_code(error: Exception) -> str:
