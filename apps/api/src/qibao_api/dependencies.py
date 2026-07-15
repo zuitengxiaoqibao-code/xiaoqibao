@@ -66,6 +66,14 @@ def get_a_share_diagnosis_service(request: Request):
     return request.app.state.a_share_diagnosis_service
 
 
+def get_a_share_instrument_directory(request: Request):
+    return request.app.state.a_share_instrument_directory
+
+
+def get_a_share_quote_source(request: Request):
+    return request.app.state.a_share_quote_source
+
+
 def get_decision_repository(request: Request):
     return request.app.state.decision_repository
 

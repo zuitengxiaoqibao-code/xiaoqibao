@@ -9,12 +9,13 @@ from sqlalchemy import create_engine
 
 from qibao_api.a_shares.diagnosis import AShareDiagnosisService
 from qibao_api.a_shares.fundamentals import TdxFinanceSource
+from qibao_api.a_shares.instrument_directory import AShareInstrument, AShareInstrumentDirectory
 from qibao_api.a_shares.repository import AShareResearchRepository
 from qibao_api.gongbu.baidu_history import BaiduHistorySource
 from qibao_api.gongbu.data_service import FallbackHistorySource, MarketDataService
 from qibao_api.gongbu.tdx_client import create_tdx_client
 from qibao_api.gongbu.tdx_history import TdxHistorySource
-from qibao_api.gongbu.tencent_quotes import TencentQuoteSource
+from qibao_api.gongbu.tencent_quotes import TencentQuoteSource, market_prefix
 from qibao_api.convertible_bonds.adapters import EastmoneyBondValuationSource, EastmoneyClauseSource, TencentBondQuoteSource
 from qibao_api.convertible_bonds.repository import BondClauseRepository
 from qibao_api.convertible_bonds.service import ConvertibleBondService
@@ -133,6 +134,10 @@ async def lifespan(application: FastAPI):
         settings.data_dir / "a-share-research.sqlite3"
     )
     application.state.a_share_research_repository = a_share_research_repository
+    a_share_instrument_directory = AShareInstrumentDirectory(
+        settings.data_dir / "a-share-instruments.sqlite3"
+    )
+    application.state.a_share_instrument_directory = a_share_instrument_directory
     briefing_repository = BriefingRepository(settings.data_dir / "briefings.sqlite3")
     application.state.briefing_repository = briefing_repository
     decision_repository = DecisionRepository(
@@ -140,6 +145,7 @@ async def lifespan(application: FastAPI):
     )
     application.state.decision_repository = decision_repository
     async with httpx.AsyncClient(timeout=10) as client:
+        application.state.a_share_quote_source = TencentQuoteSource(client)
         with httpx.Client(timeout=10) as history_client:
             history_sources = []
             try:
@@ -171,6 +177,18 @@ async def lifespan(application: FastAPI):
                 live_signal=TencentIndexTradingDaySignal(history_client),
             )
             application.state.bar_repository = bar_repository
+            observed_at = datetime.now(timezone.utc)
+            for symbol in bar_repository.symbols_with_history(1, observed_at.date()):
+                if a_share_instrument_directory.resolve(symbol) is None:
+                    a_share_instrument_directory.observe(
+                        AShareInstrument(
+                            symbol=symbol,
+                            name=symbol,
+                            exchange=market_prefix(symbol),
+                            observed_at=observed_at,
+                            quote_quality="unavailable",
+                        )
+                    )
             application.state.market_data_service = MarketDataService(
                 FallbackHistorySource(history_sources),
                 bar_repository,
@@ -354,6 +372,7 @@ async def lifespan(application: FastAPI):
                 audit_repository.close()
                 operations_repository.close()
                 a_share_research_repository.close()
+                a_share_instrument_directory.close()
                 poll_state_repository.close()
                 decision_repository.close()
     engine.dispose()

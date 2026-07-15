@@ -1,7 +1,8 @@
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from qibao_api.contracts.market import AssetKind, DataQuality
@@ -12,9 +13,17 @@ from qibao_api.a_shares.diagnosis import (
     DiagnosisUnavailableError,
 )
 from qibao_api.a_shares.models import CandidateBoard
+from qibao_api.a_shares.instrument_directory import AShareInstrument
 from qibao_api.a_shares.repository import AShareResearchStoreError
-from qibao_api.dependencies import get_a_share_diagnosis_service, get_pipeline
+from qibao_api.dependencies import (
+    get_a_share_diagnosis_service,
+    get_a_share_instrument_directory,
+    get_a_share_quote_source,
+    get_pipeline,
+    get_server_time,
+)
 from qibao_api.main import app
+from qibao_api.routes.research import router as research_router
 from qibao_api.libu_compliance.repository import SourceAuthorizationError
 
 
@@ -205,3 +214,124 @@ def test_future_research_cutoff_is_rejected() -> None:
 
     assert response.status_code == 422
     assert response.json()["detail"]["code"] == "future_as_of_not_allowed"
+
+
+SEARCH_NOW = datetime(2026, 7, 15, 2, 0, tzinfo=timezone.utc)
+
+
+class SearchDirectory:
+    def __init__(self) -> None:
+        self.items = {
+            "000001": AShareInstrument(
+                symbol="000001", name="平安银行", exchange="sz",
+                observed_at=SEARCH_NOW, quote_quality="ready",
+            ),
+            "600000": AShareInstrument(
+                symbol="600000", name="浦发银行", exchange="sh",
+                observed_at=SEARCH_NOW, quote_quality="ready",
+            ),
+        }
+
+    def search(self, query: str, limit: int = 10):
+        normalized = query.strip().casefold()
+        matches = [
+            item for item in self.items.values()
+            if normalized in item.symbol or normalized in item.name.casefold()
+        ]
+        return tuple(sorted(matches, key=lambda item: item.symbol)[:limit])
+
+    def resolve(self, symbol: str):
+        return self.items.get(symbol)
+
+    def observe(self, item: AShareInstrument) -> None:
+        self.items[item.symbol] = item
+
+
+class NeverQuoteSource:
+    async def fetch(self, symbol: str):
+        raise AssertionError(f"name search must not fetch or guess {symbol}")
+
+
+class QuoteSource:
+    async def fetch(self, symbol: str):
+        return type("Quote", (), {
+            "symbol": symbol,
+            "name": "邯郸钢铁",
+            "observed_at": datetime(2026, 7, 15, 10, 1),
+            "quality": DataQuality.FRESH,
+        })()
+
+
+def search_client(directory=None, source=None) -> TestClient:
+    application = FastAPI()
+    application.include_router(research_router)
+    application.dependency_overrides[get_a_share_instrument_directory] = lambda: (
+        directory or SearchDirectory()
+    )
+    application.dependency_overrides[get_a_share_quote_source] = lambda: (
+        source or NeverQuoteSource()
+    )
+    application.dependency_overrides[get_server_time] = lambda: SEARCH_NOW
+    return TestClient(application)
+
+
+def test_search_returns_only_a_shares_in_rank_order() -> None:
+    response = search_client().get("/api/v1/a-shares/search?q=银行&limit=10")
+
+    assert response.status_code == 200
+    assert [item["symbol"] for item in response.json()["items"]] == ["000001", "600000"]
+    assert all(item["asset"] == "a_share" for item in response.json()["items"])
+    assert response.json()["query"] == "银行"
+    assert response.json()["server_time"] == "2026-07-15T02:00:00Z"
+
+
+def test_search_returns_empty_items_without_guessing() -> None:
+    response = search_client().get("/api/v1/a-shares/search?q=不存在名称")
+
+    assert response.status_code == 200
+    assert response.json()["items"] == []
+
+
+@pytest.mark.parametrize("query", ["", "   "])
+def test_search_rejects_empty_query(query: str) -> None:
+    response = search_client().get("/api/v1/a-shares/search", params={"q": query})
+
+    assert response.status_code == 422
+
+
+def test_exact_code_source_failure_returns_unavailable_instead_of_500() -> None:
+    response = search_client(directory=SearchDirectory()).get(
+        "/api/v1/a-shares/search?q=600001"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["items"] == []
+    assert response.json()["source_status"] == "unavailable"
+
+
+def test_code_only_local_observation_still_requires_quote_verification() -> None:
+    directory = SearchDirectory()
+    directory.items["600001"] = AShareInstrument(
+        symbol="600001", name="600001", exchange="sh",
+        observed_at=SEARCH_NOW, quote_quality="unavailable",
+    )
+
+    response = search_client(directory=directory).get(
+        "/api/v1/a-shares/search?q=600001"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["items"] == []
+    assert response.json()["source_status"] == "unavailable"
+
+
+def test_exact_code_is_verified_and_observed() -> None:
+    directory = SearchDirectory()
+    response = search_client(directory=directory, source=QuoteSource()).get(
+        "/api/v1/a-shares/search?q=600001"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["items"][0]["symbol"] == "600001"
+    assert response.json()["items"][0]["name"] == "邯郸钢铁"
+    assert directory.resolve("600001") is not None
