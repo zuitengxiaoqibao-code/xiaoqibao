@@ -18,6 +18,7 @@ from qibao_api.contracts.bars import DailyBar
 from qibao_api.contracts.market import AssetKind
 from qibao_api.contracts.news import NormalizedNewsEvent
 from qibao_api.gongbu.tencent_quotes import TencentMarketSnapshot
+from qibao_api.libu_compliance.repository import SourceAuthorizationError
 
 
 SECTION_NAMES = {
@@ -155,12 +156,16 @@ class AShareDiagnosisService:
         self, symbol: str, as_of: date, *, persist: bool = True
     ) -> AShareDiagnosis:
         bars = self.bar_repository.latest_many([symbol], 120, as_of).get(symbol, [])
-        market, market_error = await self._market(symbol, as_of)
-        if not bars and market is None:
+        market, market_error = await self._market(
+            symbol, as_of, degrade_authorization=not persist
+        )
+        if not bars and market is None and persist:
             raise DiagnosisUnavailableError(
                 f"market and local history are unavailable: {market_error}"
             )
-        finance, finance_error = await self._finance(symbol, as_of)
+        finance, finance_error = await self._finance(
+            symbol, as_of, degrade_authorization=not persist
+        )
         events, news_error = self._events(symbol, as_of)
         sections = self._sections(
             symbol, as_of, bars, market, market_error, finance, finance_error,
@@ -195,7 +200,7 @@ class AShareDiagnosisService:
         return self.research_repository.get_diagnosis(snapshot_id)
 
     async def _market(
-        self, symbol: str, as_of: date
+        self, symbol: str, as_of: date, *, degrade_authorization: bool = False
     ) -> tuple[TencentMarketSnapshot | None, str | None]:
         try:
             snapshot = await self.market_source.fetch_snapshot(symbol)
@@ -204,11 +209,15 @@ class AShareDiagnosisService:
             if snapshot.observed_at.date() > as_of:
                 return None, "market snapshot is later than diagnosis as_of"
             return snapshot, None
+        except SourceAuthorizationError as error:
+            if not degrade_authorization:
+                raise
+            return None, str(error)
         except Exception as error:
             return None, str(error)
 
     async def _finance(
-        self, symbol: str, as_of: date
+        self, symbol: str, as_of: date, *, degrade_authorization: bool = False
     ) -> tuple[FundamentalSnapshot | None, str | None]:
         try:
             snapshot = await asyncio.to_thread(self.finance_source.fetch, symbol)
@@ -219,6 +228,10 @@ class AShareDiagnosisService:
             if snapshot.report_period is not None and snapshot.report_period > as_of:
                 return None, "finance report period is later than diagnosis as_of"
             return snapshot, None
+        except SourceAuthorizationError as error:
+            if not degrade_authorization:
+                raise
+            return None, str(error)
         except Exception as error:
             return None, str(error)
 

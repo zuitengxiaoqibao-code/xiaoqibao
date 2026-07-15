@@ -4,7 +4,12 @@ from decimal import Decimal
 import pytest
 
 from qibao_api.a_shares.cockpit import StockDecisionCockpitService
-from qibao_api.a_shares.diagnosis import AShareDiagnosis, DiagnosisSection
+from qibao_api.a_shares.diagnosis import (
+    AShareDiagnosis,
+    AShareDiagnosisService,
+    DiagnosisSection,
+)
+from qibao_api.a_shares.fundamentals import FundamentalSnapshot
 from qibao_api.a_shares.instrument_directory import AShareInstrument
 from qibao_api.contracts.decision import (
     AdviceCard,
@@ -197,3 +202,43 @@ async def test_latest_invalidation_removes_current_advice_and_membership() -> No
     )
     assert result.current_advice == ()
     assert result.candidate_membership == ()
+
+
+class NoBars:
+    def latest_many(self, symbols, limit, as_of):
+        return {symbol: [] for symbol in symbols}
+
+
+class UnavailableMarket:
+    async def fetch_snapshot(self, symbol):
+        raise RuntimeError("market unavailable")
+
+
+class AvailableFinance:
+    def fetch(self, symbol):
+        return FundamentalSnapshot(
+            symbol=symbol, observed_at=CUTOFF.replace(hour=5),
+            report_period=TRADE_DATE, industry="银行", eps=Decimal("1"),
+            source="fixture-finance",
+        )
+
+
+class EmptyNews:
+    def events(self):
+        return []
+
+
+@pytest.mark.asyncio
+async def test_cockpit_keeps_finance_and_news_when_market_and_bars_are_unavailable() -> None:
+    diagnosis = AShareDiagnosisService(
+        bar_repository=NoBars(), market_source=UnavailableMarket(),
+        finance_source=AvailableFinance(), news_repository=EmptyNews(),
+    )
+
+    result = await service(diagnosis=diagnosis).get("600000", TRADE_DATE, CUTOFF)
+
+    assert result.sections["market"].status == "unavailable"
+    assert result.sections["price_volume"].status == "unavailable"
+    assert result.sections["fundamentals"].status == "ready"
+    assert result.sections["news"].status == "ready"
+    assert result.sections["industry"].status == "ready"

@@ -84,3 +84,15 @@ Follow-up review changes were implemented with regression tests:
   this effective current set, so removed advice cannot keep a stock on the candidate board.
 - Review-focused A-share and route suite: `73 passed`.
 - Final full API suite after review fixes: `529 passed`.
+
+## Second review fixes
+
+- Restored the normal diagnosis authorization contract: default `persist=True` calls rethrow
+  `SourceAuthorizationError`, so `/diagnosis` continues mapping authorization denial to 403.
+  Only the cockpit's explicit `persist=False` path converts market/finance authorization
+  failures into section-local unavailable data.
+- Removed the core-data early exit from read-only diagnosis. When market and local bars are
+  both unavailable, cockpit aggregation still completes finance and news collection, leaving
+  fundamentals, news, and industry independently ready when their sources succeed. The normal
+  persisted diagnosis path retains `DiagnosisUnavailableError` for the same missing core data.
+- Second-review focused suite: `46 passed`; final full API suite: `531 passed`.

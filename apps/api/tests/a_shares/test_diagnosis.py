@@ -133,7 +133,7 @@ async def test_diagnosis_keeps_local_analysis_when_fundamentals_fail() -> None:
         finance_source=FailingFinance(), news_repository=EmptyNews(),
     )
 
-    result = await service.diagnose("600000", AS_OF)
+    result = await service.diagnose("600000", AS_OF, persist=False)
 
     assert result.sections["trend"].status == "ready"
     assert result.sections["fundamentals"].status == "unavailable"
@@ -158,11 +158,23 @@ async def test_source_authorization_degrades_only_affected_sections(
         finance_source=finance, news_repository=EmptyNews(),
     )
 
-    result = await service.diagnose("600000", AS_OF)
+    result = await service.diagnose("600000", AS_OF, persist=False)
 
     assert result.sections[unavailable].status == "unavailable"
     assert result.sections[ready].status == "ready"
     assert result.sections["events"].status == "ready"
+
+
+@pytest.mark.asyncio
+async def test_normal_diagnosis_preserves_source_authorization_error() -> None:
+    service = AShareDiagnosisService(
+        bar_repository=FakeBars({"600000": bars()}),
+        market_source=UnauthorizedMarket(), finance_source=FailingFinance(),
+        news_repository=EmptyNews(),
+    )
+
+    with pytest.raises(SourceAuthorizationError):
+        await service.diagnose("600000", AS_OF)
 
 
 class RecordingResearchRepository:
