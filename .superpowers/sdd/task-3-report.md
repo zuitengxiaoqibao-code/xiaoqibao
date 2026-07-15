@@ -12,6 +12,7 @@
 - Added candidate polling/manual refresh, retryable search errors, independent watchlist identity restoration, search-result watchlist controls, and complete tab ARIA/keyboard behavior.
 - Candidate identity is resolved through the search API. Because neither the candidate nor search contract contains a live price/current change, those fields are explicitly unavailable; the five-day return remains separately and accurately labeled.
 - Second review fixes invalidate search generations at query-change time, guard candidate responses by generation and mount lifetime, retain retryable watchlist identity errors, sanitize persisted watchlists with the shared A-share validator, and restrict tab keys to prevented horizontal arrows.
+- Final review adds per-symbol identity generations so late success or failure from an older restore attempt cannot overwrite the newest identity; successful current requests explicitly clear prior errors.
 
 ## TDD Evidence
 
@@ -19,12 +20,13 @@
 - RED: the first-candidate initialization test then failed with a missing URL symbol before the one-time initialization behavior was added.
 - RED review cycle: URL same-tab navigation, independent watchlist recovery, search retry, search-result watchlist, truthful quote labels, polling stability, and tab keyboard/ARIA tests all failed against the initial implementation before their fixes.
 - RED second review cycle: identity error/retry, polluted localStorage cleanup, stale candidate ordering, and horizontal key default-prevention tests failed before implementation. A deferred search regression fixes the debounce-window generation boundary.
+- RED final review cycle: deferred old-failure/new-success and old-success/new-success tests both reproduced stale identity overwrites before per-symbol generation filtering.
 - GREEN: all focused and full frontend suites pass.
 
 ## Verification
 
-- `pnpm --filter @qibao/web exec vitest run src/features/instrument-selection/SelectedInstrumentProvider.test.tsx src/features/stock-cockpit/StockSelector.test.tsx src/features/dashboard/Dashboard.test.tsx` -> 3 files, 32 tests passed.
-- `pnpm --filter @qibao/web test` -> 14 files, 77 tests passed.
+- `pnpm --filter @qibao/web exec vitest run src/features/instrument-selection/SelectedInstrumentProvider.test.tsx src/features/stock-cockpit/StockSelector.test.tsx src/features/dashboard/Dashboard.test.tsx` -> 3 files, 34 tests passed.
+- `pnpm --filter @qibao/web test` -> 14 files, 79 tests passed.
 - `pnpm --filter @qibao/web build` -> TypeScript and Vite production build passed.
 - `rg -n '�|锟|烫烫|\?\?\?' apps/api/src/qibao_api apps/api/tests apps/web/src README.md` -> no matches.
 - `git diff --check` -> passed; only Git line-ending notices were emitted.
@@ -40,3 +42,4 @@
 - `f77ce34 feat(web): add global A-share selection`
 - `0761802 fix(web): harden global A-share selection`
 - `fix(web): close A-share selector races` (second review-fix commit)
+- `fix(web): isolate stock identity retries` (final review-fix commit)

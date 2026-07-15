@@ -67,6 +67,7 @@ export function StockSelector({ loadCandidates, search, pollIntervalMs = 30_000 
   const mounted = useRef(true);
   const initializedSelection = useRef(false);
   const identityRequests = useRef(new Set<string>());
+  const identityGeneration = useRef<Record<string, number>>({});
   const tabRefs = useRef<Record<CandidateTab, HTMLButtonElement | null>>({ short_term: null, swing: null, watchlist: null });
 
   const refreshCandidates = useCallback(async (initial = false) => {
@@ -88,12 +89,19 @@ export function StockSelector({ loadCandidates, search, pollIntervalMs = 30_000 
     if (!unique.length) return;
     unique.forEach((symbol) => identityRequests.current.add(symbol));
     const settled = await Promise.all(unique.map(async (symbol) => {
-      try { const response = await search(symbol); const item = response.items.find((candidate) => candidate.symbol === symbol); if (!item) throw new Error("身份目录未返回该 A 股"); return { symbol, item }; }
-      catch (reason) { return { symbol, error: reason instanceof Error ? reason.message : "身份查询失败" }; }
+      const generation = (identityGeneration.current[symbol] ?? 0) + 1;
+      identityGeneration.current[symbol] = generation;
+      try { const response = await search(symbol); const item = response.items.find((candidate) => candidate.symbol === symbol); if (!item) throw new Error("身份目录未返回该 A 股"); return { symbol, generation, item }; }
+      catch (reason) { return { symbol, generation, error: reason instanceof Error ? reason.message : "身份查询失败" }; }
     }));
     if (!mounted.current) return;
-    setIdentities((current) => Object.fromEntries([...Object.entries(current), ...settled.flatMap((result) => result.item ? [[result.symbol, result.item] as const] : [])]));
-    setIdentityErrors((current) => ({ ...current, ...Object.fromEntries(settled.flatMap((result) => result.error ? [[result.symbol, result.error]] : [])) }));
+    const currentResults = settled.filter((result) => identityGeneration.current[result.symbol] === result.generation);
+    setIdentities((current) => Object.fromEntries([...Object.entries(current), ...currentResults.flatMap((result) => result.item ? [[result.symbol, result.item] as const] : [])]));
+    setIdentityErrors((current) => {
+      const next = { ...current };
+      currentResults.forEach((result) => { if (result.error) next[result.symbol] = result.error; else delete next[result.symbol]; });
+      return next;
+    });
   }, [search]);
 
   useEffect(() => { if (board) void resolveSymbols([...board.short_term, ...board.swing].map((item) => item.symbol)); }, [board, resolveSymbols]);

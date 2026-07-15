@@ -200,4 +200,35 @@ describe("StockSelector", () => {
     expect(horizontal.defaultPrevented).toBe(true);
     expect(screen.getByRole("tab", { name: "波段候选" })).toHaveAttribute("aria-selected", "true");
   });
+
+  it("does not let an old identity failure overwrite a newer successful retry", async () => {
+    localStorage.setItem("qibao.a_share.watchlist.v1", '["000001"]');
+    let rejectOld!: (reason: Error) => void;
+    const old = new Promise<InstrumentSearchResponse>((_, reject) => { rejectOld = reject; });
+    const search = vi.fn().mockReturnValueOnce(old).mockResolvedValue(searchResult);
+    renderSelector({ loadCandidates: () => Promise.resolve(empty), search });
+    fireEvent.click(screen.getByRole("tab", { name: "自选股" }));
+    await waitFor(() => expect(search).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: "刷新候选" }));
+    expect(await screen.findByText("平安银行")).toBeInTheDocument();
+    await act(async () => { rejectOld(new Error("迟到的旧错误")); await old.catch(() => undefined); });
+    await waitFor(() => expect(screen.queryByText("迟到的旧错误")).not.toBeInTheDocument());
+    expect(screen.getByText("平安银行")).toBeInTheDocument();
+  });
+
+  it("does not let an old identity success replace a newer successful retry", async () => {
+    localStorage.setItem("qibao.a_share.watchlist.v1", '["000001"]');
+    let resolveOld!: (value: InstrumentSearchResponse) => void;
+    const old = new Promise<InstrumentSearchResponse>((resolve) => { resolveOld = resolve; });
+    const newer = { ...searchResult, items: [{ ...searchResult.items[0], name: "新名称" }] };
+    const search = vi.fn().mockReturnValueOnce(old).mockResolvedValue(newer);
+    renderSelector({ loadCandidates: () => Promise.resolve(empty), search });
+    fireEvent.click(screen.getByRole("tab", { name: "自选股" }));
+    await waitFor(() => expect(search).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: "刷新候选" }));
+    expect(await screen.findByText("新名称")).toBeInTheDocument();
+    await act(async () => { resolveOld(searchResult); await old; });
+    await waitFor(() => expect(screen.queryByText("平安银行")).not.toBeInTheDocument());
+    expect(screen.getByText("新名称")).toBeInTheDocument();
+  });
 });
