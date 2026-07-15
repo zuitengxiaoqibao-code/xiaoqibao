@@ -8,6 +8,7 @@ from qibao_api.contracts.bars import DailyBar
 from qibao_api.contracts.market import AssetKind
 from qibao_api.contracts.news import EvidenceCitation, NormalizedNewsEvent
 from qibao_api.gongbu.tencent_quotes import TencentMarketSnapshot
+from qibao_api.libu_compliance.repository import SourceAuthorizationError
 
 
 AS_OF = date(2026, 7, 14)
@@ -51,6 +52,16 @@ class FakeMarket:
 class FailingFinance:
     def fetch(self, symbol: str):
         raise RuntimeError("finance unavailable")
+
+
+class UnauthorizedFinance:
+    def fetch(self, symbol: str):
+        raise SourceAuthorizationError("mootdx:missing")
+
+
+class UnauthorizedMarket:
+    async def fetch_snapshot(self, symbol: str):
+        raise SourceAuthorizationError("tencent:missing")
 
 
 class EmptyNews:
@@ -129,6 +140,61 @@ async def test_diagnosis_keeps_local_analysis_when_fundamentals_fail() -> None:
     assert result.overall_status == "partial"
     assert "fundamentals" in result.missing_data
     assert result.action == "observe"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("market", "finance", "unavailable", "ready"),
+    [
+        (UnauthorizedMarket(), FailingFinance(), "market", "trend"),
+        (FakeMarket(), UnauthorizedFinance(), "fundamentals", "market"),
+    ],
+)
+async def test_source_authorization_degrades_only_affected_sections(
+    market, finance, unavailable, ready
+) -> None:
+    service = AShareDiagnosisService(
+        bar_repository=FakeBars({"600000": bars()}), market_source=market,
+        finance_source=finance, news_repository=EmptyNews(),
+    )
+
+    result = await service.diagnose("600000", AS_OF)
+
+    assert result.sections[unavailable].status == "unavailable"
+    assert result.sections[ready].status == "ready"
+    assert result.sections["events"].status == "ready"
+
+
+class RecordingResearchRepository:
+    def __init__(self) -> None:
+        self.appended = []
+
+    def append_diagnosis(self, diagnosis, input_payload=None):
+        self.appended.append(diagnosis)
+        return "diagnosis-1"
+
+    def get_diagnosis(self, snapshot_id):
+        return self.appended[-1].model_copy(update={"snapshot_id": snapshot_id})
+
+
+@pytest.mark.asyncio
+async def test_read_only_diagnosis_does_not_persist_snapshot() -> None:
+    repository = RecordingResearchRepository()
+    service = AShareDiagnosisService(
+        bar_repository=FakeBars({"600000": bars()}), market_source=FakeMarket(),
+        finance_source=FailingFinance(), news_repository=EmptyNews(),
+        research_repository=repository,
+    )
+
+    result = await service.diagnose("600000", AS_OF, persist=False)
+
+    assert result.snapshot_id is None
+    assert repository.appended == []
+
+    persisted = await service.diagnose("600000", AS_OF)
+
+    assert persisted.snapshot_id == "diagnosis-1"
+    assert len(repository.appended) == 1
 
 
 @pytest.mark.asyncio

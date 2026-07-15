@@ -7,6 +7,7 @@ from qibao_api.a_shares.diagnosis import DiagnosisUnavailableError
 from qibao_api.a_shares.instrument_directory import AShareInstrument
 from qibao_api.contracts.decision import AdviceCard, DecisionPhase, EvidenceReference
 from qibao_api.contracts.instruments import AShareCode
+from qibao_api.contracts.market import AssetKind
 from qibao_api.libu_compliance.repository import SourceAuthorizationError
 
 
@@ -102,8 +103,8 @@ class StockDecisionCockpitService:
         sections["funds"] = _unavailable("not-connected", "fund_data_not_connected")
         sections["backtest"] = _unavailable("not-run", "backtest_not_run")
         phases = self._phases(symbol, as_of, cutoff)
-        membership = self._candidate_membership(phases)
         current = self._current_advice(phases)
+        membership = self._candidate_membership(current)
         qualities = {section.status for section in sections.values()}
         overall: Literal["ready", "partial", "blocked"] = (
             "blocked" if "blocked" in qualities else
@@ -117,7 +118,9 @@ class StockDecisionCockpitService:
 
     async def _diagnosis_sections(self, symbol, as_of, cutoff):
         try:
-            diagnosis = await self.diagnosis_service.diagnose(symbol, as_of)
+            diagnosis = await self.diagnosis_service.diagnose(
+                symbol, as_of, persist=False
+            )
         except SourceAuthorizationError:
             return {
                 name: _unavailable("diagnosis", "source_authorization_required")
@@ -152,10 +155,8 @@ class StockDecisionCockpitService:
         return mapped
 
     @staticmethod
-    def _candidate_membership(phases):
-        horizons = {
-            item.horizon for history in phases.values() for item in history.advice
-        }
+    def _candidate_membership(current_advice):
+        horizons = {item.horizon for item in current_advice}
         return tuple(
             candidate for candidate, advice_horizon in (
                 ("short_term", "intraday"), ("swing", "swing")
@@ -170,11 +171,14 @@ class StockDecisionCockpitService:
             versions = []
             for aggregate in self.decision_repository.cycles(as_of, phase):
                 snapshot = aggregate.snapshot
-                if snapshot.generated_at > cutoff:
+                if snapshot.generated_at > cutoff or any(
+                    observed_at > cutoff for observed_at in snapshot.source_observed_at
+                ):
                     continue
                 selected = tuple(
                     item for item in aggregate.advice
-                    if item.symbol == symbol and item.created_at <= cutoff
+                    if item.asset == AssetKind.A_SHARE and item.symbol == symbol
+                    and item.created_at <= cutoff
                     and all(
                         evidence.observed_at <= cutoff
                         for evidence in (*item.supporting_evidence, *item.contrary_evidence)
@@ -200,4 +204,7 @@ class StockDecisionCockpitService:
                 key = item.horizon
                 if key not in latest or item.created_at > latest[key].created_at:
                     latest[key] = item
-        return tuple(latest[key] for key in sorted(latest))
+        return tuple(
+            latest[key] for key in sorted(latest)
+            if latest[key].action != "invalidated"
+        )

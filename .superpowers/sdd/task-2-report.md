@@ -64,3 +64,23 @@ Implemented the read-only single-stock cockpit aggregate and API. Task 3 was not
 - There is no persisted fund or backtest result repository in the current application. The
   response therefore reports the two binding explicit unavailable reasons and performs no
   speculative computation.
+
+## Review fixes
+
+Follow-up review changes were implemented with regression tests:
+
+- Added `persist: bool = True` to `AShareDiagnosisService.diagnose()`. The cockpit passes
+  `persist=False`, while the normal diagnosis endpoint retains its existing persisted
+  snapshot behavior. A recording-repository test proves both sides of this boundary.
+- Market and finance authorization failures now become data-unavailable results at their
+  individual source boundary. Market failure affects market/valuation while local bars,
+  trend, news, and industry remain available; finance failure affects fundamentals only.
+- Decision filtering now requires both the selected symbol and `AssetKind.A_SHARE`, including
+  a defensive regression for heterogeneous repository data sharing the same symbol string.
+- A cycle is excluded when any `source_observed_at` is after the server cutoff, in addition
+  to the existing generated/advice/evidence cutoff checks.
+- Current advice is resolved first by latest creation time. A latest `invalidated` record
+  removes that horizon from current advice; candidate membership is then derived only from
+  this effective current set, so removed advice cannot keep a stock on the candidate board.
+- Review-focused A-share and route suite: `73 passed`.
+- Final full API suite after review fixes: `529 passed`.

@@ -18,7 +18,6 @@ from qibao_api.contracts.bars import DailyBar
 from qibao_api.contracts.market import AssetKind
 from qibao_api.contracts.news import NormalizedNewsEvent
 from qibao_api.gongbu.tencent_quotes import TencentMarketSnapshot
-from qibao_api.libu_compliance.repository import SourceAuthorizationError
 
 
 SECTION_NAMES = {
@@ -152,7 +151,9 @@ class AShareDiagnosisService:
         )
         return self.research_repository.get_candidate_board(snapshot_id)
 
-    async def diagnose(self, symbol: str, as_of: date) -> AShareDiagnosis:
+    async def diagnose(
+        self, symbol: str, as_of: date, *, persist: bool = True
+    ) -> AShareDiagnosis:
         bars = self.bar_repository.latest_many([symbol], 120, as_of).get(symbol, [])
         market, market_error = await self._market(symbol, as_of)
         if not bars and market is None:
@@ -174,7 +175,7 @@ class AShareDiagnosisService:
             sections=sections,
             missing_data=missing,
         )
-        if self.research_repository is None:
+        if self.research_repository is None or not persist:
             return diagnosis
         input_payload = {
             "symbol": symbol,
@@ -203,8 +204,6 @@ class AShareDiagnosisService:
             if snapshot.observed_at.date() > as_of:
                 return None, "market snapshot is later than diagnosis as_of"
             return snapshot, None
-        except SourceAuthorizationError:
-            raise
         except Exception as error:
             return None, str(error)
 
@@ -220,8 +219,6 @@ class AShareDiagnosisService:
             if snapshot.report_period is not None and snapshot.report_period > as_of:
                 return None, "finance report period is later than diagnosis as_of"
             return snapshot, None
-        except SourceAuthorizationError:
-            raise
         except Exception as error:
             return None, str(error)
 
