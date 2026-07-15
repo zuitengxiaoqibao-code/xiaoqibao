@@ -1,6 +1,8 @@
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
+import pytest
+
 from qibao_api.contracts.decision import (
     AdviceCard,
     DecisionCycleAggregate,
@@ -183,6 +185,95 @@ def test_same_frozen_inputs_do_not_append_a_new_cycle_on_later_rerun() -> None:
 
     assert second.aggregate.snapshot.snapshot_id == first.aggregate.snapshot.snapshot_id
     assert len(repository.appended) == 1
+
+
+def test_provider_order_does_not_change_latest_outcome_or_hash() -> None:
+    advice = _advice("ordered", datetime(2026, 7, 14, 2, 0, tzinfo=UTC))
+    earlier = {"advice_id": "ordered", "outcome_id": "outcome-a",
+               "observed_at": datetime(2026, 7, 14, 6, 0, tzinfo=UTC),
+               "available": True, "direction": "adverse", "invalidation_triggered": False}
+    later_a = {"advice_id": "ordered", "outcome_id": "outcome-a",
+               "observed_at": CLOSE, "available": True, "direction": "adverse",
+               "invalidation_triggered": False}
+    later_b = {"advice_id": "ordered", "outcome_id": "outcome-b",
+               "observed_at": CLOSE, "available": True, "direction": "favorable",
+               "invalidation_triggered": False}
+    first, _ = _service((advice,), (later_b, earlier, later_a))
+    second, _ = _service((advice,), (later_a, later_b, earlier))
+
+    first_outcome = first.run(TRADING_DATE, NOW).outcomes[0]
+    second_outcome = second.run(TRADING_DATE, NOW).outcomes[0]
+
+    assert first_outcome.status == second_outcome.status == "correct"
+    assert first_outcome.outcome_input_hash == second_outcome.outcome_input_hash
+
+
+def test_excludes_backdated_advice_from_snapshot_frozen_after_close() -> None:
+    advice = _advice("backdated", datetime(2026, 7, 14, 2, 0, tzinfo=UTC))
+    cycle = _cycle(advice).model_copy(update={
+        "snapshot": _cycle(advice).snapshot.model_copy(update={
+            "generated_at": datetime(2026, 7, 14, 7, 1, tzinfo=UTC),
+        }),
+    })
+    repository = Decisions([cycle])
+    service = PostcloseReviewService(
+        decision_repository=repository, market_outcome_source=Outcomes(()),
+        paper_repository=Paper(), audit_repository=Audit(),
+    )
+
+    result = service.run(TRADING_DATE, NOW)
+
+    assert result.outcomes == ()
+    assert result.aggregate.advice == ()
+
+
+def test_rejects_conflicting_duplicate_frozen_advice_ids() -> None:
+    first = _advice("duplicate", datetime(2026, 7, 14, 2, 0, tzinfo=UTC))
+    second = first.model_copy(update={"conclusion": "changed conclusion"})
+    repository = Decisions([_cycle(first), _cycle(second, "intraday")])
+    service = PostcloseReviewService(
+        decision_repository=repository, market_outcome_source=Outcomes(()),
+        paper_repository=Paper(), audit_repository=Audit(),
+    )
+
+    with pytest.raises(ValueError, match="conflicting duplicate advice_id"):
+        service.run(TRADING_DATE, NOW)
+
+
+def test_input_reversion_creates_a_new_append_only_snapshot_identity() -> None:
+    advice = _advice("reversion", datetime(2026, 7, 14, 2, 0, tzinfo=UTC))
+    market = [{"advice_id": "reversion", "outcome_id": "state-a", "observed_at": CLOSE,
+               "available": True, "direction": "favorable", "invalidation_triggered": False}]
+    service, repository = _service((advice,), market)
+    first = service.run(TRADING_DATE, NOW)
+    market[0] = {**market[0], "outcome_id": "state-b", "direction": "adverse"}
+    second = service.run(TRADING_DATE, NOW)
+    market[0] = {**market[0], "outcome_id": "state-a", "direction": "favorable"}
+
+    third = service.run(TRADING_DATE, NOW)
+
+    assert len({first.aggregate.snapshot.snapshot_id,
+                second.aggregate.snapshot.snapshot_id,
+                third.aggregate.snapshot.snapshot_id}) == 3
+    assert third.aggregate.snapshot.previous_snapshot_id == second.aggregate.snapshot.snapshot_id
+
+
+def test_snapshot_metadata_uses_only_attributed_inputs_inside_advice_window() -> None:
+    advice = _advice("bounded", datetime(2026, 7, 14, 1, 0, tzinfo=UTC))
+    before = datetime(2026, 7, 14, 1, 20, tzinfo=UTC)
+    inside = datetime(2026, 7, 14, 4, 0, tzinfo=UTC)
+    service, _ = _service((advice,), (
+        {"advice_id": "bounded", "outcome_id": "too-early", "observed_at": before,
+         "available": True, "direction": "adverse", "invalidation_triggered": False},
+        {"advice_id": "other", "outcome_id": "unattributed", "observed_at": CLOSE,
+         "available": True, "direction": "adverse", "invalidation_triggered": False},
+        {"advice_id": "bounded", "outcome_id": "inside", "observed_at": inside,
+         "available": True, "direction": "favorable", "invalidation_triggered": False},
+    ))
+
+    result = service.run(TRADING_DATE, NOW)
+
+    assert result.aggregate.snapshot.source_observed_at == (inside,)
 
 
 def test_wrong_invalidated_and_risk_blocked_advice_are_withdrawn() -> None:

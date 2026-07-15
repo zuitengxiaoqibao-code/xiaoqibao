@@ -46,3 +46,29 @@
 
 - Production market outcome adapters must supply records with `advice_id`, observation time, availability, direction, and invalidation state. Task 4 defines and consumes that boundary but does not add a provider adapter.
 - Existing paper repository records are only attributable to advice when the calling workflow includes an `advice_id`; unattributed records are safely ignored rather than guessed.
+
+## Fix Review
+
+Review findings were addressed in a second strict TDD cycle:
+
+- Added provider-order-invariance coverage. Every advice-attributed evidence collection is sorted by observed timestamp, then stable provider identity, then canonical content hash. This defines deterministic ties and makes both latest-value selection and outcome hashing independent of provider return order.
+- Frozen advice discovery now rejects decision cycles generated after close or whose snapshot window ends after close. Conflicting duplicate `advice_id` records are rejected before outcome calculation; the selected advice retains its original snapshot id.
+- Post-close snapshot ids now include the append-only phase sequence as well as the input hash. An A-to-B-to-A input reversion creates three distinct snapshot identities with a valid previous-snapshot chain.
+- Status calculation, outcome hashing, `source_observed_at`, and risk-event metadata now share one canonical per-advice input map. Inputs must be attributed to that advice and fall within `max(advice.created_at, snapshot.window_start)` through market close.
+
+Red-phase results:
+
+- `.venv\Scripts\python.exe -m pytest apps/api/tests/zhongshu/test_postclose_review.py -q` produced 5 failures covering provider ordering, late snapshot admission, duplicate advice ids, A-to-B-to-A identity reuse, and metadata leakage.
+- After the first implementation pass, the strengthened declared-window lower-bound test failed because a pre-09:25 input was still retained.
+
+Final commands and results:
+
+```text
+.venv\Scripts\python.exe -m pytest apps/api/tests/zhongshu/test_postclose_review.py apps/api/tests/shangshu/test_postclose_context.py -q
+10 passed in 0.60s
+
+.venv\Scripts\ruff.exe check apps/api/src/qibao_api/zhongshu/postclose_review.py apps/api/src/qibao_api/shangshu/postclose_context.py apps/api/tests/zhongshu/test_postclose_review.py apps/api/tests/shangshu/test_postclose_context.py
+All checks passed!
+```
+
+The final combined pre-commit run completed with `10 passed in 0.59s`, `All checks passed!`, `mojibake scan: no matches`, and a zero exit status from `git diff --check`.

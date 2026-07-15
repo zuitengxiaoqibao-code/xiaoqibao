@@ -74,8 +74,14 @@ class PostcloseReviewService:
         executions = self.paper_repository.list_order_outcomes_between(open_at, close)
         risk_decisions = self.paper_repository.list_risk_decisions(limit=1000)
         findings = self.audit_repository.list_findings(asset=AssetKind.A_SHARE)
+        inputs_by_id = {
+            item.advice_id: self._canonical_inputs(
+                item, market, executions, risk_decisions, findings, open_at, close,
+            )
+            for item in advice
+        }
         outcomes = tuple(
-            self._outcome(item, market, executions, risk_decisions, findings, close, now)
+            self._outcome(item, inputs_by_id[item.advice_id], now)
             for item in advice
         )
         outcomes = tuple(sorted(outcomes, key=lambda item: item.advice_id))
@@ -98,19 +104,21 @@ class PostcloseReviewService:
                 aggregate=latest, outcomes=outcomes, next_day_observations=next_day,
             )
         sequence = 1 if latest is None else latest.snapshot.sequence + 1
-        snapshot_id = f"postclose-{trading_date.isoformat()}-{input_hash[:20]}"
+        snapshot_id = f"postclose-{trading_date.isoformat()}-{sequence}-{input_hash[:16]}"
         outcomes_by_id = {item.advice_id: item for item in outcomes}
         derived = tuple(
             self._postclose_advice(item, outcomes_by_id[item.advice_id], snapshot_id)
             for item in advice
         )
+        canonical_inputs = tuple(
+            item
+            for advice_id in sorted(inputs_by_id)
+            for collection in inputs_by_id[advice_id].values()
+            for item in collection
+        )
         observed_at = tuple(sorted({
-            value for value in (
-                *(_observed_at(item) for item in market),
-                *(_observed_at(item) for item in executions),
-                *(_observed_at(item) for item in risk_decisions),
-                *(_observed_at(item) for item in findings),
-            ) if value is not None and value <= close
+            value for value in (_observed_at(item) for item in canonical_inputs)
+            if value is not None
         }))
         aggregate = DecisionCycleAggregate(
             snapshot=DecisionCycleSnapshot(
@@ -132,8 +140,8 @@ class PostcloseReviewService:
                 candidate_snapshot_id=None,
                 news_event_ids=(),
                 risk_event_ids=tuple(sorted(
-                    str(_value(item, "finding_id")) for item in findings
-                    if _within(item, open_at, close) and _value(item, "finding_id")
+                    str(_value(item, "finding_id")) for item in canonical_inputs
+                    if _value(item, "finding_id")
                 )),
                 input_snapshot_hash=input_hash,
                 previous_snapshot_id=None if latest is None else latest.snapshot.snapshot_id,
@@ -153,34 +161,52 @@ class PostcloseReviewService:
         )
 
     def _frozen_advice(self, trading_date: date, close: datetime) -> tuple[AdviceCard, ...]:
-        values = []
+        values: dict[str, AdviceCard] = {}
         for phase in ("premarket", "intraday"):
             for cycle in self.decision_repository.cycles(trading_date, phase):
-                values.extend(item for item in cycle.advice if item.created_at <= close)
-        return tuple(values)
+                if cycle.snapshot.generated_at > close or cycle.snapshot.window_end > close:
+                    continue
+                for item in cycle.advice:
+                    if item.created_at > close:
+                        continue
+                    previous = values.get(item.advice_id)
+                    if previous is not None and previous != item:
+                        raise ValueError(f"conflicting duplicate advice_id: {item.advice_id}")
+                    values[item.advice_id] = item
+        return tuple(values[key] for key in sorted(values))
 
     @staticmethod
-    def _outcome(advice, market, executions, risk_decisions, findings, close, now):
-        market_values = [
-            item for item in market
-            if _value(item, "advice_id") == advice.advice_id
-            and _within(item, advice.created_at, close)
-        ]
-        execution_values = [
-            item for item in executions
-            if _value(item, "advice_id") == advice.advice_id
-            and _within(item, advice.created_at, close)
-        ]
-        risk_values = [
-            item for item in risk_decisions
-            if _value(item, "advice_id") == advice.advice_id
-            and _within(item, advice.created_at, close)
-        ]
-        finding_values = [
-            item for item in findings
-            if advice.advice_id in tuple(_value(item, "input_snapshot_ids", ()))
-            and _within(item, advice.created_at, close)
-        ]
+    def _canonical_inputs(
+        advice, market, executions, risk_decisions, findings, window_start, close,
+    ):
+        def attributed(item, *, finding=False):
+            linked = advice.advice_id in tuple(_value(item, "input_snapshot_ids", ())) if finding else (
+                _value(item, "advice_id") == advice.advice_id
+            )
+            return linked and _within(item, max(advice.created_at, window_start), close)
+
+        return {
+            "market": tuple(sorted(
+                (item for item in market if attributed(item)), key=_evidence_sort_key,
+            )),
+            "executions": tuple(sorted(
+                (item for item in executions if attributed(item)), key=_evidence_sort_key,
+            )),
+            "risk_decisions": tuple(sorted(
+                (item for item in risk_decisions if attributed(item)), key=_evidence_sort_key,
+            )),
+            "findings": tuple(sorted(
+                (item for item in findings if attributed(item, finding=True)),
+                key=_evidence_sort_key,
+            )),
+        }
+
+    @staticmethod
+    def _outcome(advice, inputs, now):
+        market_values = inputs["market"]
+        execution_values = inputs["executions"]
+        risk_values = inputs["risk_decisions"]
+        finding_values = inputs["findings"]
         canonical = {
             "advice_id": advice.advice_id,
             "original_snapshot_id": advice.snapshot_id,
@@ -272,6 +298,21 @@ def _observed_at(value: Any):
 def _within(value: Any, start: datetime, end: datetime) -> bool:
     observed = _observed_at(value)
     return observed is not None and start <= observed <= end
+
+
+def _evidence_sort_key(value: Any) -> tuple[datetime, str, str]:
+    observed = _observed_at(value)
+    if observed is None:
+        raise ValueError("canonical evidence requires an observed timestamp")
+    identity = next((
+        str(_value(value, field))
+        for field in (
+            "outcome_id", "execution_id", "order_id", "decision_id", "finding_id",
+            "snapshot_id", "source_snapshot_id",
+        )
+        if _value(value, field)
+    ), "")
+    return observed, identity, _canonical_hash(value)
 
 
 def _canonical_hash(value: Any) -> str:
