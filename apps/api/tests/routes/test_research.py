@@ -1,7 +1,9 @@
 from datetime import date, datetime, timezone
 from decimal import Decimal
+import sqlite3
 
 import pytest
+import httpx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -249,7 +251,8 @@ class SearchDirectory:
 
 class NeverQuoteSource:
     async def fetch(self, symbol: str):
-        raise AssertionError(f"name search must not fetch or guess {symbol}")
+        request = httpx.Request("GET", "https://qt.gtimg.cn")
+        raise httpx.ConnectError(f"unavailable {symbol}", request=request)
 
 
 class QuoteSource:
@@ -260,6 +263,21 @@ class QuoteSource:
             "observed_at": datetime(2026, 7, 15, 10, 1),
             "quality": DataQuality.FRESH,
         })()
+
+
+class MismatchedQuoteSource:
+    async def fetch(self, symbol: str):
+        return type("Quote", (), {
+            "symbol": "600002",
+            "name": "错误标的",
+            "observed_at": SEARCH_NOW,
+            "quality": DataQuality.FRESH,
+        })()
+
+
+class ProgrammingErrorQuoteSource:
+    async def fetch(self, symbol: str):
+        raise sqlite3.ProgrammingError("closed database")
 
 
 def search_client(directory=None, source=None) -> TestClient:
@@ -335,3 +353,22 @@ def test_exact_code_is_verified_and_observed() -> None:
     assert response.json()["items"][0]["symbol"] == "600001"
     assert response.json()["items"][0]["name"] == "邯郸钢铁"
     assert directory.resolve("600001") is not None
+
+
+def test_exact_code_rejects_mismatched_upstream_symbol() -> None:
+    directory = SearchDirectory()
+    response = search_client(directory=directory, source=MismatchedQuoteSource()).get(
+        "/api/v1/a-shares/search?q=600001"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["items"] == []
+    assert response.json()["source_status"] == "unavailable"
+    assert directory.resolve("600002") is None
+
+
+def test_exact_code_does_not_hide_programming_or_storage_errors() -> None:
+    with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+        search_client(source=ProgrammingErrorQuoteSource()).get(
+            "/api/v1/a-shares/search?q=600001"
+        )

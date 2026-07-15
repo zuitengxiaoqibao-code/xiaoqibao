@@ -134,10 +134,6 @@ async def lifespan(application: FastAPI):
         settings.data_dir / "a-share-research.sqlite3"
     )
     application.state.a_share_research_repository = a_share_research_repository
-    a_share_instrument_directory = AShareInstrumentDirectory(
-        settings.data_dir / "a-share-instruments.sqlite3"
-    )
-    application.state.a_share_instrument_directory = a_share_instrument_directory
     briefing_repository = BriefingRepository(settings.data_dir / "briefings.sqlite3")
     application.state.briefing_repository = briefing_repository
     decision_repository = DecisionRepository(
@@ -177,18 +173,6 @@ async def lifespan(application: FastAPI):
                 live_signal=TencentIndexTradingDaySignal(history_client),
             )
             application.state.bar_repository = bar_repository
-            observed_at = datetime.now(timezone.utc)
-            for symbol in bar_repository.symbols_with_history(1, observed_at.date()):
-                if a_share_instrument_directory.resolve(symbol) is None:
-                    a_share_instrument_directory.observe(
-                        AShareInstrument(
-                            symbol=symbol,
-                            name=symbol,
-                            exchange=market_prefix(symbol),
-                            observed_at=observed_at,
-                            quote_quality="unavailable",
-                        )
-                    )
             application.state.market_data_service = MarketDataService(
                 FallbackHistorySource(history_sources),
                 bar_repository,
@@ -348,15 +332,32 @@ async def lifespan(application: FastAPI):
             application.state.backup_service = BackupService(
                 settings.data_dir, bar_repository
             )
-            scheduler_task = (
-                asyncio.create_task(_scheduler_loop(
-                    application.state.scheduler,
-                    write_gate,
-                    settings.scheduler_interval_seconds,
-                ))
-                if getattr(settings, "scheduler_enabled", False) else None
+            scheduler_task = None
+            a_share_instrument_directory = AShareInstrumentDirectory(
+                settings.data_dir / "a-share-instruments.sqlite3"
             )
             try:
+                application.state.a_share_instrument_directory = a_share_instrument_directory
+                observed_at = datetime.now(timezone.utc)
+                for symbol in bar_repository.symbols_with_history(1, observed_at.date()):
+                    if a_share_instrument_directory.resolve(symbol) is None:
+                        a_share_instrument_directory.observe(
+                            AShareInstrument(
+                                symbol=symbol,
+                                name=symbol,
+                                exchange=market_prefix(symbol),
+                                observed_at=observed_at,
+                                quote_quality="unavailable",
+                            )
+                        )
+                scheduler_task = (
+                    asyncio.create_task(_scheduler_loop(
+                        application.state.scheduler,
+                        write_gate,
+                        settings.scheduler_interval_seconds,
+                    ))
+                    if getattr(settings, "scheduler_enabled", False) else None
+                )
                 yield
             finally:
                 if scheduler_task is not None:

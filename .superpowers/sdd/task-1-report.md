@@ -85,3 +85,52 @@ replacement-character or known mojibake-pattern matches.
   DuckDB raised `UnicodeDecodeError` while opening `.runtime/market.duckdb` under the Chinese
   workspace path. The failing test passed immediately in isolation, and the binding Task 1
   suite remained green. No unrelated DuckDB/storage change was made.
+
+## Review fixes: RED evidence
+
+The review regressions were written before the corrective production edits.
+
+Combined red command:
+
+```powershell
+.venv\Scripts\python.exe -m pytest apps/api/tests/a_shares/test_instrument_directory.py apps/api/tests/routes/test_research.py apps/api/tests/libu_compliance/test_main_lifespan.py -q
+```
+
+Observed result: `4 failed, 30 passed in 7.08s`.
+
+- Direct observation of `000300` did not raise, proving the code regex alone admitted the
+  overlapping index identifier.
+- A mismatched upstream `600002` payload was returned for requested `600001`.
+- `sqlite3.ProgrammingError` was swallowed and mapped to an unavailable response.
+- A seed failure after directory construction left the directory open.
+
+The first mixed-offset regression data accidentally had the same lexical and chronological
+ordering. It was corrected before production edits so the later UTC instant sorted lexically
+before the earlier `+09:00` instant. Its isolated red run then failed with `1 failed in 0.53s`,
+resolving the earlier observation instead of the later instant.
+
+## Review fixes: GREEN evidence
+
+- `AShareInstrument.observed_at` is canonicalized to UTC before persistence, so the existing
+  ISO text ordering is chronological across input offsets.
+- `000300` is explicitly classified as a non-equity identifier. This avoids a broad numeric
+  prefix rule that would reject legitimate Shenzhen equities sharing Shanghai index numbers.
+- Exact-code lookup compares `quote.symbol` with the requested symbol before construction,
+  observation, or response.
+- The route catches only expected `httpx.HTTPError` and quote payload/model `ValueError` while
+  directory persistence executes outside that mapping; SQLite failures now surface.
+- Directory construction and bar seeding now occur directly inside the existing lifespan
+  cleanup `try/finally`, including failures before `yield`.
+- Two independent directory connections completed interleaved observe/search loops and both
+  resolved the same latest observation. Existing SQLite transaction serialization was
+  sufficient, so no speculative journal-mode change was added.
+
+Fresh verification after the review fixes:
+
+```text
+34 focused and lifecycle tests passed in 6.34s
+515 full API tests passed in 20.43s
+Ruff: All checks passed!
+Mojibake scan: no matches
+git diff --check: clean
+```

@@ -3,6 +3,7 @@ from typing import Annotated, Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
+import httpx
 from pydantic import BaseModel, ConfigDict
 
 from qibao_api.a_shares.diagnosis import AShareDiagnosis, DiagnosisUnavailableError
@@ -77,6 +78,8 @@ async def search_instruments(
     if exact_symbol is not None and (resolved is None or resolved.name == exact_symbol):
         try:
             quote = await quote_source.fetch(exact_symbol)
+            if quote.symbol != exact_symbol:
+                raise ValueError("Tencent quote symbol does not match requested A-share")
             instrument = AShareInstrument(
                 symbol=quote.symbol,
                 name=quote.name,
@@ -84,11 +87,12 @@ async def search_instruments(
                 observed_at=_quote_observed_at(quote.observed_at),
                 quote_quality=_quote_quality(quote.quality),
             )
-            directory.observe(instrument)
-            items = (instrument,)
-        except Exception:
+        except (httpx.HTTPError, ValueError):
             items = ()
             source_status = "unavailable"
+        else:
+            directory.observe(instrument)
+            items = (instrument,)
     return AShareSearchResponse(
         query=query,
         items=tuple(AShareSearchItem(**item.model_dump()) for item in items),

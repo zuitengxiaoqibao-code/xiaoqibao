@@ -1,13 +1,16 @@
 import sqlite3
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from qibao_api.contracts.instruments import AShareCode
 from qibao_api.gongbu.tencent_quotes import market_prefix
+
+
+NON_EQUITY_IDENTIFIERS = frozenset({"000300"})
 
 
 class AShareInstrument(BaseModel):
@@ -19,8 +22,15 @@ class AShareInstrument(BaseModel):
     observed_at: AwareDatetime
     quote_quality: Literal["ready", "stale", "unavailable"]
 
+    @field_validator("observed_at")
+    @classmethod
+    def normalize_observed_at(cls, value: datetime) -> datetime:
+        return value.astimezone(timezone.utc)
+
     @model_validator(mode="after")
     def exchange_matches_symbol(self) -> "AShareInstrument":
+        if self.symbol in NON_EQUITY_IDENTIFIERS:
+            raise ValueError("symbol must identify an A-share equity, not an index")
         if self.exchange != market_prefix(self.symbol):
             raise ValueError("exchange must match A-share symbol")
         return self

@@ -107,3 +107,34 @@ async def test_lifespan_dependency_registration_is_idempotent(tmp_path, monkeypa
     repository = ComplianceRepository(tmp_path / "compliance.sqlite3")
     assert len(repository.list_feature_source_history("realtime_quotes", "a_share")) == 1
     assert len(repository.list_feature_source_history("history_sync.baidu", "a_share")) == 1
+
+
+@pytest.mark.asyncio
+async def test_lifespan_closes_instrument_directory_when_seed_fails(
+    tmp_path, monkeypatch
+) -> None:
+    closed = []
+
+    class Directory:
+        def __init__(self, _path) -> None:
+            pass
+
+        def close(self) -> None:
+            closed.append(True)
+
+    monkeypatch.setattr(main_module, "Settings", lambda: FakeSettings(tmp_path))
+    monkeypatch.setattr(main_module, "AShareInstrumentDirectory", Directory)
+    monkeypatch.setattr(
+        main_module, "create_tdx_client", lambda: (_ for _ in ()).throw(RuntimeError("offline"))
+    )
+    monkeypatch.setattr(
+        main_module.BarRepository,
+        "symbols_with_history",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("seed failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="seed failed"):
+        async with main_module.lifespan(FastAPI()):
+            pass
+
+    assert closed == [True]
