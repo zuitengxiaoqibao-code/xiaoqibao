@@ -244,7 +244,9 @@ async def lifespan(application: FastAPI):
                 application.state.a_share_diagnosis_service
             )
             decision_compliance_source = RepositoryComplianceSource(compliance)
-            decision_risk_source = RepositoryRiskSource(audit_repository)
+            decision_risk_source = RepositoryRiskSource(
+                audit_repository, application.state.a_share_diagnosis_service
+            )
             decision_evidence_source = RepositoryEvidenceSource(news_repository)
             decision_market_feed = TencentPollingMarketFeed(history_client, compliance)
             decision_evaluator = DeterministicIntradayEvaluator()

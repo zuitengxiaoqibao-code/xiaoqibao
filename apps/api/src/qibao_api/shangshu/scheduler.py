@@ -1,5 +1,6 @@
 import re
 import threading
+from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 
 
@@ -11,6 +12,12 @@ SCHEDULE = (
     ("intraday", "1430", time(14, 30)),
     ("postclose", "1530", time(15, 30)),
 )
+
+
+@dataclass(frozen=True)
+class ManualRunResult:
+    report_id: str | None
+    status: str = "completed"
 
 
 class DailyBriefingScheduler:
@@ -150,6 +157,12 @@ class DailyBriefingScheduler:
                     status="completed", occurred_at=occurred_at,
                     report_id=getattr(snapshot, "snapshot_id", None),
                 )
+                if trigger == "manual":
+                    return ManualRunResult(
+                        report_id=getattr(snapshot, "snapshot_id", report.report_id)
+                    )
+            if trigger == "manual":
+                return None
         return report
 
     def _persisted_report(

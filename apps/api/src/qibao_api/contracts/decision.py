@@ -31,6 +31,17 @@ class EvidenceReference(BaseModel):
     observed_at: AwareDatetime
 
 
+class SimulationGateAudit(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    quote_state: Literal["ready", "blocked"]
+    compliance_state: Literal["ready", "blocked"]
+    evidence_state: Literal["ready", "blocked"]
+    risk_state: Literal["approve", "reject"]
+    risk_decision_id: str | None
+    compliance_snapshot_id: str | None
+
+
 class DecisionCycleSnapshot(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -90,6 +101,7 @@ class AdviceCard(BaseModel):
     ai_interpretation_id: str | None = None
     risk_decision_id: str | None = None
     simulation_plan_id: str | None = None
+    simulation_gate: SimulationGateAudit | None = None
     previous_advice_id: str | None = None
     changed_fields: tuple[NonBlank, ...] = ()
     strategy_version: NonBlank

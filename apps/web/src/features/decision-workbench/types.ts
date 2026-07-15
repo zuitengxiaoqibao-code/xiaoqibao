@@ -13,10 +13,16 @@ export type SimulationPlan = {
   tranches: string[]; max_position: string; invalidation_conditions: string[];
   strategy_version: string; risk_version: string; compliance_version: string;
 };
+export type PlanReadiness = {
+  ready: boolean; reasons: string[]; quote_state: "ready" | "blocked";
+  compliance_state: "ready" | "blocked"; evidence_state: "ready" | "blocked";
+  risk_state: "approve" | "reject";
+};
 export type PhaseSlot = {
   phase_status: "empty" | "ready" | "partial" | "blocked"; quality: "empty" | "ready" | "partial" | "blocked";
   aggregate_version: string | null; strategy_versions?: string[]; ai_status: "ready" | "unavailable" | "not_requested";
   generated_at?: string; advice: Advice[]; evidence: Evidence[]; plans: SimulationPlan[];
+  plan_readiness: Record<string, PlanReadiness>;
 };
 export type DecisionResponse = {
   server_time: string; trading_date: string; current_phase: DecisionPhase; market_session: "open" | "closed";

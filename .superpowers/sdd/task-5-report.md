@@ -64,3 +64,37 @@ Production composition now includes:
 - Existing paper execution/risk decisions and audit findings passed directly to `PostcloseReviewService`.
 - One `DecisionPhaseRunner` shared by scheduled and manual execution for premarket, intraday, and postclose.
 - Explicit closure of both decision and intraday polling SQLite repositories.
+
+## Fix Review
+
+### RED evidence
+
+- Backend review tests: `5 failed, 18 passed`.
+- Failures proved that manual decision errors still returned a report/HTTP 200 and that market risk accepted only the audit repository.
+- Frontend review tests initially produced one remaining failure after implementation: ArrowRight changed selection but did not synchronously transfer focus.
+- The production build then rejected an imprecisely inferred test readiness map, preventing a false completion claim.
+
+### GREEN behavior
+
+- Simulation plans now require an API-provided `plan_readiness.ready=true`. The API derives readiness from stored quote, evidence, compliance, and risk gate states plus advice/plan/risk/compliance reciprocal references. Missing, blocked, rejected, or mismatched state keeps the UI observation-only.
+- Intraday persistence freezes the original deterministic simulation gate into the append-only advice quantitative payload, so the browser does not reconstruct gate decisions.
+- Market risk now derives availability and strong/range/weak state from real A-share candidate factor breadth. Open audit findings are an additive overlay; no findings no longer imply unavailable. Missing factor breadth explicitly yields `insufficient_data` and `market_factor_evidence_unavailable`.
+- Partial, blocked, empty, AI-unavailable, retry, stale aggregate, next-check, and current focus/universe cadence states are distinct. Staleness uses only API `server_time`, aggregate `generated_at`, and `stale_after_seconds`.
+- Phase tabs now have stable IDs, `aria-controls`, a labeled tabpanel, roving `tabIndex`, and Left/Right arrow focus navigation.
+- Manual phase selection survives polling and date reloads; API auto-selection applies until the user deliberately selects a phase.
+- Manual decision-run exceptions now return `None` from the scheduler after the failure is audited. The decision route maps this to HTTP 503 `decision_run_failed` instead of reporting delegated success.
+
+### Focused GREEN evidence
+
+- Backend route/scheduler/risk tests: `24 passed`.
+- Frontend workbench plus existing web suites: `12 files, 52 tests passed`.
+- Browser acceptance remains intentionally unperformed per controller instruction.
+
+### Final verification
+
+- Full backend: `488 passed`.
+- Ruff: `All checks passed`.
+- Full frontend: `12 test files, 52 tests passed`.
+- TypeScript/Vite production build: passed.
+- Mojibake/fallback-marker scan: no matches.
+- `git diff --check`: passed.

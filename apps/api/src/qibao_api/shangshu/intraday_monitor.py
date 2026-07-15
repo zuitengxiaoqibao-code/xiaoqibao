@@ -13,7 +13,8 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict
 from qibao_api.contracts.instruments import validate_a_share_code
 from qibao_api.bingbu.simulation_plan import SimulationGateContext, SimulationPlanBuilder
 from qibao_api.contracts.decision import (
-    AdviceCard, DecisionCycleAggregate, DecisionCycleSnapshot, SimulationPlan,
+    AdviceCard, DecisionCycleAggregate, DecisionCycleSnapshot, SimulationGateAudit,
+    SimulationPlan,
 )
 from qibao_api.gongbu.market_feed import DeterministicPollingCadence, MarketFeedSnapshot
 
@@ -49,7 +50,7 @@ class AdviceChangeDetector:
         if field == "simulation_plan":
             return (
                 advice.simulation_plan_id,
-                advice.quantitative_result.get("simulation_gate"),
+                advice.simulation_gate,
             )
         return getattr(advice, field)
 
@@ -542,6 +543,16 @@ class IntradayMonitor:
             plan = None
             plan_semantics_unchanged = False
             if gate is not None:
+                candidate = candidate.model_copy(update={
+                    "simulation_gate": SimulationGateAudit(
+                        quote_state=gate.quote_state,
+                        compliance_state=gate.compliance_state,
+                        evidence_state=gate.evidence_state,
+                        risk_state=gate.risk_state,
+                        risk_decision_id=gate.risk_decision_id,
+                        compliance_snapshot_id=gate.compliance_snapshot_id,
+                    ),
+                })
                 semantic_advice_id = previous.advice_id if previous is not None else advice_id
                 semantic_gate = gate.model_copy(update={"advice_id": semantic_advice_id})
                 semantic_plan = SimulationPlanBuilder(now=now).build(semantic_gate)

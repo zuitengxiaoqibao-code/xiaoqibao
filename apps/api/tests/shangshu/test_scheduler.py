@@ -196,6 +196,21 @@ def test_manual_run_returns_phase_decision_result(tmp_path) -> None:
     repository.close()
 
 
+def test_manual_run_returns_failure_when_decision_runner_fails(tmp_path) -> None:
+    repository = OperationsRepository(tmp_path / "operations.sqlite3")
+    scheduler = DailyBriefingScheduler(
+        Workflow(), Calendar(), repository, decision_workflow=DecisionWorkflow(fail=True),
+    )
+
+    result = scheduler.run_manual(
+        "postclose", TRADE_DATE, datetime(2026, 7, 14, 8, 1, tzinfo=UTC)
+    )
+
+    assert result is None
+    assert any(item["status"] == "failed" for item in repository.jobs())
+    repository.close()
+
+
 def test_decision_failure_does_not_overwrite_briefing_completion(tmp_path) -> None:
     repository = OperationsRepository(tmp_path / "operations.sqlite3")
     scheduler = DailyBriefingScheduler(

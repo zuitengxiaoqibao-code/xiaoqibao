@@ -9,7 +9,7 @@ from qibao_api.dependencies import (
     get_scheduler,
     get_server_time,
 )
-from qibao_api.routes.decisions import router
+from qibao_api.routes.decisions import _slot, router
 from qibao_api.shangshu.decision_repository import DecisionIntegrityError
 
 
@@ -36,18 +36,19 @@ class Calendar:
 
 
 class Scheduler:
-    def __init__(self):
+    def __init__(self, result=None):
         self.calls = []
+        self.result = result
 
     def run_manual(self, phase, trading_date, now):
         self.calls.append((phase, trading_date, now))
-        return None
+        return self.result
 
 
-def client(*, now, repository=None, trading_days=()):
+def client(*, now, repository=None, trading_days=(), scheduler=None):
     application = FastAPI()
     application.include_router(router)
-    scheduler = Scheduler()
+    scheduler = scheduler or Scheduler({"status": "completed"})
     application.dependency_overrides[get_decision_repository] = lambda: repository or Repository()
     application.dependency_overrides[get_decision_calendar] = lambda: Calendar(trading_days)
     application.dependency_overrides[get_scheduler] = lambda: scheduler
@@ -112,3 +113,42 @@ def test_manual_run_delegates_to_scheduler_only():
 
     assert response.status_code == 200
     assert scheduler.calls == [("intraday", today, datetime(2026, 7, 15, 10, tzinfo=CHINA_TZ))]
+
+
+def test_manual_run_failure_is_not_reported_as_delegated_success():
+    today = date(2026, 7, 15)
+    api, _ = client(
+        now=datetime(2026, 7, 15, 10, tzinfo=CHINA_TZ), trading_days=(today,),
+        scheduler=Scheduler(None),
+    )
+
+    response = api.post(f"/api/v1/decisions/intraday/{today.isoformat()}/run")
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "decision_run_failed"
+
+
+def test_plan_readiness_requires_all_gate_states_and_reciprocal_references():
+    advice = {
+        "advice_id": "a1", "action": "simulated_plan", "simulation_plan_id": "p1",
+        "risk_decision_id": "r1", "strategy_version": "v1",
+        "supporting_evidence": [], "contrary_evidence": [],
+        "simulation_gate": {
+            "quote_state": "ready", "compliance_state": "ready",
+            "evidence_state": "blocked", "risk_state": "approve",
+            "risk_decision_id": "r1", "compliance_snapshot_id": "c1",
+        },
+    }
+    aggregate = {
+        "snapshot": {"snapshot_id": "s1", "status": "partial", "data_quality": "partial", "ai_status": "not_requested"},
+        "advice": [advice],
+        "plans": [{"plan_id": "p1", "advice_id": "a1", "risk_decision_id": "r1", "compliance_snapshot_id": "c1"}],
+    }
+
+    blocked = _slot(aggregate)["plan_readiness"]["a1"]
+    advice["simulation_gate"]["evidence_state"] = "ready"
+    ready = _slot(aggregate)["plan_readiness"]["a1"]
+
+    assert blocked["ready"] is False
+    assert blocked["reasons"] == ["evidence_blocked"]
+    assert ready["ready"] is True

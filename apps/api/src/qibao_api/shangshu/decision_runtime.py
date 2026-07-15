@@ -64,22 +64,38 @@ class RepositoryComplianceSource:
 
 
 class RepositoryRiskSource:
-    def __init__(self, audit_repository) -> None:
+    def __init__(self, audit_repository, candidate_service) -> None:
         self.audit_repository = audit_repository
+        self.candidate_service = candidate_service
 
     def summarize(self, trading_date: date, cutoff: datetime) -> MarketRiskInputSnapshot:
+        board = self.candidate_service.candidates(trading_date)
+        entries = tuple((*board.short_term, *board.swing))
         findings = tuple(
             item for item in self.audit_repository.list_findings(asset=AssetKind.A_SHARE)
             if item.detected_at <= cutoff and item.resolution_state in {"open", "investigating"}
         )
         severe = any(item.severity in {"high", "critical"} for item in findings)
-        content = {"date": trading_date.isoformat(), "findings": [item.model_dump(mode="json") for item in findings]}
+        scores = tuple(Decimal(str(item.score)) for item in entries)
+        average = sum(scores, Decimal()) / len(scores) if scores else None
+        factor_state = (
+            "strong" if average is not None and average >= Decimal("8")
+            else "weak" if average is not None and average <= Decimal("-8")
+            else "range" if average is not None else "insufficient_data"
+        )
+        market_state = "weak" if severe else factor_state
+        content = {
+            "date": trading_date.isoformat(), "candidate": board.model_dump(mode="json"),
+            "findings": [item.model_dump(mode="json") for item in findings],
+        }
         return MarketRiskInputSnapshot(
             snapshot_id=_identity("risk", content), captured_at=cutoff,
-            available=bool(findings), market_state="weak" if severe else "insufficient_data",
-            version="audit-risk-runtime-v1",
-            summary="open audit findings" if findings else "risk evidence unavailable",
-            risks=tuple(item.finding_type for item in findings) or ("risk_evidence_unavailable",),
+            available=bool(scores), market_state=market_state,
+            version="factor-breadth-audit-risk-v1",
+            summary="candidate factor breadth with open audit overlays" if scores else "market factor evidence unavailable",
+            risks=tuple(item.finding_type for item in findings) or (
+                () if scores else ("market_factor_evidence_unavailable",)
+            ),
         )
 
     def snapshot(self, *, now: datetime, cutoff: datetime):
