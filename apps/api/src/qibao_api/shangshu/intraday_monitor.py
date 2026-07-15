@@ -13,7 +13,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict
 from qibao_api.contracts.instruments import validate_a_share_code
 from qibao_api.bingbu.simulation_plan import SimulationGateContext, SimulationPlanBuilder
 from qibao_api.contracts.decision import (
-    AdviceCard, DecisionCycleAggregate, DecisionCycleSnapshot,
+    AdviceCard, DecisionCycleAggregate, DecisionCycleSnapshot, SimulationPlan,
 )
 from qibao_api.gongbu.market_feed import DeterministicPollingCadence, MarketFeedSnapshot
 
@@ -154,7 +154,7 @@ class PollStateRepository:
         CREATE TABLE IF NOT EXISTS intraday_market_snapshot_events (
           sequence INTEGER PRIMARY KEY AUTOINCREMENT,
           scope TEXT NOT NULL, symbol TEXT NOT NULL, observed_at TEXT NOT NULL,
-          source_snapshot_id TEXT
+          source_snapshot_id TEXT, payload TEXT
         );
         CREATE TABLE IF NOT EXISTS intraday_poll_batches (
           batch_id TEXT PRIMARY KEY, scope TEXT NOT NULL, occurred_at TEXT NOT NULL
@@ -172,6 +172,15 @@ class PollStateRepository:
         BEFORE DELETE ON intraday_market_snapshot_events
         BEGIN SELECT RAISE(ABORT, 'append-only intraday market snapshots'); END;
         """)
+        columns = {
+            row["name"] for row in self.connection.execute(
+                "PRAGMA table_info(intraday_market_snapshot_events)"
+            ).fetchall()
+        }
+        if "payload" not in columns:
+            self.connection.execute(
+                "ALTER TABLE intraday_market_snapshot_events ADD COLUMN payload TEXT"
+            )
 
     def latest(self) -> PollState | None:
         with self._lock:
@@ -191,12 +200,12 @@ class PollStateRepository:
     def append_snapshots(self, scope: Scope, snapshots) -> None:
         rows = [(
             scope, item.symbol, item.observed_at.isoformat(),
-            getattr(item, "source_snapshot_id", None),
+            getattr(item, "source_snapshot_id", None), self._snapshot_payload(item),
         ) for item in snapshots]
         with self._lock, self.connection:
             self.connection.executemany(
                 """INSERT INTO intraday_market_snapshot_events(
-                scope,symbol,observed_at,source_snapshot_id) VALUES(?,?,?,?)""",
+                scope,symbol,observed_at,source_snapshot_id,payload) VALUES(?,?,?,?,?)""",
                 rows,
             )
 
@@ -206,7 +215,7 @@ class PollStateRepository:
     ) -> bool:
         rows = [(
             scope, item.symbol, item.observed_at.isoformat(),
-            getattr(item, "source_snapshot_id", None),
+            getattr(item, "source_snapshot_id", None), self._snapshot_payload(item),
         ) for item in snapshots]
         payload = json.dumps(state.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
         with self._lock, self.connection:
@@ -221,7 +230,7 @@ class PollStateRepository:
             )
             self.connection.executemany(
                 """INSERT INTO intraday_market_snapshot_events(
-                scope,symbol,observed_at,source_snapshot_id) VALUES(?,?,?,?)""",
+                scope,symbol,observed_at,source_snapshot_id,payload) VALUES(?,?,?,?,?)""",
                 rows,
             )
             self.connection.execute(
@@ -229,6 +238,32 @@ class PollStateRepository:
                 (occurred_at.isoformat(), payload),
             )
         return True
+
+    @staticmethod
+    def _snapshot_payload(snapshot) -> str | None:
+        if not isinstance(snapshot, MarketFeedSnapshot):
+            return None
+        return json.dumps(
+            snapshot.model_dump(mode="json"), sort_keys=True, separators=(",", ":")
+        )
+
+    def latest_snapshots(
+        self, cutoff: datetime, *, since: datetime | None = None,
+    ) -> tuple[MarketFeedSnapshot, ...]:
+        with self._lock:
+            rows = self.connection.execute(
+                """SELECT symbol,payload FROM intraday_market_snapshot_events
+                WHERE payload IS NOT NULL ORDER BY sequence""",
+            ).fetchall()
+        latest = {}
+        for row in rows:
+            snapshot = MarketFeedSnapshot.model_validate_json(row["payload"])
+            if snapshot.observed_at > cutoff:
+                continue
+            if since is not None and snapshot.observed_at < since:
+                continue
+            latest[row["symbol"]] = snapshot
+        return tuple(latest[symbol] for symbol in sorted(latest))
 
     def snapshots(self) -> list[dict]:
         with self._lock:
@@ -306,7 +341,6 @@ class IntradayMonitor:
         selected = self.due(now) if scopes is None else scopes & self.due(now)
         state = self._state_at(now)
         polled: set[Scope] = set()
-        collected: dict[str, MarketFeedSnapshot] = {}
         for scope in ("focus", "universe"):
             if scope not in selected:
                 continue
@@ -322,26 +356,26 @@ class IntradayMonitor:
                     source_budget=self.source_budget(now)
                 )
                 state = self._success(state, scope, now, interval)
-                batch_id = self._batch_id(scope, snapshots)
+                batch_id = self._batch_id(scope, now)
                 self.state_repository.append_success_batch(
                     batch_id, scope, snapshots, state, now,
                 )
-                collected.update({item.symbol: item for item in snapshots})
                 polled.add(scope)
-        aggregate = self._evaluate(now, tuple(sorted(collected.values(), key=lambda item: item.symbol)))
+        local = now.astimezone(CHINA_TZ)
+        window_start = datetime.combine(local.date(), time(9, 25), CHINA_TZ)
+        layered_quotes = self.state_repository.latest_snapshots(now, since=window_start)
+        aggregate = self._evaluate(now, layered_quotes)
         return IntradayCheckResult(
             result_id=f"intraday-{int(now.timestamp())}", checked_at=now,
             polled=frozenset(polled), state=state, aggregate=aggregate,
         )
 
     @staticmethod
-    def _batch_id(scope: Scope, snapshots) -> str:
-        values = [{
-            "symbol": item.symbol,
-            "observed_at": item.observed_at.isoformat(),
-            "source_snapshot_id": getattr(item, "source_snapshot_id", None),
-        } for item in snapshots]
-        payload = json.dumps({"scope": scope, "snapshots": values}, sort_keys=True, separators=(",", ":"))
+    def _batch_id(scope: Scope, executed_at: datetime) -> str:
+        payload = json.dumps(
+            {"scope": scope, "executed_at": executed_at.isoformat()},
+            sort_keys=True, separators=(",", ":"),
+        )
         return hashlib.sha256(payload.encode()).hexdigest()
 
     @staticmethod
@@ -392,6 +426,7 @@ class IntradayMonitor:
         window_start = datetime.combine(trading_date, time(9, 25), CHINA_TZ)
         window_end = min(now, datetime.combine(trading_date, time(15, 0), CHINA_TZ))
         current = self._current_advice(trading_date)
+        current_plans = self._current_plans(trading_date)
         inputs = tuple(
             port.snapshot(now=now, cutoff=window_end) for port in self.input_ports
             if port is not None
@@ -420,35 +455,84 @@ class IntradayMonitor:
         plans = []
         for item in result.advice:
             key = (item.symbol, item.horizon)
+            previous = current.get(key)
             advice_id = f"advice-{hashlib.sha256(f'{snapshot_id}|{item.symbol}|{item.horizon}'.encode()).hexdigest()[:24]}"
             candidate = item.model_copy(update={
                 "advice_id": advice_id, "snapshot_id": snapshot_id,
                 "created_at": now, "previous_advice_id": None, "changed_fields": (),
             })
             gate = result.gates.get(item.advice_id)
+            plan = None
+            plan_semantics_unchanged = False
             if gate is not None:
-                bound_gate = gate.model_copy(update={"advice_id": advice_id})
-                plan = SimulationPlanBuilder(now=now).build(bound_gate)
-                if plan is not None:
+                semantic_advice_id = previous.advice_id if previous is not None else advice_id
+                semantic_gate = gate.model_copy(update={"advice_id": semantic_advice_id})
+                semantic_plan = SimulationPlanBuilder(now=now).build(semantic_gate)
+                previous_plan = (
+                    current_plans.get(previous.simulation_plan_id)
+                    if previous is not None and previous.simulation_plan_id else None
+                )
+                plan_semantics_unchanged = self._same_plan_semantics(
+                    semantic_plan, previous_plan,
+                )
+                if semantic_plan is not None and plan_semantics_unchanged and previous is not None:
+                    candidate = candidate.model_copy(update={
+                        "action": "simulated_plan",
+                        "simulation_plan_id": previous.simulation_plan_id,
+                        "risk_decision_id": previous.risk_decision_id,
+                    })
+                elif semantic_plan is not None:
+                    bound_gate = gate.model_copy(update={"advice_id": advice_id})
+                    plan = SimulationPlanBuilder(now=now).build(bound_gate)
                     candidate = candidate.model_copy(update={
                         "action": "simulated_plan", "simulation_plan_id": plan.plan_id,
                         "risk_decision_id": plan.risk_decision_id,
                     })
-                    plans.append(plan)
                 else:
-                    reasons = bound_gate.failed_gate_reasons()
+                    reasons = semantic_gate.failed_gate_reasons()
+                    allowed = {"observe", "wait", "avoid", "invalidated"}
+                    fallback = item.action if item.action in allowed else (
+                        previous.action if previous is not None and previous.action in allowed
+                        else "observe"
+                    )
                     candidate = candidate.model_copy(update={
+                        "action": fallback, "simulation_plan_id": None,
+                        "risk_decision_id": None,
                         "risks": tuple(dict.fromkeys((*candidate.risks, *reasons))),
                     })
-            previous = current.get(key)
+            elif candidate.action == "simulated_plan":
+                allowed = {"observe", "wait", "avoid", "invalidated"}
+                fallback = (
+                    previous.action if previous is not None and previous.action in allowed
+                    else "observe"
+                )
+                candidate = candidate.model_copy(update={
+                    "action": fallback, "simulation_plan_id": None,
+                    "risk_decision_id": None,
+                    "risks": tuple(dict.fromkeys((
+                        *candidate.risks, "simulation_gate_missing",
+                    ))),
+                })
             updated = candidate if previous is None else AdviceChangeDetector.changed(previous, candidate)
             if updated is not None:
+                if gate is not None and plan_semantics_unchanged and candidate.action == "simulated_plan":
+                    rebound_gate = gate.model_copy(update={"advice_id": updated.advice_id})
+                    plan = SimulationPlanBuilder(now=now).build(rebound_gate)
+                    assert plan is not None
+                    updated = updated.model_copy(update={
+                        "simulation_plan_id": plan.plan_id,
+                        "risk_decision_id": plan.risk_decision_id,
+                    })
                 changed.append(updated)
+                if plan is not None:
+                    plans.append(plan)
         for key, previous in current.items():
             if key not in proposed_keys:
                 invalidated = AdviceChangeDetector.removed(previous, "candidate_removed", now)
                 if invalidated is not None:
                     changed.append(invalidated.model_copy(update={"snapshot_id": snapshot_id}))
+        if not changed:
+            return latest or self.decision_repository.latest(trading_date, "premarket")
         snapshot = DecisionCycleSnapshot(
             snapshot_id=snapshot_id, trading_date=trading_date, phase="intraday",
             sequence=sequence, generated_at=now, window_start=window_start,
@@ -478,6 +562,24 @@ class IntradayMonitor:
         for cycle in self.decision_repository.cycles(trading_date, "intraday"):
             values.update({(item.symbol, item.horizon): item for item in cycle.advice})
         return values
+
+    def _current_plans(self, trading_date) -> dict[str, SimulationPlan]:
+        values: dict[str, SimulationPlan] = {}
+        for phase in ("premarket", "intraday"):
+            for cycle in self.decision_repository.cycles(trading_date, phase):
+                values.update({item.plan_id: item for item in cycle.plans})
+        return values
+
+    @staticmethod
+    def _same_plan_semantics(
+        proposed: SimulationPlan | None, previous: SimulationPlan | None,
+    ) -> bool:
+        if proposed is None or previous is None:
+            return proposed is previous
+        ignored = {"plan_id", "advice_id"}
+        proposed_value = proposed.model_dump(mode="json", exclude=ignored)
+        previous_value = previous.model_dump(mode="json", exclude=ignored)
+        return proposed_value == previous_value
 
     @staticmethod
     def _source_hash(result: IntradayEvaluationResult, quotes) -> str:

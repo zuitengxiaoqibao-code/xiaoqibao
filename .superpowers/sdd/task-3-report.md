@@ -68,5 +68,25 @@ Implemented the A-share polling feed port, append-only persisted layered polling
 - The monitor loads premarket plus all intraday deltas to reconstruct current advice, applies exact deterministic diffs and stable `candidate_removed` reason codes, builds reciprocal plans, and appends through Task 1's repository.
 - Canonical hashing includes normalized quote values, evaluator source content, advice fields, and gate inputs while excluding ephemeral IDs and timestamps.
 - Successful snapshot batches and their resulting state event share one SQLite transaction and stable batch identity; duplicate batches are no-ops across restart.
-- A market-feed cadence port deterministically selects 180 or 300 seconds from source budget, and stream delivery is capability-negotiated without invoking polling.
+- A market-feed cadence port deterministically selects 180 or 300 seconds from source budget. Streaming is reserved capability negotiation only; no stream consumption is implemented.
 - Simulation-plan identity hashes complete immutable levels, references, and level-derived validity timestamps; builder invocation time does not alter the plan body or ID.
+
+## Re-review Fix Evidence
+
+- RED: two due executions returning the same source snapshot left the restarted universe due time at the first execution.
+- RED: changed quote/source content with identical evaluator semantics appended an empty second decision cycle.
+- RED: identical plan levels/gates under source churn appended a second plan cycle because aggregate-local IDs were compared as semantics.
+- RED: all blocked or missing gate variants retained stale simulated-plan references and failed Task 1 repository integrity validation.
+- RED: a universe poll followed by focus-only polling lost the retained non-focus quote after restart.
+- GREEN: monitor regression suite -> `25 passed in 2.30s` before final focused/full verification.
+- FINAL GREEN: focused Task 3 suite -> `53 passed in 2.98s`.
+- FINAL FULL: API suite -> `460 passed in 27.48s`.
+- FINAL QUALITY: Ruff passed, mojibake scan returned no matches, and `git diff --check` exited 0.
+
+## Re-review Design Decisions
+
+- Poll execution identity is `scope + executed_at`; snapshot content identity is independent. Every distinct due execution atomically advances state even when the provider repeats content.
+- Full frozen `MarketFeedSnapshot` payloads are append-persisted. Reconstruction selects the latest valid per-symbol payload from the current trading-day window, so current focus updates overlay retained universe quotes across restart.
+- Aggregate append is gated exclusively by specified advice/removal/membership/gate/plan semantic deltas. Source hash changes without a semantic delta return the existing latest aggregate.
+- Plan comparison excludes aggregate-local plan/advice IDs. Unchanged semantics preserve prior references when no advice delta exists; changed advice receives a newly reciprocal plan in its new aggregate.
+- Any failed or absent plan gate normalizes stale plan advice to a non-plan action, clears plan/risk references, and records stable failed-gate reasons.

@@ -1,6 +1,8 @@
 from datetime import UTC, date, datetime, timedelta
 import hashlib
 
+import pytest
+
 from qibao_api.shangshu.intraday_monitor import (
     AdviceChangeDetector, IntradayEvaluationResult, IntradayMonitor,
     PollState, PollStateRepository,
@@ -133,7 +135,6 @@ def test_removed_candidate_is_invalidated_once_and_future_evidence_rejected() ->
             observed_at=NOW + timedelta(seconds=1),
         ),
     ))
-    import pytest
     with pytest.raises(ValueError, match="future evidence"):
         detector.validate_cutoff(future, NOW)
 
@@ -153,6 +154,31 @@ def test_success_batch_and_state_are_atomic_idempotent_and_restart_safe(tmp_path
     reopened = PollStateRepository(database)
     assert reopened.latest() == state
     assert len(reopened.snapshots()) == 1
+
+
+def test_identical_snapshot_on_two_due_executions_advances_restart_due_time(tmp_path) -> None:
+    class IdenticalFeed:
+        def snapshot_many(self, symbols, *, cutoff=None):
+            return (type("Quote", (), {
+                "symbol": "300001", "observed_at": NOW, "source_snapshot_id": "same",
+            })(),)
+
+    database = tmp_path / "identical.sqlite3"
+    first = IntradayMonitor(
+        feed=IdenticalFeed(), calendar=Calendar(),
+        state_repository=PollStateRepository(database), focus_symbols=lambda now: (),
+        universe_symbols=lambda now: ("300001",),
+    )
+    first.check(NOW, scopes=frozenset({"universe"}))
+    second_at = NOW + timedelta(seconds=180)
+    first.check(second_at, scopes=frozenset({"universe"}))
+    restarted = IntradayMonitor(
+        feed=IdenticalFeed(), calendar=Calendar(),
+        state_repository=PollStateRepository(database), focus_symbols=lambda now: (),
+        universe_symbols=lambda now: ("300001",),
+    )
+    assert restarted.due(second_at + timedelta(seconds=179)) == frozenset({"focus"})
+    assert restarted.due(second_at + timedelta(seconds=180)) == frozenset({"focus", "universe"})
 
 
 def test_constrained_budget_persists_300_second_universe_cadence(tmp_path) -> None:
@@ -214,6 +240,15 @@ class QuoteFeed:
         ) for symbol in symbols)
 
 
+class LayeredQuoteFeed(QuoteFeed):
+    def __init__(self):
+        self.price = Decimal("10")
+
+    def snapshot_many(self, symbols, *, cutoff=None):
+        values = super().snapshot_many(symbols, cutoff=cutoff)
+        return tuple(item.model_copy(update={"price": self.price}) for item in values)
+
+
 def baseline_aggregate(repository):
     snapshot = DecisionCycleSnapshot(
         snapshot_id="premarket-1", trading_date=date(2026, 7, 14), phase="premarket",
@@ -237,11 +272,15 @@ def baseline_aggregate(repository):
     return aggregate
 
 
-def decision_monitor(tmp_path, evaluation, repository):
+def decision_monitor(tmp_path, evaluation, repository, *, feed=None, state_database=None,
+                     focus_symbols=None, universe_symbols=None):
     return IntradayMonitor(
-        feed=QuoteFeed(), calendar=Calendar(),
-        state_repository=PollStateRepository(tmp_path / "poll-decisions.sqlite3"),
-        focus_symbols=lambda now: ("000001",), universe_symbols=lambda now: ("000001",),
+        feed=feed or QuoteFeed(), calendar=Calendar(),
+        state_repository=PollStateRepository(
+            state_database or tmp_path / "poll-decisions.sqlite3"
+        ),
+        focus_symbols=focus_symbols or (lambda now: ("000001",)),
+        universe_symbols=universe_symbols or (lambda now: ("000001",)),
         decision_repository=repository, evaluator=evaluation,
         candidate_factor_port=InputPort(), risk_port=InputPort(),
         compliance_port=InputPort(), evidence_port=InputPort(),
@@ -288,6 +327,24 @@ def test_changed_evaluator_output_with_same_source_content_appends(tmp_path) -> 
     assert cycles[1].advice[0].changed_fields == ("conclusion",)
 
 
+def test_quote_and_source_change_without_semantic_delta_does_not_append(tmp_path) -> None:
+    repository = DecisionRepository(tmp_path / "decisions.sqlite3")
+    baseline_aggregate(repository)
+    proposed = advice("proposal", conclusion="changed", created_at=NOW)
+    evaluation = Evaluation([
+        result_for((proposed,), source="source-v1"),
+        result_for((proposed,), source="source-v2"),
+    ])
+    feed = LayeredQuoteFeed()
+    monitor = decision_monitor(tmp_path, evaluation, repository, feed=feed)
+    monitor.check(NOW)
+    feed.price = Decimal("10.01")
+    second = monitor.check(NOW + timedelta(seconds=180))
+    cycles = repository.cycles(date(2026, 7, 14), "intraday")
+    assert len(cycles) == 1
+    assert second.aggregate == cycles[0]
+
+
 def test_removed_candidate_invalidates_once(tmp_path) -> None:
     repository = DecisionRepository(tmp_path / "decisions.sqlite3")
     baseline_aggregate(repository)
@@ -323,3 +380,103 @@ def test_passing_gate_persists_reciprocal_simulation_plan(tmp_path) -> None:
     assert aggregate.advice[0].action == "simulated_plan"
     assert aggregate.advice[0].simulation_plan_id == aggregate.plans[0].plan_id
     assert aggregate.advice[0].risk_decision_id == aggregate.plans[0].risk_decision_id
+
+
+def test_source_change_with_identical_plan_semantics_does_not_append(tmp_path) -> None:
+    repository = DecisionRepository(tmp_path / "decisions.sqlite3")
+    baseline_aggregate(repository)
+    proposed = advice("proposal", conclusion="plan", created_at=NOW)
+    gate = SimulationGateContext(
+        quote_state="ready", compliance_state="ready", evidence_state="ready",
+        risk_state="approve", advice_id="proposal", risk_decision_id="risk-1",
+        compliance_snapshot_id="compliance-1", levels=QuantitativeLevels(
+            watch_price_low=Decimal("9.9"), watch_price_high=Decimal("10.1"),
+            stop_loss=Decimal("9.5"), take_profit=(Decimal("10.5"),),
+            tranches=(Decimal("0.5"),), max_position=Decimal("0.5"),
+            calculated_at=NOW, calculation_version="levels-v1",
+        ),
+    )
+    evaluation = Evaluation([
+        result_for((proposed,), source="one", gates={"proposal": gate}),
+        result_for((proposed,), source="two", gates={"proposal": gate}),
+    ])
+    monitor = decision_monitor(tmp_path, evaluation, repository)
+    monitor.check(NOW)
+    monitor.check(NOW + timedelta(seconds=180))
+    assert len(repository.cycles(date(2026, 7, 14), "intraday")) == 1
+
+
+@pytest.mark.parametrize("gate_update", [
+    {"quote_state": "blocked"}, {"compliance_state": "blocked"},
+    {"evidence_state": "blocked"}, {"risk_state": "reject"},
+    {"risk_decision_id": None}, {"compliance_snapshot_id": None}, {"levels": None},
+])
+def test_failed_gate_clears_stale_simulated_plan(gate_update, tmp_path) -> None:
+    repository = DecisionRepository(tmp_path / "decisions.sqlite3")
+    baseline_aggregate(repository)
+    proposed = advice(
+        "proposal", action="simulated_plan", simulation_plan_id="stale-plan",
+        risk_decision_id="stale-risk", conclusion="stale", created_at=NOW,
+    )
+    base_gate = SimulationGateContext(
+        quote_state="ready", compliance_state="ready", evidence_state="ready",
+        risk_state="approve", advice_id="proposal", risk_decision_id="risk-1",
+        compliance_snapshot_id="compliance-1", levels=QuantitativeLevels(
+            watch_price_low=Decimal("9.9"), watch_price_high=Decimal("10.1"),
+            stop_loss=Decimal("9.5"), take_profit=(Decimal("10.5"),),
+            tranches=(Decimal("0.5"),), max_position=Decimal("0.5"),
+            calculated_at=NOW, calculation_version="levels-v1",
+        ),
+    ).model_copy(update=gate_update)
+    aggregate = decision_monitor(
+        tmp_path, Evaluation([result_for((proposed,), gates={"proposal": base_gate})]),
+        repository,
+    ).check(NOW).aggregate
+    assert aggregate is not None
+    updated = aggregate.advice[0]
+    assert updated.action in {"observe", "wait", "avoid", "invalidated"}
+    assert updated.simulation_plan_id is None
+    assert updated.risk_decision_id is None
+    assert set(base_gate.failed_gate_reasons()).issubset(updated.risks)
+
+
+def test_missing_gate_clears_stale_simulated_plan(tmp_path) -> None:
+    repository = DecisionRepository(tmp_path / "decisions.sqlite3")
+    baseline_aggregate(repository)
+    proposed = advice(
+        "proposal", action="simulated_plan", simulation_plan_id="stale-plan",
+        risk_decision_id="stale-risk", conclusion="stale", created_at=NOW,
+    )
+    aggregate = decision_monitor(
+        tmp_path, Evaluation([result_for((proposed,), gates={})]), repository,
+    ).check(NOW).aggregate
+    assert aggregate is not None
+    updated = aggregate.advice[0]
+    assert updated.action == "observe"
+    assert updated.simulation_plan_id is None
+    assert updated.risk_decision_id is None
+    assert "simulation_gate_missing" in updated.risks
+
+
+def test_layered_quotes_retain_universe_and_update_focus_across_restart(tmp_path) -> None:
+    repository = DecisionRepository(tmp_path / "decisions.sqlite3")
+    evaluation = Evaluation([result_for(())])
+    feed = LayeredQuoteFeed()
+    database = tmp_path / "layered.sqlite3"
+    monitor = decision_monitor(
+        tmp_path, evaluation, repository, feed=feed, state_database=database,
+        focus_symbols=lambda now: ("000001",),
+        universe_symbols=lambda now: ("000001", "300001"),
+    )
+    monitor.check(NOW, scopes=frozenset({"universe"}))
+    feed.price = Decimal("10.20")
+    restarted = decision_monitor(
+        tmp_path, evaluation, repository, feed=feed, state_database=database,
+        focus_symbols=lambda now: ("000001",),
+        universe_symbols=lambda now: ("000001", "300001"),
+    )
+    restarted.check(NOW + timedelta(seconds=60), scopes=frozenset({"focus"}))
+    quotes = {item.symbol: item for item in evaluation.calls[-1].quotes}
+    assert set(quotes) == {"000001", "300001"}
+    assert quotes["000001"].price == Decimal("10.20")
+    assert quotes["300001"].price == Decimal("10")
