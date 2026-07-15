@@ -23,6 +23,8 @@ import { AShareResearchView } from "../a-shares/AShareResearchView";
 import type { AShareDiagnosis, CandidateBoard } from "../a-shares/types";
 import { DecisionWorkbench } from "../decision-workbench/DecisionWorkbench";
 import type { DecisionResponse } from "../decision-workbench/types";
+import { StockSelector } from "../stock-cockpit/StockSelector";
+import type { InstrumentSearchResponse } from "../stock-cockpit/types";
 
 type ViewState =
   | { kind: "idle" }
@@ -54,6 +56,7 @@ type Props = {
   loadAShareDiagnosis?: (symbol: string, asOf?: string) => Promise<AShareDiagnosis>;
   loadDecisionCurrent?: () => Promise<DecisionResponse>;
   loadDecisionDate?: (date: string) => Promise<DecisionResponse>;
+  searchAShareInstruments?: (query: string) => Promise<InstrumentSearchResponse>;
 };
 
 type ActiveView = "dashboard" | "a_shares" | "xingbu" | "libu" | "dongchang" | "bonds" | "news" | "operations";
@@ -132,7 +135,7 @@ function ResearchPanel({ card }: { card: ResearchCard }) {
   );
 }
 
-export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadPaperPortfolio, createPaperAccount, submitPaperOrder, loadRisk, loadCompliance, loadAudit, complianceAction, loadBondDashboard, loadBondDiagnosis, loadBondCandidates, loadNewsIntelligence, syncNews, createNewsCorrection, loadOperationsStatus, setSchedulerPaused, createBackup, verifyBackup, runManualJob, loadAShareCandidates, loadAShareDiagnosis, loadDecisionCurrent, loadDecisionDate }: Props) {
+export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadPaperPortfolio, createPaperAccount, submitPaperOrder, loadRisk, loadCompliance, loadAudit, complianceAction, loadBondDashboard, loadBondDiagnosis, loadBondCandidates, loadNewsIntelligence, syncNews, createNewsCorrection, loadOperationsStatus, setSchedulerPaused, createBackup, verifyBackup, runManualJob, loadAShareCandidates, loadAShareDiagnosis, loadDecisionCurrent, loadDecisionDate, searchAShareInstruments }: Props) {
   const [state, setState] = useState<ViewState>({ kind: "idle" });
   const [symbol, setSymbol] = useState("600000");
   const [dataState, setDataState] = useState<DataStatusState>({ kind: "idle" });
@@ -212,7 +215,10 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadPaperPor
 
       {activeView === "operations" && loadOperationsStatus && setSchedulerPaused && createBackup && verifyBackup && runManualJob && <OperationsView loadStatus={loadOperationsStatus} setSchedulerPaused={setSchedulerPaused} createBackup={createBackup} verifyBackup={verifyBackup} runManualJob={runManualJob} />}
 
-      {activeView === "dashboard" && loadDecisionCurrent && <DecisionWorkbench loadCurrent={loadDecisionCurrent} loadDate={loadDecisionDate} />}
+      {activeView === "dashboard" && loadDecisionCurrent && <div className="stock-workbench-layout">
+        {loadAShareCandidates && searchAShareInstruments && <StockSelector loadCandidates={loadAShareCandidates} search={searchAShareInstruments} />}
+        <DecisionWorkbench loadCurrent={loadDecisionCurrent} loadDate={loadDecisionDate} />
+      </div>}
 
       {activeView === "dashboard" && !loadDecisionCurrent && <main className="command-center">
         <header className="topbar">

@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { Dashboard } from "./Dashboard";
+import { SelectedInstrumentProvider } from "../instrument-selection/SelectedInstrumentProvider";
 
 const freshCard = {
   symbol: "600000",
@@ -21,6 +22,25 @@ const freshCard = {
 };
 
 describe("Dashboard", () => {
+  it("keeps the three-phase workbench beside an empty candidate selector without guessing", async () => {
+    window.history.replaceState({}, "", "/");
+    render(<SelectedInstrumentProvider><Dashboard
+      loadSnapshot={() => Promise.resolve(freshCard)}
+      loadDecisionCurrent={() => new Promise(() => undefined)}
+      loadAShareCandidates={() => Promise.resolve({
+        asset: "a_share", snapshot_id: null, input_snapshot_hash: null,
+        universe_status: "empty", as_of: "2026-07-15", factor_version: "a-share-factors-v1",
+        short_term: [], swing: [], exclusions: [],
+      })}
+      searchAShareInstruments={() => Promise.resolve({ query: "", items: [], server_time: "2026-07-15T09:30:00+08:00", source_status: "ready" })}
+    /></SelectedInstrumentProvider>);
+
+    expect(await screen.findByText("本地候选池为空")).toBeInTheDocument();
+    expect(screen.getByText("尚未选择 A 股")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "今日判断与三阶段跟踪" })).toBeInTheDocument();
+    expect(new URL(window.location.href).searchParams.has("symbol")).toBe(false);
+  });
+
   it("opens the independent A-share research workspace", async () => {
     window.history.replaceState({}, "", "/");
     render(<Dashboard

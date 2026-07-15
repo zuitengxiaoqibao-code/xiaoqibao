@@ -9,9 +9,11 @@ import { createNewsCorrection, loadNewsIntelligence, syncNews } from "../feature
 import { createBackup, loadOperationsStatus, runManualJob, setSchedulerPaused, verifyBackup } from "../features/operations/api";
 import { loadAShareCandidates, loadAShareDiagnosis } from "../features/a-shares/api";
 import { loadCurrentDecision, loadDecisionDate } from "../features/decision-workbench/api";
+import { SelectedInstrumentProvider } from "../features/instrument-selection/SelectedInstrumentProvider";
+import { searchAShareInstruments } from "../features/stock-cockpit/api";
 
 export function App() {
-  return <Dashboard
+  return <SelectedInstrumentProvider><Dashboard
     loadSnapshot={loadSnapshot}
     syncHistory={syncHistory}
     runBacktest={runBacktest}
@@ -23,6 +25,7 @@ export function App() {
     loadNewsIntelligence={loadNewsIntelligence} syncNews={syncNews} createNewsCorrection={createNewsCorrection}
     loadOperationsStatus={loadOperationsStatus} setSchedulerPaused={setSchedulerPaused} createBackup={createBackup} verifyBackup={verifyBackup} runManualJob={runManualJob}
     loadAShareCandidates={loadAShareCandidates} loadAShareDiagnosis={loadAShareDiagnosis}
+    searchAShareInstruments={searchAShareInstruments}
     loadDecisionCurrent={loadCurrentDecision} loadDecisionDate={loadDecisionDate}
-  />;
+  /></SelectedInstrumentProvider>;
 }
