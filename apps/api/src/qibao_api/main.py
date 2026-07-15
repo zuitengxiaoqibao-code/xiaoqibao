@@ -52,7 +52,10 @@ from qibao_api.routes.news import router as news_router
 from qibao_api.zhongshu.news_ai import NewsAIGateway, UnavailableNewsAIProvider
 from qibao_api.shangshu.briefing_repository import BriefingRepository
 from qibao_api.shangshu.daily_briefing import DailyBriefingWorkflow
-from qibao_api.shangshu.trading_calendar import StoredTradingCalendar
+from qibao_api.shangshu.trading_calendar import (
+    StoredTradingCalendar,
+    TencentIndexTradingDaySignal,
+)
 from qibao_api.routes.briefings import router as briefings_router
 from qibao_api.shangshu.postclose_context import RepositoryPostcloseContextSource
 from qibao_api.shangshu.operations_repository import OperationsRepository
@@ -62,8 +65,8 @@ from qibao_api.routes.operations import router as operations_router
 from qibao_api.routes.decisions import router as decisions_router
 from qibao_api.shangshu.decision_repository import DecisionRepository
 from qibao_api.shangshu.decision_runtime import (
-    CHINA_TZ,
     CandidateFactorInputSource,
+    DecisionSymbolSource,
     DecisionPhaseRunner,
     DeterministicIntradayEvaluator,
     RepositoryCandidateFactorSource,
@@ -163,6 +166,10 @@ async def lifespan(application: FastAPI):
                 settings.data_dir / "market.duckdb",
                 settings.data_dir / "parquet" / "a-shares",
             )
+            trading_calendar = StoredTradingCalendar(
+                bar_repository,
+                live_signal=TencentIndexTradingDaySignal(history_client),
+            )
             application.state.bar_repository = bar_repository
             application.state.market_data_service = MarketDataService(
                 FallbackHistorySource(history_sources),
@@ -232,12 +239,12 @@ async def lifespan(application: FastAPI):
             application.state.briefing_workflow = DailyBriefingWorkflow(
                 news_repository,
                 briefing_repository,
-                StoredTradingCalendar(bar_repository),
+                trading_calendar,
                 RepositoryPostcloseContextSource(
                     paper_repository, audit_repository
                 ),
             )
-            application.state.decision_calendar = StoredTradingCalendar(bar_repository)
+            application.state.decision_calendar = trading_calendar
             application.state.paper_service = PaperTradingService(
                 application.state.pipeline,
                 PaperBroker(paper_repository),
@@ -273,12 +280,10 @@ async def lifespan(application: FastAPI):
                 trading_calendar=application.state.decision_calendar,
                 clock=lambda: datetime.now(timezone.utc),
             )
-            def decision_symbols(_now):
-                values = {}
-                for phase in ("premarket", "intraday"):
-                    for cycle in decision_repository.cycles(_now.astimezone(CHINA_TZ).date(), phase):
-                        values.update({item.symbol: None for item in cycle.advice})
-                return tuple(values)
+            decision_symbols = DecisionSymbolSource(
+                decision_repository,
+                decision_candidate_source,
+            )
 
             intraday_monitor = IntradayMonitor(
                 feed=decision_market_feed,
@@ -317,7 +322,7 @@ async def lifespan(application: FastAPI):
             application.state.decision_phase_runner = decision_phase_runner
             application.state.scheduler = DailyBriefingScheduler(
                 application.state.briefing_workflow,
-                StoredTradingCalendar(bar_repository),
+                trading_calendar,
                 operations_repository,
                 decision_workflow=decision_phase_runner,
                 intraday_monitor=intraday_monitor,

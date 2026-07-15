@@ -7,7 +7,7 @@ from typing import Any
 import httpx
 from pydantic import AwareDatetime, BaseModel, ConfigDict
 
-from qibao_api.contracts.decision import EvidenceReference
+from qibao_api.contracts.decision import AdviceCard, EvidenceReference
 from qibao_api.contracts.market import AssetKind
 from qibao_api.gongbu.market_feed import MarketFeedSnapshot
 from qibao_api.gongbu.tencent_quotes import market_prefix, parse_tencent_snapshot
@@ -122,6 +122,26 @@ class CandidateFactorInputSource:
         return self.candidate_source.candidates(now.astimezone(CHINA_TZ).date())
 
 
+class DecisionSymbolSource:
+    def __init__(self, repository, candidate_source) -> None:
+        self.repository = repository
+        self.candidate_source = candidate_source
+
+    def __call__(self, now: datetime) -> tuple[str, ...]:
+        trading_date = now.astimezone(CHINA_TZ).date()
+        symbols = {}
+        for phase in ("premarket", "intraday"):
+            for cycle in self.repository.cycles(trading_date, phase):
+                symbols.update({item.symbol: None for item in cycle.advice})
+        if not symbols:
+            candidates = self.candidate_source.candidates(trading_date)
+            symbols.update({
+                item.symbol: None
+                for item in (*candidates.board.short_term, *candidates.board.swing)
+            })
+        return tuple(symbols)
+
+
 class TencentPollingMarketFeed:
     capabilities = frozenset({"snapshot", "snapshot_many"})
 
@@ -165,7 +185,8 @@ class DeterministicIntradayEvaluator:
     def evaluate(self, context) -> IntradayEvaluationResult:
         by_symbol = {item.symbol: item for item in context.quotes}
         advice = []
-        for current in context.current_advice:
+        current_advice = context.current_advice or self._seed_advice(context, by_symbol)
+        for current in current_advice:
             quote = by_symbol.get(current.symbol)
             if quote is None:
                 continue
@@ -201,6 +222,59 @@ class DeterministicIntradayEvaluator:
             news_event_ids=tuple(getattr(item, "event_id", "") for item in context.evidence_input),
             risk_event_ids=(),
         )
+
+    @staticmethod
+    def _seed_advice(context, by_symbol) -> tuple[AdviceCard, ...]:
+        candidate_input = context.candidate_factor_input
+        results = []
+        for horizon, entries in (
+            ("intraday", candidate_input.board.short_term),
+            ("swing", candidate_input.board.swing),
+        ):
+            for entry in entries:
+                quote = by_symbol.get(entry.symbol)
+                if quote is None:
+                    continue
+                factor = EvidenceReference(
+                    evidence_id=(
+                        f"factor-{candidate_input.board.snapshot_id}-{entry.horizon}-{entry.symbol}"
+                    ),
+                    source=entry.factor_snapshot.source,
+                    snapshot_id=candidate_input.board.snapshot_id or "candidate-board",
+                    summary=f"intraday candidate factor {entry.factor_snapshot.factor_version}",
+                    observed_at=candidate_input.captured_at,
+                )
+                results.append(AdviceCard(
+                    advice_id=f"intraday-recovery-{horizon}-{entry.symbol}",
+                    snapshot_id="intraday-recovery",
+                    asset=AssetKind.A_SHARE,
+                    symbol=entry.symbol,
+                    horizon=horizon,
+                    observation_state="watching",
+                    action="observe",
+                    conclusion="盘中恢复观察：等待当前行情与候选因子继续确认",
+                    confidence=Decimal("0.5"),
+                    supporting_evidence=(factor,),
+                    contrary_evidence=(),
+                    risks=tuple(dict.fromkeys((
+                        "premarket_snapshot_unavailable",
+                        *getattr(context.risk_input, "risks", ()),
+                        *getattr(context.compliance_input, "risks", ()),
+                    ))),
+                    invalidation_conditions=(
+                        "candidate_membership_changed",
+                        "live_quote_became_unavailable",
+                    ),
+                    quantitative_result={
+                        "candidate_score": entry.score,
+                        "membership": entry.horizon,
+                    },
+                    strategy_version=(
+                        f"intraday-recovery-v1/{entry.factor_snapshot.factor_version}"
+                    ),
+                    created_at=context.now,
+                ))
+        return tuple(results)
 
 
 class RuntimeMarketOutcome(BaseModel):
