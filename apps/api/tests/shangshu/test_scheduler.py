@@ -1,4 +1,4 @@
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta, timezone
 
 from qibao_api.shangshu.operations_repository import OperationsRepository
 from qibao_api.shangshu.scheduler import DailyBriefingScheduler
@@ -24,6 +24,17 @@ class Workflow:
             self.failures -= 1
             raise RuntimeError("temporary failure")
         return type("Report", (), {"report_id": f"report-{phase}-{len(self.calls)}"})()
+
+
+class DecisionWorkflow:
+    def __init__(self, *, fail=False):
+        self.calls = []
+        self.fail = fail
+
+    def run(self, phase, trading_date, *, now):
+        self.calls.append((phase, trading_date, now))
+        if self.fail:
+            raise RuntimeError("decision failure")
 
 
 def test_scheduler_runs_due_slots_once_and_survives_restart(tmp_path) -> None:
@@ -118,4 +129,29 @@ def test_scheduler_catches_up_previous_trading_day_after_midnight(tmp_path) -> N
     assert [call[0] for call in workflow.calls] == [
         "premarket", "intraday", "intraday", "intraday", "postclose"
     ]
+    repository.close()
+
+
+def test_scheduler_runs_optional_decision_workflow_after_successful_premarket(tmp_path) -> None:
+    repository = OperationsRepository(tmp_path / "operations.sqlite3")
+    workflow = Workflow()
+    decisions = DecisionWorkflow()
+    scheduler = DailyBriefingScheduler(
+        workflow, Calendar(), repository, decision_workflow=decisions,
+    )
+    now = datetime(2026, 7, 14, 1, 21, tzinfo=UTC)
+    scheduler.tick(now)
+    assert decisions.calls == [("premarket", TRADE_DATE, datetime(2026, 7, 14, 9, 20, tzinfo=timezone(timedelta(hours=8))))]
+    repository.close()
+
+
+def test_decision_failure_does_not_overwrite_briefing_completion(tmp_path) -> None:
+    repository = OperationsRepository(tmp_path / "operations.sqlite3")
+    scheduler = DailyBriefingScheduler(
+        Workflow(), Calendar(), repository, decision_workflow=DecisionWorkflow(fail=True),
+    )
+    scheduler.tick(datetime(2026, 7, 14, 1, 21, tzinfo=UTC))
+    events = repository.attempts_for("2026-07-14:premarket:0920")
+    assert [item["status"] for item in events] == ["started", "completed", "decision_failed"]
+    assert events[-1]["error_code"] == "runtime_error"
     repository.close()

@@ -16,13 +16,14 @@ SCHEDULE = (
 class DailyBriefingScheduler:
     def __init__(
         self, workflow, calendar, repository, *,
-        max_attempts: int = 3, catchup_days: int = 7,
+        max_attempts: int = 3, catchup_days: int = 7, decision_workflow=None,
     ) -> None:
         self.workflow = workflow
         self.calendar = calendar
         self.repository = repository
         self.max_attempts = max_attempts
         self.catchup_days = catchup_days
+        self.decision_workflow = decision_workflow
         self._run_lock = threading.RLock()
 
     def tick(self, now: datetime) -> None:
@@ -106,6 +107,16 @@ class DailyBriefingScheduler:
             slot=slot, trigger=trigger, attempt=attempt, status="completed",
             occurred_at=occurred_at, report_id=report.report_id,
         )
+        if phase == "premarket" and self.decision_workflow is not None:
+            try:
+                self.decision_workflow.run("premarket", trading_date, now=workflow_now)
+            except Exception as error:
+                self.repository.append_attempt(
+                    job_key=job_key, phase=phase, trading_date=trading_date,
+                    slot=slot, trigger=trigger, attempt=attempt,
+                    status="decision_failed", occurred_at=occurred_at,
+                    report_id=report.report_id, error_code=_error_code(error),
+                )
         return report
 
     def _persisted_report(
