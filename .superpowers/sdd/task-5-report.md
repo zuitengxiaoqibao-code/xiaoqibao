@@ -57,7 +57,7 @@ Production composition now includes:
 - Repository-backed A-share candidate/factor snapshots from the existing diagnosis service.
 - Verified news evidence snapshots with cutoff enforcement.
 - Compliance decisions from registered A-share source authorizations.
-- Audit-finding risk summaries that explicitly report unavailable risk evidence instead of inventing a market state.
+- Deterministic A-share market-risk state derived from candidate factor breadth, with open audit findings applied as an additional risk overlay; missing factor breadth degrades explicitly to `insufficient_data` without inventing a market state.
 - A synchronous Tencent polling feed carrying real normalized price, change, volume, source timestamp, fetch timestamp, and source snapshot identity.
 - A deterministic intraday evaluator that only updates observation advice from normalized quotes and never creates AI numbers or ungated plans.
 - Repository-backed post-close outcome records that remain explicitly unverifiable when observation-only advice cannot establish a deterministic direction.
