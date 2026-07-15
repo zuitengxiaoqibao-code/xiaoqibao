@@ -124,3 +124,15 @@ Production composition now includes:
 - Full frontend: `12 files, 53 tests passed`.
 - Production TypeScript/Vite build: passed.
 - Browser acceptance was not performed, per controller instruction.
+
+## Final Re-review Fixes
+
+- Intraday responses now include a complete ordered `change_stream` entry for every persisted phase snapshot. Each entry contains `snapshot_id`, `sequence`, `generated_at`, and its delta advice/plans. Materialized current observations remain separate, so consumers can either read current state or reconstruct every append-only transition from premarket onward.
+- Intraday evidence is collected from effective materialized advice, preserving evidence for unchanged premarket symbols when later deltas affect other symbols.
+- Current-mode refresh and retry use `loadCurrent` even after the current response populates the date field. `loadDate` is reserved for explicit historical selection, matching timer behavior.
+
+Focused RED/GREEN evidence:
+
+- Route test initially failed with missing `change_stream` after materializing two intraday deltas.
+- Current refresh/retry regression was added before the explicit refresh control and discriminator-aware retry implementation.
+- Focused GREEN: `10` route tests and `12` workbench tests passed; the full frontend suite contained `54` passing tests.

@@ -192,26 +192,32 @@ def test_date_specific_today_is_closed_when_calendar_does_not_confirm_trading():
 
 def test_intraday_slot_materializes_unchanged_symbols_and_keeps_latest_delta():
     day = date(2026, 7, 15)
-    def snapshot(identity, _phase):
+    def snapshot(identity, _phase, sequence=1):
         return {
-            "snapshot": {"snapshot_id": identity, "status": "ready", "data_quality": "ready", "ai_status": "not_requested"},
+            "snapshot": {"snapshot_id": identity, "sequence": sequence, "generated_at": f"2026-07-15T10:{sequence:02d}:00+08:00", "status": "ready", "data_quality": "ready", "ai_status": "not_requested"},
             "advice": [], "plans": [],
         }
     premarket = snapshot("pre-1", "premarket")
     premarket["advice"] = [
         {"advice_id": "a1", "symbol": "600000", "horizon": "intraday", "action": "observe", "strategy_version": "v1", "supporting_evidence": [], "contrary_evidence": []},
-        {"advice_id": "a2", "symbol": "000001", "horizon": "intraday", "action": "observe", "strategy_version": "v1", "supporting_evidence": [], "contrary_evidence": []},
+        {"advice_id": "a2", "symbol": "000001", "horizon": "intraday", "action": "observe", "strategy_version": "v1", "supporting_evidence": [{"evidence_id": "pre-evidence"}], "contrary_evidence": []},
     ]
     delta = snapshot("intra-1", "intraday")
     delta["advice"] = [{"advice_id": "a3", "symbol": "600000", "horizon": "intraday", "action": "wait", "strategy_version": "v1", "supporting_evidence": [], "contrary_evidence": []}]
+    delta_two = snapshot("intra-2", "intraday", 2)
+    delta_two["advice"] = [{"advice_id": "a4", "symbol": "600000", "horizon": "intraday", "action": "observe", "strategy_version": "v1", "supporting_evidence": [], "contrary_evidence": []}]
     repository = Repository({
-        (day, "premarket"): premarket, (day, "intraday"): delta,
-        (day, "intraday_cycles"): [delta],
+        (day, "premarket"): premarket, (day, "intraday"): delta_two,
+        (day, "intraday_cycles"): [delta, delta_two],
     })
     api, _ = client(now=datetime(2026, 7, 15, 10, 30, tzinfo=CHINA_TZ), repository=repository, trading_days=(day,))
 
     slot = api.get("/api/v1/decisions/current").json()["phases"]["intraday"]
 
-    assert {(item["symbol"], item["action"]) for item in slot["advice"]} == {("600000", "wait"), ("000001", "observe")}
-    assert [item["advice_id"] for item in slot["delta_advice"]] == ["a3"]
-    assert slot["delta_version"] == "intra-1"
+    assert {(item["symbol"], item["action"]) for item in slot["advice"]} == {("600000", "observe"), ("000001", "observe")}
+    assert [item["advice_id"] for item in slot["delta_advice"]] == ["a4"]
+    assert slot["delta_version"] == "intra-2"
+    assert [item["snapshot_id"] for item in slot["change_stream"]] == ["intra-1", "intra-2"]
+    assert [item["sequence"] for item in slot["change_stream"]] == [1, 2]
+    assert slot["change_stream"][0]["delta_advice"][0]["advice_id"] == "a3"
+    assert {item["evidence_id"] for item in slot["evidence"]} == {"pre-evidence"}

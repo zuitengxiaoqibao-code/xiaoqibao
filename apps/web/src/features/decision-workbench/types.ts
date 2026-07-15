@@ -24,6 +24,7 @@ export type PhaseSlot = {
   generated_at?: string; advice: Advice[]; evidence: Evidence[]; plans: SimulationPlan[];
   plan_readiness: Record<string, PlanReadiness>;
   delta_version?: string; delta_advice?: Advice[]; delta_plans?: SimulationPlan[];
+  change_stream?: Array<{ snapshot_id: string; sequence: number; generated_at: string; delta_advice: Advice[]; delta_plans: SimulationPlan[] }>;
 };
 export type DecisionResponse = {
   server_time: string; trading_date: string; current_phase: DecisionPhase; market_session: "open" | "closed";

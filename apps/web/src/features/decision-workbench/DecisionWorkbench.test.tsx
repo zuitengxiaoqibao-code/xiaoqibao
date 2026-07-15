@@ -68,6 +68,20 @@ describe("DecisionWorkbench", () => {
     expect(await screen.findByText("当前阶段暂无决策快照")).toBeInTheDocument();
   });
 
+  it("retries the current endpoint after current mode has populated a date", async () => {
+    const loadCurrent = vi.fn().mockResolvedValueOnce(response()).mockRejectedValueOnce(new Error("current failed")).mockResolvedValueOnce(response());
+    const loadDate = vi.fn();
+    render(<DecisionWorkbench loadCurrent={loadCurrent} loadDate={loadDate} />);
+    await screen.findByRole("tab", { name: "盘中监测" });
+    await loadCurrent.mock.results[0].value;
+    fireEvent.click(screen.getByRole("button", { name: "刷新当前" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("current failed");
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    await screen.findByText("当前阶段暂无决策快照");
+    expect(loadCurrent).toHaveBeenCalledTimes(3);
+    expect(loadDate).not.toHaveBeenCalled();
+  });
+
   it.each<[string, PlanReadiness | undefined]>([
     ["blocked quote", { ready: false, reasons: ["quote_blocked"], quote_state: "blocked", compliance_state: "ready", evidence_state: "ready", risk_state: "approve" }],
     ["rejected risk", { ready: false, reasons: ["risk_rejected"], quote_state: "ready", compliance_state: "ready", evidence_state: "ready", risk_state: "reject" }],
