@@ -44,7 +44,8 @@ function SectionBand({ sectionKey, title, section }: { sectionKey: string; title
   return <section className={`cockpit-section status-${section.status}`} aria-labelledby={`cockpit-${sectionKey}`}>
     <header><div><Database size={15} /><h3 id={`cockpit-${sectionKey}`}>{title}</h3></div><span>{statusNames[section.status]}</span></header>
     {reason && <div className="section-reason"><ShieldAlert size={15} /><p>{reason}</p></div>}
-    {section.status === "unavailable" || section.status === "blocked" ? !reason && <div className="section-degraded"><ShieldAlert size={16} /><p>当前没有可验证数据</p></div> : <>
+    {(section.status === "unavailable" || section.status === "blocked") && explanation && explanation !== reason && <div className="section-degraded"><ShieldAlert size={16} /><p>{explanation}</p></div>}
+    {section.status === "unavailable" || section.status === "blocked" ? !reason && !explanation && <div className="section-degraded"><ShieldAlert size={16} /><p>当前没有可验证数据</p></div> : <>
       {explanation && <p className="section-summary">{explanation}</p>}
       {metrics.length > 0 ? <details><summary><ChevronDown size={14} />查看详细指标</summary><dl>{metrics.map(([key, value]) => <div key={key}><dt>{metricNames[key] ?? key}</dt><dd>{renderValue(value)}</dd></div>)}</dl></details> : <p className="section-summary">当前快照没有可展开的指标。</p>}
     </>}

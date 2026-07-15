@@ -11,18 +11,23 @@ Base commit: `6677263`
 - Filtered news events to the selected A-share while retaining market-wide events with no instrument binding; isolated stale news responses after same-route symbol changes.
 - Made backtest default to the selected A-share without overwriting a symbol explicitly edited by the user. Input changes abort and invalidate older requests, results identify their own symbol, and bond/index codes are rejected.
 - Updated README and V1 roadmap with candidate/search/watchlist workflow, explicit degradation behavior, asset isolation, observation-only boundary, and current completion state.
+- Connected the A-share research workspace to the same URL-backed global selection, including direct URL diagnosis restore and candidate-to-global selection updates.
+- Corrected the cockpit quote DTO mapping to prefer backend `market.metrics.price`, with an explicit legacy `latest_price` fallback.
+- Isolated retained cockpit snapshots by `(symbol, live|historical date)` so only same-context refresh failures may show stale data.
+- Preserved specific unavailable explanations alongside normalized section reason codes.
+- Added cutoff-aware instrument identity resolution; historical cockpits cannot use an identity observed after their snapshot cutoff.
 
 ## TDD Evidence
 
 - Added failing tests first for news selection/filtering, stale response isolation, backtest default/edit behavior, cross-workspace deep links, browser history, and bond symbol removal.
-- Focused review-fix tests: `29 passed` after red/green implementation.
-- Full frontend suite: `105 passed`.
+- Focused final-review tests: `43 backend` and `19 frontend` passed after red/green implementation.
+- Full frontend suite: `107 passed`.
 
 ## Verification
 
-- API tests: `531 passed in 50.01s` with ASCII-only `QIBAO_DATA_DIR`.
+- API tests: `532 passed in 40.24s` with ASCII-only `QIBAO_DATA_DIR`.
 - Ruff: all checks passed.
-- Frontend tests: `105 passed`.
+- Frontend tests: `107 passed`.
 - Frontend production build: TypeScript and Vite build passed (`1606 modules transformed`).
 - Mojibake scan: no matches.
 - `git diff --check`: clean.

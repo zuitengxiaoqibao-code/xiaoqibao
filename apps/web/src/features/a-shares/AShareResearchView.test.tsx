@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { AShareResearchView } from "./AShareResearchView";
+import { SelectedInstrumentProvider } from "../instrument-selection/SelectedInstrumentProvider";
 
 
 const factor = {
@@ -52,6 +53,16 @@ const partialDiagnosis = {
 };
 
 describe("AShareResearchView", () => {
+  it("loads URL selection and writes candidate selection back to global state", async () => {
+    window.history.replaceState({}, "", "/a-shares?symbol=600000");
+    const loadDiagnosis = vi.fn(() => Promise.resolve(partialDiagnosis));
+    render(<SelectedInstrumentProvider><AShareResearchView loadCandidates={() => Promise.resolve(boards)} loadDiagnosis={loadDiagnosis} /></SelectedInstrumentProvider>);
+    expect(await screen.findByRole("heading", { name: /浦发银行.*600000/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "波段榜" }));
+    fireEvent.click(screen.getByRole("button", { name: /000001/ }));
+    expect(new URL(window.location.href).searchParams.get("symbol")).toBe("000001");
+    await waitFor(() => expect(loadDiagnosis).toHaveBeenLastCalledWith("000001", "2026-07-14"));
+  });
   it("keeps short-term and swing candidates separate", async () => {
     render(<AShareResearchView
       loadCandidates={() => Promise.resolve(boards)}

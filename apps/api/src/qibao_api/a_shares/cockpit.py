@@ -79,10 +79,11 @@ def _aware(value: datetime | date | None) -> datetime | None:
     return datetime.combine(value, time.min, tzinfo=timezone.utc)
 
 
-def _unavailable(source: str, reason: str) -> CockpitSection:
+def _unavailable(source: str, reason: str, explanation: str | None = None) -> CockpitSection:
     return CockpitSection(
         status="unavailable", source=source, observed_at=None,
-        snapshot_id=None, reason=reason, payload={},
+        snapshot_id=None, reason=reason,
+        payload={"explanation": explanation} if explanation else {},
     )
 
 
@@ -95,7 +96,7 @@ class StockDecisionCockpitService:
     async def get(
         self, symbol: AShareCode, as_of: date, cutoff: datetime
     ) -> StockCockpitSnapshot:
-        instrument = self.instrument_directory.resolve(symbol)
+        instrument = self.instrument_directory.resolve_at(symbol, cutoff)
         if instrument is None:
             raise UnknownAShareError(symbol)
 
@@ -121,14 +122,14 @@ class StockDecisionCockpitService:
             diagnosis = await self.diagnosis_service.diagnose(
                 symbol, as_of, persist=False
             )
-        except SourceAuthorizationError:
+        except SourceAuthorizationError as exc:
             return {
-                name: _unavailable("diagnosis", "source_authorization_required")
+                name: _unavailable("diagnosis", "source_authorization_required", str(exc))
                 for name in SECTION_NAMES if name not in {"funds", "backtest"}
             }
-        except DiagnosisUnavailableError:
+        except DiagnosisUnavailableError as exc:
             return {
-                name: _unavailable("diagnosis", "diagnosis_unavailable")
+                name: _unavailable("diagnosis", "diagnosis_unavailable", str(exc))
                 for name in SECTION_NAMES if name not in {"funds", "backtest"}
             }
 

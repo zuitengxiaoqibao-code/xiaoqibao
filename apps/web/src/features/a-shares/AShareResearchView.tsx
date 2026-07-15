@@ -5,6 +5,7 @@ import {
 } from "lucide-react";
 
 import type { AShareDiagnosis, CandidateBoard, CandidateEntry, DiagnosisSection } from "./types";
+import { useOptionalSelectedInstrument } from "../instrument-selection/SelectedInstrumentProvider";
 
 
 type Props = {
@@ -92,6 +93,7 @@ function Section({ name, section }: { name: string; section: DiagnosisSection })
 }
 
 export function AShareResearchView({ loadCandidates, loadDiagnosis }: Props) {
+  const globalSelection = useOptionalSelectedInstrument();
   const [board, setBoard] = useState<CandidateBoard | null>(null);
   const [tab, setTab] = useState<"short_term" | "swing">("short_term");
   const [selected, setSelected] = useState<string | null>(null);
@@ -115,7 +117,7 @@ export function AShareResearchView({ loadCandidates, loadDiagnosis }: Props) {
   useEffect(refresh, [loadCandidates]);
   const entries = useMemo(() => board ? board[tab] : [], [board, tab]);
 
-  function inspect(symbol: string) {
+  function loadSelectedDiagnosis(symbol: string) {
     if (!board) return;
     const request = ++diagnosisRequest.current;
     setSelected(symbol); setDiagnosisState("loading"); setError("");
@@ -127,6 +129,17 @@ export function AShareResearchView({ loadCandidates, loadDiagnosis }: Props) {
       setDiagnosis(null); setError(reason instanceof Error ? reason.message : "诊断加载失败"); setDiagnosisState("error");
     });
   }
+
+  function inspect(symbol: string) {
+    if (globalSelection && globalSelection.symbol !== symbol) { globalSelection.select(symbol, "candidate"); return; }
+    loadSelectedDiagnosis(symbol);
+  }
+
+  useEffect(() => {
+    if (!board || !globalSelection?.symbol) return;
+    if (selected === globalSelection.symbol && diagnosisState !== "idle") return;
+    loadSelectedDiagnosis(globalSelection.symbol);
+  }, [board, globalSelection?.symbol, diagnosisState, selected]);
 
   function selectTab(nextTab: "short_term" | "swing") {
     setTab(nextTab); resetDiagnosis(); setError("");

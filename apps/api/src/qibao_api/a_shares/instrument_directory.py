@@ -81,16 +81,22 @@ class AShareInstrumentDirectory:
             self._connection.commit()
 
     def resolve(self, symbol: str) -> AShareInstrument | None:
+        return self.resolve_at(symbol, None)
+
+    def resolve_at(
+        self, symbol: str, cutoff: datetime | None
+    ) -> AShareInstrument | None:
+        normalized_cutoff = cutoff.astimezone(timezone.utc).isoformat() if cutoff else None
         with self._lock:
             row = self._connection.execute(
                 """
                 SELECT symbol, name, exchange, observed_at, quote_quality
                 FROM a_share_instrument_observations
-                WHERE symbol = ?
+                WHERE symbol = ? AND (? IS NULL OR observed_at <= ?)
                 ORDER BY observed_at DESC, id DESC
                 LIMIT 1
                 """,
-                (symbol,),
+                (symbol, normalized_cutoff, normalized_cutoff),
             ).fetchone()
         return self._instrument(row) if row is not None else None
 

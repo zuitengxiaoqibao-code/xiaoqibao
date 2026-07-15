@@ -26,7 +26,8 @@ CUTOFF = datetime(2026, 7, 15, 6, 0, tzinfo=timezone.utc)
 
 
 class Directory:
-    def resolve(self, symbol):
+    def resolve_at(self, symbol, cutoff):
+        assert cutoff == CUTOFF
         if symbol != "600000":
             return None
         return AShareInstrument(

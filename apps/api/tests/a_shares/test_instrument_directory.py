@@ -68,6 +68,14 @@ def test_resolve_returns_latest_observation_without_deleting_history(tmp_path: P
     assert count == 2
 
 
+def test_resolve_at_never_returns_identity_observed_after_cutoff(tmp_path: Path) -> None:
+    directory = AShareInstrumentDirectory(tmp_path / "instruments.sqlite3")
+    directory.observe(instrument(name="历史名称", observed_at=NOW))
+    directory.observe(instrument(name="未来名称", observed_at=NOW + timedelta(days=1)))
+    assert directory.resolve_at("600000", NOW + timedelta(hours=1)).name == "历史名称"
+    assert directory.resolve_at("600000", NOW - timedelta(seconds=1)) is None
+
+
 def test_mixed_offset_observations_resolve_by_instant(tmp_path: Path) -> None:
     directory = AShareInstrumentDirectory(tmp_path / "instruments.sqlite3")
     directory.observe(

@@ -20,7 +20,7 @@ const advice = (overrides: Partial<Advice> = {}): Advice => ({
 const section = (status: CockpitSection["status"] = "ready", reason: string | null = null): CockpitSection => ({
   status, source: "fixture", observed_at: status === "unavailable" ? null : "2026-07-15T10:29:00+08:00",
   snapshot_id: status === "unavailable" ? null : "diagnosis-1", reason,
-  payload: { explanation: "已读取确定性指标", metrics: { latest_price: "10.25", change_percent: "1.49", pe_ttm: "5.8" }, evidence_ids: ["e1"] },
+  payload: { explanation: "已读取确定性指标", metrics: { price: "10.25", change_percent: "1.49", pe_ttm: "5.8" }, evidence_ids: ["e1"] },
 });
 
 const snapshot = (overrides: Partial<StockCockpitSnapshot> = {}): StockCockpitSnapshot => ({
@@ -51,6 +51,7 @@ describe("StockDecisionCockpit", () => {
     for (const text of ["当前判断", "支持证据", "反方证据", "关键风险", "失效条件"]) expect(screen.getByText(text)).toBeInTheDocument();
     const headings = screen.getAllByRole("heading").map((item) => item.textContent);
     expect(headings.indexOf("当前判断")).toBeLessThan(headings.indexOf("实时行情"));
+    expect(screen.getAllByText("10.25").length).toBeGreaterThan(0);
   });
 
   it("never shows a simulation plan without an authoritative ready gate", async () => {
@@ -75,6 +76,7 @@ describe("StockDecisionCockpit", () => {
     expect(screen.getByText("资金数据尚未接入")).toBeInTheDocument();
     expect(screen.getByText("尚未为该股票运行回测")).toBeInTheDocument();
     expect(screen.getAllByText(/来源：fixture/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("已读取确定性指标").length).toBeGreaterThan(0);
   });
 
   it("shows partial and stale section reasons instead of hiding degradation", async () => {
@@ -114,6 +116,16 @@ describe("StockDecisionCockpit", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("链路中断");
     expect(screen.getByRole("heading", { name: /浦发银行/ })).toBeInTheDocument();
     expect(screen.getByText("当前内容已陈旧")).toBeInTheDocument();
+  });
+
+  it("does not retain live data when a historical context request fails", async () => {
+    const load = vi.fn().mockResolvedValueOnce(snapshot()).mockRejectedValueOnce(new Error("历史快照不存在"));
+    window.history.replaceState({}, "", "/?symbol=600000");
+    const view = render(<SelectedInstrumentProvider><StockDecisionCockpit load={load} /></SelectedInstrumentProvider>);
+    await screen.findByRole("heading", { name: /浦发银行/ });
+    view.rerender(<SelectedInstrumentProvider><StockDecisionCockpit load={load} asOf="2026-07-14" /></SelectedInstrumentProvider>);
+    expect(await screen.findByRole("alert")).toHaveTextContent("历史快照不存在");
+    expect(screen.queryByRole("heading", { name: /浦发银行/ })).not.toBeInTheDocument();
   });
 
   it("does not let an old symbol response replace a newer selection", async () => {

@@ -14,7 +14,9 @@ const qualityNames = { ready: "数据完整", partial: "部分可用", blocked: 
 const sectionQualityNames = { ready: "行情有效", partial: "行情部分可用", stale: "行情陈旧", unavailable: "行情不可用", blocked: "行情已拦截" } as const;
 
 function metric(data: StockCockpitSnapshot, key: string): unknown {
-  return (data.sections.market?.payload.metrics as Record<string, unknown> | undefined)?.[key];
+  const metrics = data.sections.market?.payload.metrics as Record<string, unknown> | undefined;
+  if (key === "latest_price") return metrics?.price ?? metrics?.latest_price;
+  return metrics?.[key];
 }
 function displayNumber(value: unknown, suffix = ""): string {
   return value === null || value === undefined || value === "" ? "--" : `${String(value)}${suffix}`;
@@ -66,7 +68,8 @@ export function StockDecisionCockpit({ load, asOf, refreshToken = 0, onRefreshRe
   const generation = useRef(0);
   const controller = useRef<AbortController | null>(null);
   const hasData = useRef(false);
-  const loadedSymbol = useRef<string | null>(null);
+  const loadedContext = useRef<string | null>(null);
+  const contextKey = symbol ? `${symbol}:${asOf || "live"}` : null;
 
   const refresh = useCallback(async () => {
     if (!symbol) return;
@@ -78,17 +81,17 @@ export function StockDecisionCockpit({ load, asOf, refreshToken = 0, onRefreshRe
     try {
       const next = await load(symbol, asOf || undefined, nextController.signal);
       if (request !== generation.current || nextController.signal.aborted) return;
-      setData(next); loadedSymbol.current = next.symbol; hasData.current = true; setStale(false);
+      setData(next); loadedContext.current = contextKey; hasData.current = true; setStale(false);
     } catch (caught) {
       if (request !== generation.current || nextController.signal.aborted) return;
       setError(caught instanceof Error ? caught.message : "驾驶舱链路暂不可用");
       setStale(hasData.current);
     } finally { if (request === generation.current) setLoading(false); }
-  }, [asOf, load, symbol]);
+  }, [asOf, contextKey, load, symbol]);
 
   useEffect(() => {
-    if (!symbol) { generation.current += 1; controller.current?.abort(); setData(null); loadedSymbol.current = null; hasData.current = false; setError(""); setStale(false); return; }
-    if (loadedSymbol.current && loadedSymbol.current !== symbol) { setData(null); loadedSymbol.current = null; hasData.current = false; setStale(false); }
+    if (!symbol) { generation.current += 1; controller.current?.abort(); setData(null); loadedContext.current = null; hasData.current = false; setError(""); setStale(false); return; }
+    if (loadedContext.current !== contextKey) { setData(null); loadedContext.current = null; hasData.current = false; setStale(false); }
     void refresh();
     return () => controller.current?.abort();
   }, [symbol, load, asOf, refreshToken]);
