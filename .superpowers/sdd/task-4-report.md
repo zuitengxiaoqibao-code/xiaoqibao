@@ -73,3 +73,24 @@ git diff --check
 ```
 
 Result: 16 files and 90 tests passed; production build passed; encoding and diff checks passed.
+
+## Shared-State Review Fixes
+
+The final review identified two split-brain risks. They were fixed with one dashboard-owned state model:
+
+- `DecisionWorkbench` accepts the selected A-share and filters every phase's advice, evidence, plans, readiness, deltas, and change stream by both `asset="a_share"` and symbol. A missing selection and a selected stock with no records have explicit empty states.
+- Dashboard owns the shared `asOf` date and refresh generation. Historical date changes drive both endpoints. `DecisionWorkbench` remains the only polling clock; polling, its refresh button, and the cockpit refresh button advance the same generation so both views refresh together without a second timer.
+- Cockpit continues to abort old requests and reject old generations, while workbench filtering changes synchronously with selection. A previous stock cannot remain visible after switching.
+
+Added regression coverage for mixed-asset/mixed-symbol filtering, historical-date coordination, polling coordination, manual-refresh coordination, and existing stale-response isolation.
+
+Final verification:
+
+```powershell
+pnpm --filter @qibao/web test
+pnpm --filter @qibao/web build
+rg -n '�|锟|烫烫|\?\?\?' apps/api/src/qibao_api apps/api/tests apps/web/src README.md
+git diff --check
+```
+
+Result: 16 files and 94 tests passed; production build passed; encoding and diff checks passed.

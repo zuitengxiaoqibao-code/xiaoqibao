@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { Dashboard } from "./Dashboard";
@@ -21,6 +21,15 @@ const freshCard = {
   ],
 };
 
+const coordinatedDecision = {
+  server_time: "2026-07-15T10:30:00+08:00", trading_date: "2026-07-15", current_phase: "intraday" as const, market_session: "open" as const,
+  phases: {
+    premarket: { phase_status: "empty" as const, quality: "empty" as const, aggregate_version: null, ai_status: "not_requested" as const, advice: [], evidence: [], plans: [], plan_readiness: {} },
+    intraday: { phase_status: "empty" as const, quality: "empty" as const, aggregate_version: null, ai_status: "not_requested" as const, advice: [], evidence: [], plans: [], plan_readiness: {} },
+    postclose: { phase_status: "empty" as const, quality: "empty" as const, aggregate_version: null, ai_status: "not_requested" as const, advice: [], evidence: [], plans: [], plan_readiness: {} },
+  }, polling: { focus_interval_seconds: 60, universe_interval_seconds: 240, stale_after_seconds: 180, next_check_seconds: 60 },
+};
+
 describe("Dashboard", () => {
   it("keeps the authoritative three-phase workbench mounted with the single-stock cockpit", async () => {
     window.history.replaceState({}, "", "/");
@@ -30,6 +39,44 @@ describe("Dashboard", () => {
     /></SelectedInstrumentProvider>);
     expect(screen.getByRole("heading", { name: "先选择一只 A 股" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "今日判断与三阶段跟踪" })).toBeInTheDocument();
+  });
+
+  it("drives cockpit and workbench from the same historical date", async () => {
+    window.history.replaceState({}, "", "/?symbol=600000");
+    const loadDate = vi.fn().mockResolvedValue(coordinatedDecision);
+    const loadCockpit = vi.fn(() => new Promise<never>(() => undefined));
+    render(<SelectedInstrumentProvider><Dashboard loadSnapshot={() => Promise.resolve(freshCard)} loadDecisionCurrent={() => Promise.resolve(coordinatedDecision)} loadDecisionDate={loadDate} loadStockCockpit={loadCockpit} /></SelectedInstrumentProvider>);
+    await screen.findByRole("tab", { name: "盘中监测" });
+    fireEvent.change(screen.getByLabelText("交易日期"), { target: { value: "2026-07-14" } });
+    expect(loadDate).toHaveBeenCalledWith("2026-07-14");
+    expect(loadCockpit).toHaveBeenCalledWith("600000", "2026-07-14", expect.any(AbortSignal));
+  });
+
+  it("uses the workbench polling clock to refresh both views", async () => {
+    vi.useFakeTimers();
+    try {
+      window.history.replaceState({}, "", "/?symbol=600000");
+      const loadCurrent = vi.fn().mockResolvedValue(coordinatedDecision);
+      const loadCockpit = vi.fn(() => new Promise<never>(() => undefined));
+      render(<SelectedInstrumentProvider><Dashboard loadSnapshot={() => Promise.resolve(freshCard)} loadDecisionCurrent={loadCurrent} loadStockCockpit={loadCockpit} /></SelectedInstrumentProvider>);
+      await act(async () => { await loadCurrent.mock.results[0].value; });
+      const cockpitBefore = loadCockpit.mock.calls.length;
+      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+      expect(loadCurrent.mock.calls.length).toBeGreaterThan(1);
+      expect(loadCockpit.mock.calls.length).toBeGreaterThan(cockpitBefore);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("refreshes cockpit and workbench together from the shared refresh command", async () => {
+    window.history.replaceState({}, "", "/?symbol=600000");
+    const loadCurrent = vi.fn().mockResolvedValue(coordinatedDecision);
+    const loadCockpit = vi.fn(() => new Promise<never>(() => undefined));
+    render(<SelectedInstrumentProvider><Dashboard loadSnapshot={() => Promise.resolve(freshCard)} loadDecisionCurrent={loadCurrent} loadStockCockpit={loadCockpit} /></SelectedInstrumentProvider>);
+    await screen.findByRole("tab", { name: "盘中监测" });
+    const cockpitBefore = loadCockpit.mock.calls.length;
+    fireEvent.click(screen.getByRole("button", { name: "刷新当前" }));
+    await vi.waitFor(() => expect(loadCurrent.mock.calls.length).toBeGreaterThan(1));
+    expect(loadCockpit.mock.calls.length).toBeGreaterThan(cockpitBefore);
   });
   it("keeps the three-phase workbench beside an empty candidate selector without guessing", async () => {
     window.history.replaceState({}, "", "/");

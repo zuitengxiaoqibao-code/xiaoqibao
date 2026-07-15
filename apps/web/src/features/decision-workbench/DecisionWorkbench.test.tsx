@@ -179,4 +179,17 @@ describe("DecisionWorkbench", () => {
     expect(screen.getByText(/000001 · 等待 · 风险条件变化/)).toBeInTheDocument();
     expect(screen.getByText("风险规则触发")).toBeInTheDocument();
   });
+
+  it("strictly filters advice and change-stream records to the selected A-share", async () => {
+    const selected = {
+      advice_id: "selected", snapshot_id: "selected-snapshot", asset: "a_share" as const, symbol: "600000", horizon: "intraday" as const, observation_state: "watching", action: "wait" as const,
+      conclusion: "浦发等待", confidence: "0.5", supporting_evidence: [{ evidence_id: "e-selected", source: "tencent", snapshot_id: "q1", summary: "浦发证据", observed_at: "2026-07-15T10:29:00+08:00" }], contrary_evidence: [], risks: ["波动"], invalidation_conditions: ["条件变化"], plain_language_explanation: null, quantitative_result: {}, ai_interpretation_id: null, risk_decision_id: null, simulation_plan_id: null, simulation_gate: null, previous_advice_id: null, changed_fields: [], strategy_version: "v1", created_at: "2026-07-15T10:30:00+08:00",
+    };
+    const foreign = { ...selected, advice_id: "foreign", symbol: "000001", conclusion: "平安建议" };
+    const bond = { ...selected, advice_id: "bond", asset: "convertible_bond" as const, conclusion: "转债建议" };
+    const slot = { ...emptySlot, phase_status: "ready" as const, quality: "ready" as const, aggregate_version: "s1", ai_status: "not_requested" as const, advice: [selected, foreign, bond], change_stream: [{ snapshot_id: "s1", sequence: 1, generated_at: selected.created_at, delta_advice: [selected, foreign, bond], delta_plans: [] }] };
+    render(<DecisionWorkbench selectedSymbol="600000" loadCurrent={() => Promise.resolve(response({ phases: { premarket: emptySlot, intraday: slot, postclose: emptySlot } }))} />);
+    expect(await screen.findByText(/600000 · 等待 · 浦发等待/)).toBeInTheDocument();
+    expect(screen.queryByText(/000001|平安建议|转债建议/)).not.toBeInTheDocument();
+  });
 });

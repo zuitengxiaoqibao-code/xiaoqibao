@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 import {
   Activity, Archive, BookOpenCheck, Boxes, BriefcaseBusiness, Building2,
   ChevronRight, CircleDollarSign, Database, Gauge, Landmark, Radar, Search,
@@ -27,6 +27,7 @@ import { StockSelector } from "../stock-cockpit/StockSelector";
 import { StockDecisionCockpit } from "../stock-cockpit/StockDecisionCockpit";
 import type { InstrumentSearchResponse, StockCockpitSnapshot } from "../stock-cockpit/types";
 import { commitLocation } from "../instrument-selection/location";
+import { useSelectedInstrument } from "../instrument-selection/SelectedInstrumentProvider";
 
 type ViewState =
   | { kind: "idle" }
@@ -138,6 +139,21 @@ function ResearchPanel({ card }: { card: ResearchCard }) {
   );
 }
 
+function CoordinatedStockWorkbench({ loadCockpit, loadCurrent, loadDate }: {
+  loadCockpit?: (symbol: string, asOf?: string, signal?: AbortSignal) => Promise<StockCockpitSnapshot>;
+  loadCurrent: () => Promise<DecisionResponse>; loadDate?: (date: string) => Promise<DecisionResponse>;
+}) {
+  const { symbol } = useSelectedInstrument();
+  const [asOf, setAsOf] = useState("");
+  const [refreshToken, setRefreshToken] = useState(0);
+  const changeAsOf = useCallback((date: string) => setAsOf(date), []);
+  const refreshBoth = useCallback(() => setRefreshToken((value) => value + 1), []);
+  return <div className="stock-workbench-main">
+    {loadCockpit && <StockDecisionCockpit load={loadCockpit} asOf={asOf} refreshToken={refreshToken} onRefreshRequest={refreshBoth} />}
+    <DecisionWorkbench loadCurrent={loadCurrent} loadDate={loadDate} selectedSymbol={symbol} asOf={asOf} onAsOfChange={changeAsOf} refreshToken={refreshToken} onRefresh={refreshBoth} />
+  </div>;
+}
+
 export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadPaperPortfolio, createPaperAccount, submitPaperOrder, loadRisk, loadCompliance, loadAudit, complianceAction, loadBondDashboard, loadBondDiagnosis, loadBondCandidates, loadNewsIntelligence, syncNews, createNewsCorrection, loadOperationsStatus, setSchedulerPaused, createBackup, verifyBackup, runManualJob, loadAShareCandidates, loadAShareDiagnosis, loadDecisionCurrent, loadDecisionDate, searchAShareInstruments, loadStockCockpit }: Props) {
   const [state, setState] = useState<ViewState>({ kind: "idle" });
   const [symbol, setSymbol] = useState("600000");
@@ -220,7 +236,7 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadPaperPor
 
       {activeView === "dashboard" && loadDecisionCurrent && <div className="stock-workbench-layout">
         {loadAShareCandidates && searchAShareInstruments && <StockSelector loadCandidates={loadAShareCandidates} search={searchAShareInstruments} />}
-        <div className="stock-workbench-main">{loadStockCockpit && <StockDecisionCockpit load={loadStockCockpit} />}<DecisionWorkbench loadCurrent={loadDecisionCurrent} loadDate={loadDecisionDate} /></div>
+        <CoordinatedStockWorkbench loadCockpit={loadStockCockpit} loadCurrent={loadDecisionCurrent} loadDate={loadDecisionDate} />
       </div>}
 
       {activeView === "dashboard" && !loadDecisionCurrent && <main className="command-center">
