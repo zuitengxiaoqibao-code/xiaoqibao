@@ -15,3 +15,8 @@ class Settings(BaseSettings):
     @property
     def database_url(self) -> str:
         return f"sqlite:///{(self.data_dir / 'qibao.db').as_posix()}"
+
+    @computed_field
+    @property
+    def decision_database_path(self) -> Path:
+        return self.data_dir / "decisions.sqlite3"

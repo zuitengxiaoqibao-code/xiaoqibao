@@ -91,3 +91,17 @@ def test_verified_backup_restores_only_to_a_new_empty_directory(tmp_path) -> Non
     assert (target / "market.duckdb").is_file()
     with sqlite3.connect(target / "paper.sqlite3") as connection:
         assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+
+
+def test_restore_drill_verifies_decision_repository_hash_chain(tmp_path) -> None:
+    from qibao_api.shangshu.decision_repository import DecisionRepository
+
+    data_dir = tmp_path / "runtime"
+    data_dir.mkdir()
+    decisions = DecisionRepository(data_dir / "decisions.sqlite3")
+    decisions.close()
+    bars = BarRepository(data_dir / "market.duckdb", data_dir / "parquet" / "a-shares")
+    service = BackupService(data_dir, bars)
+    created = service.create()
+
+    assert service.verify(created.backup_id, restore_drill=True).restore_drill_passed is True

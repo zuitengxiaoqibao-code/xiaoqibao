@@ -295,6 +295,7 @@ class BackupService:
         from qibao_api.libu_compliance.repository import ComplianceRepository
         from qibao_api.shangshu.briefing_repository import BriefingRepository
         from qibao_api.shangshu.operations_repository import OperationsRepository
+        from qibao_api.shangshu.decision_repository import DecisionRepository
 
         checks = (
             ("news.sqlite3", NewsRepository, lambda repo: (
@@ -315,6 +316,7 @@ class BackupService:
             ("bond-diagnoses.sqlite3", BondDiagnosisRepository,
              lambda repo: repo.latest_by_bond()),
             ("operations.sqlite3", OperationsRepository, lambda repo: repo.jobs()),
+            ("decisions.sqlite3", DecisionRepository, lambda repo: repo.cycles()),
             ("a-share-research.sqlite3", AShareResearchRepository,
              lambda repo: repo.verify_all()),
         )

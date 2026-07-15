@@ -21,6 +21,8 @@ import { OperationsView } from "../operations/OperationsView";
 import type { BackupRecord, BackupVerification, OperationsStatus } from "../operations/types";
 import { AShareResearchView } from "../a-shares/AShareResearchView";
 import type { AShareDiagnosis, CandidateBoard } from "../a-shares/types";
+import { DecisionWorkbench } from "../decision-workbench/DecisionWorkbench";
+import type { DecisionResponse } from "../decision-workbench/types";
 
 type ViewState =
   | { kind: "idle" }
@@ -50,6 +52,8 @@ type Props = {
   runManualJob?: (phase: string, tradingDate: string) => Promise<{ report_id: string }>;
   loadAShareCandidates?: () => Promise<CandidateBoard>;
   loadAShareDiagnosis?: (symbol: string, asOf?: string) => Promise<AShareDiagnosis>;
+  loadDecisionCurrent?: () => Promise<DecisionResponse>;
+  loadDecisionDate?: (date: string) => Promise<DecisionResponse>;
 };
 
 type ActiveView = "dashboard" | "a_shares" | "xingbu" | "libu" | "dongchang" | "bonds" | "news" | "operations";
@@ -128,7 +132,7 @@ function ResearchPanel({ card }: { card: ResearchCard }) {
   );
 }
 
-export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadPaperPortfolio, createPaperAccount, submitPaperOrder, loadRisk, loadCompliance, loadAudit, complianceAction, loadBondDashboard, loadBondDiagnosis, loadBondCandidates, loadNewsIntelligence, syncNews, createNewsCorrection, loadOperationsStatus, setSchedulerPaused, createBackup, verifyBackup, runManualJob, loadAShareCandidates, loadAShareDiagnosis }: Props) {
+export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadPaperPortfolio, createPaperAccount, submitPaperOrder, loadRisk, loadCompliance, loadAudit, complianceAction, loadBondDashboard, loadBondDiagnosis, loadBondCandidates, loadNewsIntelligence, syncNews, createNewsCorrection, loadOperationsStatus, setSchedulerPaused, createBackup, verifyBackup, runManualJob, loadAShareCandidates, loadAShareDiagnosis, loadDecisionCurrent, loadDecisionDate }: Props) {
   const [state, setState] = useState<ViewState>({ kind: "idle" });
   const [symbol, setSymbol] = useState("600000");
   const [dataState, setDataState] = useState<DataStatusState>({ kind: "idle" });
@@ -208,7 +212,9 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadPaperPor
 
       {activeView === "operations" && loadOperationsStatus && setSchedulerPaused && createBackup && verifyBackup && runManualJob && <OperationsView loadStatus={loadOperationsStatus} setSchedulerPaused={setSchedulerPaused} createBackup={createBackup} verifyBackup={verifyBackup} runManualJob={runManualJob} />}
 
-      {activeView === "dashboard" && <main className="command-center">
+      {activeView === "dashboard" && loadDecisionCurrent && <DecisionWorkbench loadCurrent={loadDecisionCurrent} loadDate={loadDecisionDate} />}
+
+      {activeView === "dashboard" && !loadDecisionCurrent && <main className="command-center">
         <header className="topbar">
           <div><p className="eyebrow">尚书省 / 全域指令视图</p><h1>今日情报态势</h1></div>
           <div className="system-state"><span className="pulse-dot" /><div><b>工部数据链路</b><small>等待调取</small></div></div>

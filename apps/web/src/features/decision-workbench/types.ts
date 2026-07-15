@@ -1,0 +1,25 @@
+export type DecisionPhase = "premarket" | "intraday" | "postclose";
+export type Evidence = { evidence_id: string; source: string; snapshot_id: string; summary: string; observed_at: string };
+export type Advice = {
+  advice_id: string; snapshot_id: string; symbol: string; horizon: "intraday" | "swing";
+  action: "observe" | "wait" | "avoid" | "invalidated" | "simulated_plan";
+  conclusion: string; confidence: string; supporting_evidence: Evidence[]; contrary_evidence: Evidence[];
+  risks: string[]; invalidation_conditions: string[]; plain_language_explanation?: string | null;
+  strategy_version: string; created_at: string; simulation_plan_id?: string | null; risk_decision_id?: string | null;
+};
+export type SimulationPlan = {
+  plan_id: string; advice_id: string; risk_decision_id: string; compliance_snapshot_id: string;
+  watch_price_low: string; watch_price_high: string; stop_loss: string; take_profit: string[];
+  tranches: string[]; max_position: string; invalidation_conditions: string[];
+  strategy_version: string; risk_version: string; compliance_version: string;
+};
+export type PhaseSlot = {
+  phase_status: "empty" | "ready" | "partial" | "blocked"; quality: "empty" | "ready" | "partial" | "blocked";
+  aggregate_version: string | null; strategy_versions?: string[]; ai_status: "ready" | "unavailable" | "not_requested";
+  generated_at?: string; advice: Advice[]; evidence: Evidence[]; plans: SimulationPlan[];
+};
+export type DecisionResponse = {
+  server_time: string; trading_date: string; current_phase: DecisionPhase; market_session: "open" | "closed";
+  phases: Record<DecisionPhase, PhaseSlot>;
+  polling: { focus_interval_seconds: number; universe_interval_seconds: number; stale_after_seconds: number; next_check_seconds: number | null };
+};

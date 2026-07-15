@@ -59,6 +59,8 @@ from qibao_api.shangshu.operations_repository import OperationsRepository
 from qibao_api.shangshu.scheduler import DailyBriefingScheduler
 from qibao_api.gongbu.backup_service import BackupService
 from qibao_api.routes.operations import router as operations_router
+from qibao_api.routes.decisions import router as decisions_router
+from qibao_api.shangshu.decision_repository import DecisionRepository
 
 
 logger = logging.getLogger(__name__)
@@ -108,6 +110,10 @@ async def lifespan(application: FastAPI):
     application.state.a_share_research_repository = a_share_research_repository
     briefing_repository = BriefingRepository(settings.data_dir / "briefings.sqlite3")
     application.state.briefing_repository = briefing_repository
+    decision_repository = DecisionRepository(
+        getattr(settings, "decision_database_path", settings.data_dir / "decisions.sqlite3")
+    )
+    application.state.decision_repository = decision_repository
     async with httpx.AsyncClient(timeout=10) as client:
         with httpx.Client(timeout=10) as history_client:
             history_sources = []
@@ -209,6 +215,7 @@ async def lifespan(application: FastAPI):
                     paper_repository, audit_repository
                 ),
             )
+            application.state.decision_calendar = StoredTradingCalendar(bar_repository)
             application.state.paper_service = PaperTradingService(
                 application.state.pipeline,
                 PaperBroker(paper_repository),
@@ -249,6 +256,7 @@ async def lifespan(application: FastAPI):
                 audit_repository.close()
                 operations_repository.close()
                 a_share_research_repository.close()
+                decision_repository.close()
     engine.dispose()
 
 
@@ -280,3 +288,4 @@ app.include_router(convertible_bonds_router)
 app.include_router(news_router)
 app.include_router(briefings_router)
 app.include_router(operations_router)
+app.include_router(decisions_router)

@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from fastapi import Request
 
 from qibao_api.gongbu.data_service import MarketDataService
@@ -62,3 +64,15 @@ def get_backup_service(request: Request):
 
 def get_a_share_diagnosis_service(request: Request):
     return request.app.state.a_share_diagnosis_service
+
+
+def get_decision_repository(request: Request):
+    return request.app.state.decision_repository
+
+
+def get_decision_calendar(request: Request):
+    return request.app.state.decision_calendar
+
+
+def get_server_time() -> datetime:
+    return datetime.now(timezone.utc)

@@ -8,6 +8,7 @@ import { loadBondCandidates, loadBondDashboard, loadBondDiagnosis } from "../fea
 import { createNewsCorrection, loadNewsIntelligence, syncNews } from "../features/news-intelligence/api";
 import { createBackup, loadOperationsStatus, runManualJob, setSchedulerPaused, verifyBackup } from "../features/operations/api";
 import { loadAShareCandidates, loadAShareDiagnosis } from "../features/a-shares/api";
+import { loadCurrentDecision, loadDecisionDate } from "../features/decision-workbench/api";
 
 export function App() {
   return <Dashboard
@@ -22,5 +23,6 @@ export function App() {
     loadNewsIntelligence={loadNewsIntelligence} syncNews={syncNews} createNewsCorrection={createNewsCorrection}
     loadOperationsStatus={loadOperationsStatus} setSchedulerPaused={setSchedulerPaused} createBackup={createBackup} verifyBackup={verifyBackup} runManualJob={runManualJob}
     loadAShareCandidates={loadAShareCandidates} loadAShareDiagnosis={loadAShareDiagnosis}
+    loadDecisionCurrent={loadCurrentDecision} loadDecisionDate={loadDecisionDate}
   />;
 }
