@@ -105,6 +105,12 @@ def test_rejects_number_even_when_same_token_exists_in_evidence() -> None:
     assert subject.explain(numeric_request()).status == "unavailable"
 
 
+@pytest.mark.parametrize("text", ["增长10%", "上涨12.3%", "回撤-3.5%"])
+def test_rejects_ascii_numbers_adjacent_to_chinese_text(text: str) -> None:
+    subject, _ = gateway(json.dumps({"summary": text, "statements": []}, ensure_ascii=False))
+    assert subject.explain(request()).status == "unavailable"
+
+
 @pytest.mark.parametrize("text", [
     "Set the price", "Define a target", "Increase the weight", "Change the allocation",
     "给出价格", "设定目标", "调整权重", "分配资金", "市场点位",

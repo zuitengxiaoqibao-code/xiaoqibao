@@ -88,3 +88,23 @@ Review GREEN result: `37 passed in 2.00s`.
 
 Final review verification: focused `37 passed in 1.83s`; full API `411 passed in 27.17s`;
 Ruff clean; mojibake scan empty; `git diff --check` clean.
+
+## Unicode-Adjacent Number Review Fix
+
+RED command:
+
+```powershell
+.venv\Scripts\python.exe -m pytest apps/api/tests/zhongshu/test_decision_ai.py -q
+```
+
+RED result: `1 failed, 18 passed in 0.70s`; `增长10%` bypassed the Unicode-aware `\w`
+lookbehind, while punctuation happened to expose the decimal and signed cases.
+
+GREEN result: AI-focused `19 passed in 0.56s`; Task 2 focused `40 passed in 1.58s`.
+The matcher now rejects ASCII digit sequences anywhere, including signs, decimals, percentages, and
+comma-grouped values adjacent to Chinese text.
+
+Final verification: focused `40 passed in 1.57s`; full API rerun `414 passed in 24.23s`;
+Ruff clean; mojibake scan empty; `git diff --check` clean. The first full-suite attempt had one
+environmental DuckDB path decode failure with 413 tests passing; that test passed alone and the complete
+suite then passed on rerun.

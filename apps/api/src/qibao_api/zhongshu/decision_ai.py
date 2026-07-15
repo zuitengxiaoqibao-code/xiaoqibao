@@ -72,7 +72,7 @@ _PLAN_LANGUAGE = re.compile(
     r"take[- ]?profit|position|score|买入|卖出|价格|目标|止损|止盈|仓位|"
     r"权重|分配资金|评分|点位)", re.IGNORECASE,
 )
-_NUMBER = re.compile(r"(?<![\w])[-+]?\d+(?:\.\d+)?%?")
+_NUMBER = re.compile(r"[+-]?(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\.[0-9]+)?%?")
 
 
 class DecisionAIGateway:
