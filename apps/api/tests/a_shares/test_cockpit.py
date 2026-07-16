@@ -37,6 +37,22 @@ class Directory:
         )
 
 
+class AcceptanceDirectory:
+    def resolve_at(self, symbol, cutoff):
+        assert cutoff == CUTOFF
+        names = {
+            "600000": "浦发银行",
+            "600519": "贵州茅台",
+            "000001": "平安银行",
+        }
+        if symbol not in names:
+            return None
+        return AShareInstrument(
+            symbol=symbol, name=names[symbol], exchange="sz" if symbol.startswith("0") else "sh",
+            observed_at=CUTOFF, quote_quality="ready",
+        )
+
+
 class Diagnosis:
     async def diagnose(self, symbol, as_of, *, persist=True):
         assert persist is False
@@ -240,6 +256,30 @@ class SimulationDecisions:
         if phase != "intraday":
             return []
         return [aggregate((simulated_advice(),), plans=self.plans)]
+
+
+@pytest.mark.asyncio
+async def test_candidate_and_two_non_candidates_keep_separate_assessment_and_plan_layers() -> None:
+    subject = StockDecisionCockpitService(
+        AcceptanceDirectory(), Diagnosis(),
+        SimulationDecisions((simulation_plan(),)), clock=lambda: CUTOFF,
+    )
+
+    results = {
+        symbol: await subject.get(symbol, TRADE_DATE, CUTOFF)
+        for symbol in ("600000", "600519", "000001")
+    }
+
+    assert all(result.assessment.symbol == symbol for symbol, result in results.items())
+    assert all(result.ai_status == "unconfigured" for result in results.values())
+    assert all(result.ai_explanation is None for result in results.values())
+    assert results["600000"].candidate_membership == ("short_term",)
+    assert results["600000"].assessment.simulation_eligible is True
+    for symbol in ("600519", "000001"):
+        assert results[symbol].candidate_membership == ()
+        assert results[symbol].current_advice == ()
+        assert results[symbol].assessment.simulation_eligible is False
+        assert results[symbol].assessment.authorized_simulation_plan_id is None
 
 
 @pytest.mark.asyncio
