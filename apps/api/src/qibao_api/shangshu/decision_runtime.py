@@ -1,13 +1,15 @@
 import hashlib
+import inspect
 import json
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Any
+from typing import Any, Protocol
 
 import httpx
 from pydantic import AwareDatetime, BaseModel, ConfigDict
 
 from qibao_api.contracts.decision import AdviceCard, EvidenceReference
+from qibao_api.a_shares.models import CandidateBoard
 from qibao_api.contracts.market import AssetKind
 from qibao_api.gongbu.market_feed import MarketFeedSnapshot
 from qibao_api.gongbu.tencent_quotes import market_prefix, parse_tencent_snapshot
@@ -22,20 +24,43 @@ from qibao_api.zhongshu.premarket_decision import (
 CHINA_TZ = timezone(timedelta(hours=8))
 
 
+class CutoffCandidateService(Protocol):
+    def candidates(
+        self, as_of: date, *, cutoff: datetime | None = None,
+    ) -> CandidateBoard: ...
+
+
 def _identity(prefix: str, value: Any) -> str:
     payload = json.dumps(value, default=str, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return f"{prefix}-{hashlib.sha256(payload.encode('utf-8')).hexdigest()[:24]}"
 
 
 class RepositoryCandidateFactorSource:
-    def __init__(self, candidate_service, clock=lambda: datetime.now(timezone.utc)) -> None:
+    def __init__(
+        self, candidate_service: CutoffCandidateService,
+        clock=lambda: datetime.now(timezone.utc),
+    ) -> None:
         self.candidate_service = candidate_service
         self.clock = clock
 
     def candidates(
         self, as_of: date, cutoff: datetime | None = None,
     ) -> CandidateInputSnapshot:
-        board = self.candidate_service.candidates(as_of)
+        method = self.candidate_service.candidates
+        if cutoff is None:
+            board = method(as_of)
+        else:
+            signature = inspect.signature(method)
+            try:
+                cutoff_parameter = signature.parameters["cutoff"]
+                signature.bind(as_of, cutoff=cutoff)
+                if cutoff_parameter.kind is inspect.Parameter.POSITIONAL_ONLY:
+                    raise TypeError("cutoff must accept keyword calls")
+            except (KeyError, TypeError) as error:
+                raise RuntimeError(
+                    "candidate service cannot provide a cutoff snapshot"
+                ) from error
+            board = method(as_of, cutoff=cutoff)
         return CandidateInputSnapshot(
             board=board,
             captured_at=cutoff or self.clock(),
@@ -71,7 +96,7 @@ class RepositoryRiskSource:
         self.candidate_service = candidate_service
 
     def summarize(self, trading_date: date, cutoff: datetime) -> MarketRiskInputSnapshot:
-        board = self.candidate_service.candidates(trading_date)
+        board = self.candidate_service.candidates(trading_date, cutoff=cutoff)
         entries = tuple((*board.short_term, *board.swing))
         findings = tuple(
             item for item in self.audit_repository.list_findings(asset=AssetKind.A_SHARE)

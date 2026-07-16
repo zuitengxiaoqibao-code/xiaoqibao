@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 import duckdb
@@ -91,3 +91,19 @@ def test_latest_many_rejects_non_a_share_symbols(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="A-share"):
         repository.latest_many(["113001"], limit=60, as_of=date(2026, 7, 14))
+
+
+def test_cutoff_excludes_bars_ingested_after_decision_window(tmp_path) -> None:
+    repository = BarRepository(tmp_path / "market.duckdb", tmp_path / "parquet")
+    repository.upsert(make_history("600000", 60))
+    cutoff = datetime(2026, 7, 15, 9, 25, tzinfo=UTC)
+    with duckdb.connect(str(repository.database_path)) as connection:
+        connection.execute(
+            "UPDATE daily_bars SET ingested_at = ?",
+            [datetime(2026, 7, 15, 9, 26)],
+        )
+
+    assert repository.symbols_with_history(60, date(2026, 7, 15), cutoff=cutoff) == []
+    assert repository.latest_many(
+        ["600000"], 60, date(2026, 7, 15), cutoff=cutoff,
+    ) == {"600000": []}

@@ -82,8 +82,13 @@ class Calendar:
 
 
 class CandidateService:
-    def __init__(self, value): self.value = value
-    def candidates(self, as_of, cutoff=None): return self.value
+    def __init__(self, value):
+        self.value = value
+        self.cutoffs = []
+
+    def candidates(self, as_of, cutoff=None):
+        self.cutoffs.append(cutoff)
+        return self.value
 
 
 class NewsRepository:
@@ -142,6 +147,25 @@ def test_window_and_confirmation_fail_explicitly(tmp_path) -> None:
     subject, _ = service(tmp_path / "other")
     with pytest.raises(ValueError, match="window"):
         subject.run(TRADE_DATE, datetime(2026, 7, 14, 15, 0, tzinfo=TZ))
+
+
+def test_late_premarket_run_requests_frozen_window_end(tmp_path) -> None:
+    subject, _ = service(tmp_path)
+
+    subject.run(TRADE_DATE, LATE_TIME)
+
+    assert subject.candidate_service.cutoffs == [WINDOW_END]
+
+
+def test_explicit_cutoff_rejects_legacy_candidate_service() -> None:
+    class LegacyCandidateService:
+        def candidates(self, as_of, **kwargs):
+            return candidate_input().board
+
+    source = RepositoryCandidateFactorSource(LegacyCandidateService(), clock=lambda: LATE_TIME)
+
+    with pytest.raises(RuntimeError, match="cutoff"):
+        source.candidates(TRADE_DATE, cutoff=WINDOW_END)
 
 
 def test_short_term_and_swing_remain_separate_and_future_news_is_excluded(tmp_path) -> None:

@@ -64,9 +64,12 @@ class AShareDiagnosis(BaseModel):
 
 
 class BarRepositoryPort(Protocol):
-    def symbols_with_history(self, minimum_bars: int, as_of: date) -> list[str]: ...
+    def symbols_with_history(
+        self, minimum_bars: int, as_of: date, *, cutoff: datetime | None = None,
+    ) -> list[str]: ...
     def latest_many(
-        self, symbols: list[str], limit: int, as_of: date
+        self, symbols: list[str], limit: int, as_of: date,
+        *, cutoff: datetime | None = None,
     ) -> dict[str, list[DailyBar]]: ...
 
 
@@ -114,9 +117,17 @@ class AShareDiagnosisService:
         self.research_repository = research_repository
         self.clock = clock
 
-    def candidates(self, as_of: date, limit: int = 20) -> CandidateBoard:
-        symbols = self.bar_repository.symbols_with_history(60, as_of)
-        histories = self.bar_repository.latest_many(symbols, 60, as_of)
+    def candidates(
+        self, as_of: date, limit: int = 20, *, cutoff: datetime | None = None,
+    ) -> CandidateBoard:
+        if cutoff is None:
+            symbols = self.bar_repository.symbols_with_history(60, as_of)
+            histories = self.bar_repository.latest_many(symbols, 60, as_of)
+        else:
+            symbols = self.bar_repository.symbols_with_history(60, as_of, cutoff=cutoff)
+            histories = self.bar_repository.latest_many(
+                symbols, 60, as_of, cutoff=cutoff,
+            )
         snapshots = []
         exclusions = []
         for symbol in symbols:

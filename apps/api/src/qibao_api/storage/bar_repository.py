@@ -1,7 +1,7 @@
 from pathlib import Path
 import shutil
 import threading
-from datetime import date
+from datetime import date, datetime, timezone
 
 import duckdb
 
@@ -94,7 +94,9 @@ class BarRepository:
             ).fetchall()
         return [row[0] for row in rows]
 
-    def symbols_with_history(self, minimum_bars: int, as_of: date) -> list[str]:
+    def symbols_with_history(
+        self, minimum_bars: int, as_of: date, *, cutoff: datetime | None = None,
+    ) -> list[str]:
         if minimum_bars < 1:
             raise ValueError("minimum_bars must be positive")
         with self._lock, self._connect() as connection:
@@ -102,12 +104,12 @@ class BarRepository:
                 """
                 SELECT symbol
                 FROM daily_bars
-                WHERE trade_date <= ?
+                WHERE trade_date <= ? AND (? IS NULL OR ingested_at <= ?)
                 GROUP BY symbol
                 HAVING count(DISTINCT trade_date) >= ?
                 ORDER BY symbol
                 """,
-                [as_of, minimum_bars],
+                [as_of, _database_cutoff(cutoff), _database_cutoff(cutoff), minimum_bars],
             ).fetchall()
         symbols = []
         for row in rows:
@@ -122,6 +124,8 @@ class BarRepository:
         symbols: list[str],
         limit: int,
         as_of: date,
+        *,
+        cutoff: datetime | None = None,
     ) -> dict[str, list[DailyBar]]:
         if limit < 1:
             raise ValueError("limit must be positive")
@@ -141,11 +145,15 @@ class BarRepository:
                     ) AS row_number
                     FROM daily_bars
                     WHERE symbol IN ({placeholders}) AND trade_date <= ?
+                        AND (? IS NULL OR ingested_at <= ?)
                 ) ranked
                 WHERE row_number <= ?
                 ORDER BY symbol, trade_date
                 """,
-                [*validated, as_of, limit],
+                [
+                    *validated, as_of, _database_cutoff(cutoff),
+                    _database_cutoff(cutoff), limit,
+                ],
             ).fetchall()
         result = {symbol: [] for symbol in validated}
         for row in rows:
@@ -186,3 +194,11 @@ class BarRepository:
                     target_dir / "parquet" / self.parquet_dir.name,
                     dirs_exist_ok=True,
                 )
+
+
+def _database_cutoff(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("cutoff must include a timezone")
+    return value.astimezone(timezone.utc).replace(tzinfo=None)

@@ -23,8 +23,10 @@ NOW = datetime(2026, 7, 15, 9, 20, tzinfo=timezone.utc)
 class Candidates:
     def __init__(self, board):
         self.board = board
+        self.cutoffs = []
 
-    def candidates(self, _date):
+    def candidates(self, _date, *, cutoff=None):
+        self.cutoffs.append(cutoff)
         return self.board
 
 
@@ -45,13 +47,15 @@ def board(scores):
 
 
 def test_market_risk_is_available_from_candidate_breadth_without_audit_findings():
-    result = RepositoryRiskSource(Audit(), Candidates(board([12, 8]))).summarize(
+    candidates = Candidates(board([12, 8]))
+    result = RepositoryRiskSource(Audit(), candidates).summarize(
         date(2026, 7, 15), NOW
     )
 
     assert result.available is True
     assert result.market_state == "strong"
     assert result.risks == ()
+    assert candidates.cutoffs == [NOW]
 
 
 def test_audit_findings_are_an_additional_market_risk_signal():

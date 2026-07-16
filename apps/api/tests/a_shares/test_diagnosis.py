@@ -237,6 +237,33 @@ def test_candidates_use_only_local_symbols_with_enough_history() -> None:
     assert board.as_of == AS_OF
 
 
+def test_candidates_pass_cutoff_to_bar_queries() -> None:
+    cutoff = datetime(2026, 7, 14, 9, 25, tzinfo=UTC)
+
+    class CutoffBars(FakeBars):
+        def __init__(self):
+            super().__init__({"600000": bars()})
+            self.cutoffs = []
+
+        def symbols_with_history(self, minimum_bars, as_of, *, cutoff=None):
+            self.cutoffs.append(cutoff)
+            return super().symbols_with_history(minimum_bars, as_of)
+
+        def latest_many(self, symbols, limit, as_of, *, cutoff=None):
+            self.cutoffs.append(cutoff)
+            return super().latest_many(symbols, limit, as_of)
+
+    frozen_bars = CutoffBars()
+    service = AShareDiagnosisService(
+        bar_repository=frozen_bars, market_source=FakeMarket(),
+        finance_source=FailingFinance(), news_repository=EmptyNews(),
+    )
+
+    service.candidates(AS_OF, cutoff=cutoff)
+
+    assert frozen_bars.cutoffs == [cutoff, cutoff]
+
+
 @pytest.mark.asyncio
 async def test_historical_diagnosis_rejects_future_market_and_news() -> None:
     service = AShareDiagnosisService(
