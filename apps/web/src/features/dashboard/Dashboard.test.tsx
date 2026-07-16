@@ -20,6 +20,7 @@ describe("Dashboard beginner shell", () => {
     expect(screen.getByRole("button", { name: "今日研判" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "数据设置" })).toBeInTheDocument();
     expect(screen.queryByText(/中书省|吏部|户部|东厂|礼部|兵部|尚书省|刑部|工部/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/模拟账户|模拟委托|模拟操作计划|API 密钥/)).not.toBeInTheDocument();
   });
 
   it("opens beginner risk and settings pages with stable routes", async () => {

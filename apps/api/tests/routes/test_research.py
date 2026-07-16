@@ -504,10 +504,17 @@ class CorruptCockpit:
         raise DecisionIntegrityError("corrupt advice payload containing secret advice")
 
 
-def cockpit_client(service) -> TestClient:
+def cockpit_client(service, preparation_service=None) -> TestClient:
     application = FastAPI()
     application.include_router(research_router)
     application.dependency_overrides[get_a_share_cockpit_service] = lambda: service
+    if preparation_service is not None:
+        application.dependency_overrides[get_a_share_preparation_service] = (
+            lambda: preparation_service
+        )
+        application.dependency_overrides[get_a_share_instrument_directory] = (
+            lambda: AcceptanceCockpitDirectory()
+        )
     application.dependency_overrides[get_server_time] = lambda: SEARCH_NOW
     return TestClient(application)
 
@@ -565,6 +572,18 @@ class AcceptanceCockpitDiagnosis:
                 "events", "industry", "risk",
             )
         }
+        if symbol == "600519":
+            sections["trend"] = DiagnosisSection(
+                status="unavailable", observed_at=None, source="fixture-history",
+                metrics={}, explanation="history unavailable",
+            )
+        if symbol == "000001":
+            sections["events"] = DiagnosisSection(
+                status="ready", observed_at=COCKPIT_CUTOFF,
+                source="frozen-news-events",
+                metrics={"event_count": 1, "adverse_event_count": 1},
+                evidence_ids=("verified-adverse-event",), explanation="fixture",
+            )
         return AShareDiagnosis(
             symbol=symbol, as_of=as_of, action="observe", overall_status="ready",
             sections=sections,
@@ -608,24 +627,39 @@ class AcceptanceCockpitDecisions:
         ]
 
 
-def test_cockpit_api_serializes_assessment_for_candidate_and_two_non_candidates() -> None:
+def test_prepare_then_cockpit_covers_observe_wait_and_avoid_without_legacy_products() -> None:
+    preparation = PreparationService()
     service = StockDecisionCockpitService(
         AcceptanceCockpitDirectory(), AcceptanceCockpitDiagnosis(),
-        AcceptanceCockpitDecisions(), PreparationService(),
+        AcceptanceCockpitDecisions(), preparation,
         clock=lambda: COCKPIT_CUTOFF,
     )
-    client = cockpit_client(service)
+    client = cockpit_client(service, preparation)
 
-    payloads = {
-        symbol: client.get(f"/api/v1/a-shares/{symbol}/cockpit").json()
-        for symbol in ("600000", "600519", "000001")
-    }
+    payloads = {}
+    for symbol in ("600000", "600519", "000001"):
+        prepared = client.post(f"/api/v1/a-shares/{symbol}/prepare")
+        assert prepared.status_code == 200
+        response = client.get(f"/api/v1/a-shares/{symbol}/cockpit")
+        assert response.status_code == 200
+        payloads[symbol] = response.json()
 
     assert all(payload["assessment"]["symbol"] == symbol for symbol, payload in payloads.items())
     assert all(payload["ai_status"] == "unconfigured" for payload in payloads.values())
     assert all(payload["ai_explanation"] is None for payload in payloads.values())
+    assert payloads["600000"]["assessment"]["action"] == "observe"
+    assert payloads["600519"]["assessment"]["action"] == "wait"
+    assert payloads["000001"]["assessment"]["action"] == "avoid"
     assert payloads["600000"]["current_advice"][0]["action"] == "observe"
-    assert "simulation" not in str(payloads)
+    serialized = str(payloads).casefold()
+    assert all(term not in serialized for term in (
+        "paper_account", "paper_order", "simulation_plan", "api_key",
+    ))
     for symbol in ("600519", "000001"):
         payload = payloads[symbol]
         assert payload["current_advice"] == []
+
+    openapi_paths = " ".join(app.openapi()["paths"]).casefold()
+    assert all(term not in openapi_paths for term in (
+        "paper", "order", "simulation", "api-key", "api_key",
+    ))
