@@ -64,6 +64,7 @@ describe("BacktestPanel", () => {
   it("shows losses, drawdown and costs without positive framing", async () => {
     render(<BacktestPanel symbol="600000" runBacktest={() => Promise.resolve(result)} />);
 
+    expect(screen.getByText(/100 万元固定测算基准 · 不连接模拟账户/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "运行回测" }));
 
     expect(await screen.findByText("-23.79%")).toBeInTheDocument();

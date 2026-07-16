@@ -42,7 +42,7 @@ export function BacktestPanel({ symbol, runBacktest }: { symbol: string; runBack
   return (
     <section className="backtest-panel">
       <div className="backtest-heading">
-        <div><p className="eyebrow">中书省 / 固定策略模板</p><h2>双均线历史回测</h2><p>5 日快线 × 20 日慢线 · 次日开盘成交 · 已计佣金与滑点</p></div>
+        <div><p className="eyebrow">中书省 / 固定策略模板</p><h2>双均线历史回测</h2><p>5 日快线 × 20 日慢线 · 100 万元固定测算基准 · 不连接模拟账户</p></div>
         <label>回测 A 股代码<input aria-label="回测 A 股代码" inputMode="numeric" maxLength={6} pattern="\d{6}" value={requestedSymbol} onChange={(event) => { explicitlyEdited.current = true; setRequestedSymbol(event.target.value.replace(/\D/g, "")); invalidateResult(); }} /></label>
         <button type="button" onClick={() => void run()} disabled={state.kind === "loading" || !isAShareSymbol(requestedSymbol)}><Play size={15} />运行回测</button>
       </div>

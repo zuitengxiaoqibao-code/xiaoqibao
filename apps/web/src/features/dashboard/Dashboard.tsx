@@ -7,7 +7,6 @@ import {
 
 import { DataStatusPanel } from "../data-status/DataStatusPanel";
 import type { DataStatusState, SyncReport } from "../data-status/types";
-import { BacktestPanel } from "../backtest/BacktestPanel";
 import type { BacktestResult } from "../backtest/types";
 import type { ResearchCard } from "./types";
 import { GovernanceView, type AuditStatus, type ComplianceStatus, type RiskStatus } from "../governance/GovernanceViews";
@@ -167,11 +166,6 @@ function SelectedGovernanceWorkspace(props: ComponentProps<typeof GovernanceView
   return <div className="selected-governance-workspace"><div className="selected-symbol-context"><b>全局 / 资产级治理数据</b><span>不按单股过滤{symbol ? ` · 导航代码 ${symbol}` : ""}</span></div><GovernanceView {...props} /></div>;
 }
 
-function SelectedBacktestWorkspace({ runBacktest }: { runBacktest: (symbol: string, signal?: AbortSignal) => Promise<BacktestResult> }) {
-  const { symbol } = useSelectedInstrument();
-  return <main className="command-center"><BacktestPanel symbol={symbol ?? ""} runBacktest={runBacktest} /></main>;
-}
-
 export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, loadCompliance, loadAudit, complianceAction, loadBondDashboard, loadBondDiagnosis, loadBondCandidates, loadNewsIntelligence, syncNews, createNewsCorrection, loadOperationsStatus, setSchedulerPaused, createBackup, verifyBackup, runManualJob, loadAShareCandidates, loadAShareDiagnosis, loadDecisionCurrent, loadDecisionDate, searchAShareInstruments, loadStockCockpit, prepareStockData, loadAISettings, saveAISettings, deleteAISettings }: Props) {
   const selectedInstrument = useOptionalSelectedInstrument();
   const [state, setState] = useState<ViewState>({ kind: "idle" });
@@ -237,7 +231,7 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, lo
 
       {activeView === "news" && loadNewsIntelligence && syncNews && createNewsCorrection && <SelectedNewsWorkspace loadBundle={loadNewsIntelligence} syncNews={syncNews} createCorrection={createNewsCorrection} openNewsCompliance={() => undefined} />}
 
-      {activeView === "history" && loadDecisionCurrent && <HistoryReview loadCurrent={loadDecisionCurrent} loadDate={loadDecisionDate} symbol={selectedInstrument?.symbol ?? selectedInstrument?.lastSymbol ?? null} />}
+      {activeView === "history" && loadDecisionCurrent && <HistoryReview loadCurrent={loadDecisionCurrent} loadDate={loadDecisionDate} symbol={selectedInstrument?.symbol ?? selectedInstrument?.lastSymbol ?? null} runBacktest={runBacktest} />}
 
       {activeView === "settings" && loadAISettings && saveAISettings && deleteAISettings && <DataSettingsView loadAI={loadAISettings} saveAI={saveAISettings} deleteAI={deleteAISettings} symbol={selectedSymbol} prepare={prepareStockData} preparation={preparationForSymbol(latestCockpit, selectedSymbol)} onAIChanged={() => setCockpitRefreshToken((value) => value + 1)} />}
       {activeView === "settings" && (!loadAISettings || !saveAISettings || !deleteAISettings) && <main className="beginner-page"><header><p className="eyebrow">数据设置</p><h1>数据源与 AI</h1><p>设置服务暂不可用，请检查本地服务后重试。</p></header></main>}

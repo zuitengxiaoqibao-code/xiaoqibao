@@ -105,6 +105,23 @@ describe("Dashboard beginner shell", () => {
     expect(new URL(window.location.href).searchParams.get("symbol")).toBe("600000");
   });
 
+  it("opens real strategy backtesting from historical review for the selected A share", async () => {
+    window.history.replaceState({}, "", "/?symbol=600000");
+    const runBacktest = vi.fn(() => new Promise<never>(() => undefined));
+    render(<SelectedInstrumentProvider><Dashboard
+      loadSnapshot={() => Promise.resolve(card)}
+      loadDecisionCurrent={() => Promise.resolve(emptyDecision)}
+      runBacktest={runBacktest}
+    /></SelectedInstrumentProvider>);
+
+    fireEvent.click(screen.getByRole("button", { name: "历史复盘" }));
+
+    expect(await screen.findByRole("heading", { name: "双均线历史回测" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "回测 A 股代码" })).toHaveValue("600000");
+    fireEvent.click(screen.getByRole("button", { name: "运行回测" }));
+    expect(runBacktest).toHaveBeenCalledWith("600000", expect.any(AbortSignal));
+  });
+
   it("keeps convertible bonds in an isolated route without the A-share symbol", async () => {
     window.history.replaceState({}, "", "/?symbol=600000");
     render(<SelectedInstrumentProvider><Dashboard loadSnapshot={() => Promise.resolve(card)}

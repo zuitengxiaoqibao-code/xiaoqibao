@@ -4,7 +4,7 @@ export async function runBacktest(symbol: string, signal?: AbortSignal): Promise
   const response = await fetch(`/api/v1/a-shares/${symbol}/backtests`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ fast_window: 5, slow_window: 20 }),
+    body: JSON.stringify({ fast_window: 5, slow_window: 20, initial_cash: 1_000_000 }),
     signal,
   });
   if (!response.ok) {
