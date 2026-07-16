@@ -117,6 +117,26 @@ describe("NewsIntelligenceView", () => {
     expect(createCorrection).toHaveBeenCalledWith(expect.objectContaining({ event_id: "event-1", review_state: "verified" }));
   });
 
+  it("shows briefing content without rendering the input snapshot hash", async () => {
+    const snapshotHash = "briefing-secret-hash-1234567890";
+    const briefingBundle: NewsIntelligenceBundle = {
+      ...bundle,
+      briefings: [{
+        report_id: "report-1", trading_date: "2026-07-14", phase: "premarket", generated_at: "2026-07-14T01:05:00Z",
+        event_ids: ["event-1"], interpretation_ids: ["interpretation-1"], input_snapshot_hash: snapshotHash,
+        sections: { policy_event_ids: ["event-1"], risk_event_ids: [], watchlist: [["a_share", "600000"]], signal_outcome_ids: [], error_codes: [], next_day_observations: [] },
+      }],
+    };
+    const view = render(<NewsIntelligenceView loadBundle={() => Promise.resolve(briefingBundle)} syncNews={() => Promise.resolve({})} createCorrection={() => Promise.resolve()} />);
+    await screen.findByRole("heading", { name: "先进制造专项政策发布" });
+    fireEvent.click(screen.getByRole("tab", { name: "每日简报" }));
+    expect(screen.getByText("盘前")).toBeInTheDocument();
+    expect(screen.getByText("2026-07-14")).toBeInTheDocument();
+    expect(screen.getByText("1 个事件 · 1 条解释")).toBeInTheDocument();
+    expect(screen.queryByText(snapshotHash)).not.toBeInTheDocument();
+    expect(view.container.querySelector(".briefing-ledger code")).toBeNull();
+  });
+
   it("sanitizes hostile news errors", async () => {
     render(<NewsIntelligenceView loadBundle={() => Promise.reject(new Error("中书省 provider secret https://internal"))} syncNews={() => Promise.resolve({})} createCorrection={() => Promise.resolve()} />);
     expect(await screen.findByRole("alert")).toHaveTextContent("新闻数据暂不可用，请稍后重试。");

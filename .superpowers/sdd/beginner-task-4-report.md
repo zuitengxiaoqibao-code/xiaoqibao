@@ -44,3 +44,9 @@ The interface keeps the existing dark technical identity but uses a restrained r
 - Stopped rendering arbitrary cockpit `payload.explanation`; only fixed reason copy and whitelisted metrics remain visible.
 - Added retained compliance tests for A-share/convertible-bond separation and failure/retry completion without restoring governance navigation.
 - Verification: 19 frontend test files and 80 tests passed; TypeScript and Vite production build passed; mojibake scan and `git diff --check` reported no content errors.
+
+## Review Fix Pass 3
+
+- Removed `input_snapshot_hash` from the daily briefing DOM by construction and deleted the obsolete `.briefing-ledger code` styling/hiding rules.
+- Added a briefing-route regression test that preserves phase, date, event count, and explanation count while asserting that neither the known hash nor a `code` element is rendered.
+- Retained minor concern: the unreachable legacy compliance component can still display raw backend feature labels. It remains outside beginner navigation and is intentionally not expanded in this task.
