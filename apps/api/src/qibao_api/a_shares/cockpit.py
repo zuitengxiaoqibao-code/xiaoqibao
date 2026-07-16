@@ -1,5 +1,7 @@
 from collections.abc import Callable
 from datetime import date, datetime, time, timezone
+import hashlib
+import json
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
@@ -94,6 +96,30 @@ def _unavailable(source: str, reason: str, explanation: str | None = None) -> Co
         snapshot_id=None, reason=reason,
         payload={"explanation": explanation} if explanation else {},
     )
+
+
+def _section_snapshot_id(
+    name: str,
+    section: Any,
+    observed_at: datetime | None,
+) -> str:
+    content = {
+        "name": name,
+        "source": section.source,
+        "status": section.status,
+        "observed_at": observed_at.isoformat() if observed_at is not None else None,
+        "metrics": section.metrics,
+        "evidence_ids": section.evidence_ids,
+        "explanation": section.explanation,
+    }
+    encoded = json.dumps(
+        content,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")
+    return f"diagnosis-section-{hashlib.sha256(encoded).hexdigest()[:24]}"
 
 
 class StockDecisionCockpitService:
@@ -199,7 +225,7 @@ class StockDecisionCockpitService:
                 continue
             mapped[target] = CockpitSection(
                 status=item.status, source=item.source, observed_at=observed_at,
-                snapshot_id=diagnosis.snapshot_id,
+                snapshot_id=_section_snapshot_id(target, item, observed_at),
                 reason="diagnosis_section_unavailable" if item.status == "unavailable" else None,
                 payload={
                     "metrics": item.metrics,

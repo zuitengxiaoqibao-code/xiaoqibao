@@ -1,13 +1,19 @@
 import hashlib
 import json
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from qibao_api.contracts.decision import EvidenceReference
 from qibao_api.contracts.instruments import AShareCode
+
+
+EVIDENCE_ORDER = (
+    "market", "price_volume", "trend", "valuation", "fundamentals",
+    "news", "industry", "risk",
+)
 
 
 class StockAssessment(BaseModel):
@@ -30,6 +36,90 @@ def _digest(value: dict[str, Any]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _decimal(value: Any) -> Decimal | None:
+    if value is None or value == "":
+        return None
+    try:
+        parsed = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+    return parsed if parsed.is_finite() else None
+
+
+def _formatted(value: Any, digits: int = 2) -> str | None:
+    parsed = _decimal(value)
+    return f"{parsed:.{digits}f}" if parsed is not None else None
+
+
+def _percent(value: Any, *, fraction: bool = False) -> str | None:
+    parsed = _decimal(value)
+    if parsed is None:
+        return None
+    if fraction:
+        parsed *= Decimal("100")
+    return f"{parsed:.2f}%"
+
+
+def _summary(name: str, status: str, metrics: dict[str, Any]) -> str:
+    if name == "market":
+        values = (
+            ("现价", _formatted(metrics.get("price")), " 元"),
+            ("涨跌", _percent(metrics.get("change_percent")), ""),
+            ("换手率", _percent(metrics.get("turnover_rate")), ""),
+        )
+        label = "实时行情"
+    elif name == "price_volume":
+        values = (
+            ("收盘", _formatted(metrics.get("close")), " 元"),
+            ("近5日", _percent(metrics.get("return_5d"), fraction=True), ""),
+            ("量比", _formatted(metrics.get("volume_ratio")), ""),
+        )
+        label = "量价表现"
+    elif name == "trend":
+        values = (
+            ("距20日均线", _percent(metrics.get("distance_ma20"), fraction=True), ""),
+            ("近20日", _percent(metrics.get("return_20d"), fraction=True), ""),
+            ("20日波动", _percent(metrics.get("volatility_20d"), fraction=True), ""),
+        )
+        label = "趋势状态"
+    elif name == "valuation":
+        values = (
+            ("市盈率", _formatted(metrics.get("pe_ttm")), " 倍"),
+            ("市净率", _formatted(metrics.get("pb")), " 倍"),
+            ("总市值", _formatted(metrics.get("market_cap_yi")), " 亿元"),
+        )
+        label = "估值概览"
+    elif name == "fundamentals":
+        values = (
+            ("报告期", str(metrics.get("report_period") or "") or None, ""),
+            ("每股收益", _formatted(metrics.get("eps")), " 元"),
+            ("净资产收益率", _percent(metrics.get("roe")), ""),
+        )
+        label = "基本面"
+    elif name == "news":
+        values = (
+            ("关联事件", str(metrics.get("event_count", "")) or None, " 条"),
+            ("重大反方事件", str(metrics.get("adverse_event_count", "")) or None, " 条"),
+        )
+        label = "新闻事件"
+    elif name == "industry":
+        industries = str(metrics.get("industries") or "").strip()
+        return f"行业信息：{industries or '暂无已核验行业标签'}。"
+    elif name == "risk":
+        missing = int(metrics.get("missing_section_count", 0) or 0)
+        blocked = status == "blocked" or missing >= 3
+        state = "已触发明确阻断" if blocked else "当前未触发明确阻断"
+        return f"风险检查：核心分区缺失 {missing} 项，{state}。"
+    else:
+        return f"数据证据：已冻结 {len(metrics)} 项指标。"
+    details = [
+        f"{title} {value}{suffix}"
+        for title, value, suffix in values
+        if value is not None
+    ]
+    return f"{label}：{'，'.join(details) if details else '暂无可展示指标'}。"
+
+
 def _evidence(name: str, section: Any) -> EvidenceReference | None:
     if section.observed_at is None or section.snapshot_id is None:
         return None
@@ -37,20 +127,27 @@ def _evidence(name: str, section: Any) -> EvidenceReference | None:
     content = {
         "section": name,
         "source": section.source,
+        "snapshot_id": section.snapshot_id,
         "observed_at": section.observed_at.isoformat(),
         "status": section.status,
         "reason": section.reason,
         "metrics": metrics,
+        "source_evidence_ids": section.payload.get("evidence_ids", ()),
     }
     evidence_id = _digest(content)
-    summary = json.dumps(content, ensure_ascii=False, sort_keys=True, default=str)
     return EvidenceReference(
         evidence_id=evidence_id,
         source=section.source,
         snapshot_id=section.snapshot_id,
-        summary=summary,
+        summary=_summary(name, section.status, metrics),
         observed_at=section.observed_at,
     )
+
+
+def _ordered_sections(sections: dict[str, Any]):
+    known = [name for name in EVIDENCE_ORDER if name in sections]
+    extras = sorted(set(sections) - set(known))
+    return ((name, sections[name]) for name in (*known, *extras))
 
 
 class DeterministicStockAssessor:
@@ -107,13 +204,13 @@ class DeterministicStockAssessor:
 
         supporting = tuple(
             evidence
-            for name, section in sorted(usable.items())
+            for name, section in _ordered_sections(usable)
             if section.status == "ready"
             if (evidence := _evidence(name, section)) is not None
         )
         contrary = tuple(
             evidence
-            for name, section in sorted(usable.items())
+            for name, section in _ordered_sections(usable)
             if section.status in {"partial", "unavailable", "blocked"}
             if (evidence := _evidence(name, section)) is not None
         )

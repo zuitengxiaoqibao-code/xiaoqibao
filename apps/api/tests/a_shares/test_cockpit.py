@@ -94,6 +94,26 @@ class QuoteObservedDuringRequest(Diagnosis):
         return result.model_copy(update={"sections": sections})
 
 
+class ChangedMarketDiagnosis(Diagnosis):
+    async def diagnose(self, symbol, as_of, *, persist=True, cutoff=None):
+        result = await super().diagnose(symbol, as_of, persist=persist, cutoff=cutoff)
+        sections = dict(result.sections)
+        sections["market"] = sections["market"].model_copy(
+            update={"metrics": {"symbol": symbol, "price": "12.34"}}
+        )
+        return result.model_copy(update={"sections": sections})
+
+
+class ChangedExplanationDiagnosis(Diagnosis):
+    async def diagnose(self, symbol, as_of, *, persist=True, cutoff=None):
+        result = await super().diagnose(symbol, as_of, persist=persist, cutoff=cutoff)
+        sections = dict(result.sections)
+        sections["market"] = sections["market"].model_copy(
+            update={"explanation": "changed visible explanation"}
+        )
+        return result.model_copy(update={"sections": sections})
+
+
 class RecordingHistoricalDiagnosis(Diagnosis):
     def __init__(self):
         self.cutoff = None
@@ -230,6 +250,46 @@ async def test_cockpit_filters_every_phase_and_evidence_to_selected_symbol() -> 
     assert result.candidate_membership == ("short_term",)
     assert result.assessment.symbol == "600000"
     assert "simulation_eligible" not in result.assessment.model_dump(mode="json")
+
+
+@pytest.mark.asyncio
+async def test_read_only_diagnosis_sections_produce_content_addressed_evidence() -> None:
+    first = await service().get("600000", TRADE_DATE, CUTOFF)
+    second = await service().get("600000", TRADE_DATE, CUTOFF)
+    changed = await service(diagnosis=ChangedMarketDiagnosis()).get(
+        "600000", TRADE_DATE, CUTOFF
+    )
+    changed_explanation = await service(diagnosis=ChangedExplanationDiagnosis()).get(
+        "600000", TRADE_DATE, CUTOFF
+    )
+
+    evidenced_sections = {
+        name
+        for name, section in first.sections.items()
+        if section.status == "ready" and section.observed_at is not None
+    }
+    assert all(first.sections[name].snapshot_id for name in evidenced_sections)
+    assert len(first.assessment.supporting_evidence) == len(evidenced_sections)
+    assert {
+        item.snapshot_id for item in first.assessment.supporting_evidence
+    } == {first.sections[name].snapshot_id for name in evidenced_sections}
+    assert {
+        name: first.sections[name].snapshot_id for name in evidenced_sections
+    } == {
+        name: second.sections[name].snapshot_id for name in evidenced_sections
+    }
+    assert (
+        changed.sections["market"].snapshot_id
+        != first.sections["market"].snapshot_id
+    )
+    assert (
+        changed_explanation.sections["market"].snapshot_id
+        != first.sections["market"].snapshot_id
+    )
+    assert not any(
+        risk.startswith("source_snapshot_unavailable:")
+        for risk in first.assessment.risks
+    )
 
 
 @pytest.mark.asyncio

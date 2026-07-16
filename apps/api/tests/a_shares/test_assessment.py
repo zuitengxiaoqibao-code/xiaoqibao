@@ -57,6 +57,12 @@ def test_avoids_when_authoritative_risk_is_blocked() -> None:
     )
 
     assert result.action == "avoid"
+    risk_evidence = next(
+        item for item in result.contrary_evidence
+        if item.source == "fixture-risk"
+    )
+    assert "已触发明确阻断" in risk_evidence.summary
+    assert "未触发明确阻断" not in risk_evidence.summary
 
 
 def test_observes_complete_non_candidate_without_inventing_plan() -> None:
@@ -82,6 +88,72 @@ def test_assessment_evidence_is_deterministic_and_cutoff_traceable() -> None:
         first.supporting_evidence
     )
     assert "simulation_eligible" not in first.model_dump(mode="json")
+
+
+def test_assessment_evidence_is_ordered_and_written_for_beginners() -> None:
+    values = sections()
+    values["market"] = section(
+        "market",
+        metrics={
+            "price": "10.25",
+            "change_percent": "1.49",
+            "turnover_rate": "0.80",
+        },
+    )
+    values["price_volume"] = section(
+        "price_volume",
+        metrics={"close": "10.25", "return_5d": "0.052", "volume_ratio": "1.18"},
+    )
+
+    result = DeterministicStockAssessor().assess(
+        "600519", values, (), CUTOFF
+    )
+
+    assert [item.source for item in result.supporting_evidence[:3]] == [
+        "fixture-market", "fixture-price_volume", "fixture-trend"
+    ]
+    assert result.supporting_evidence[0].summary == (
+        "实时行情：现价 10.25 元，涨跌 1.49%，换手率 0.80%。"
+    )
+    assert result.supporting_evidence[1].summary == (
+        "量价表现：收盘 10.25 元，近5日 5.20%，量比 1.18。"
+    )
+    assert not any(
+        token in item.summary
+        for item in result.supporting_evidence
+        for token in ('{"', "fixture-", "change_percent", "return_5d")
+    )
+
+
+def test_assessment_identity_changes_with_frozen_source_evidence() -> None:
+    first_sections = sections()
+    second_sections = sections()
+    first_sections["news"] = section("news").model_copy(update={
+        "snapshot_id": "news-snapshot-1",
+        "payload": {
+            "metrics": {"event_count": 1, "adverse_event_count": 0},
+            "evidence_ids": ["event-1"],
+        },
+    })
+    second_sections["news"] = section("news").model_copy(update={
+        "snapshot_id": "news-snapshot-2",
+        "payload": {
+            "metrics": {"event_count": 1, "adverse_event_count": 0},
+            "evidence_ids": ["event-2"],
+        },
+    })
+
+    first = DeterministicStockAssessor().assess(
+        "600519", first_sections, (), CUTOFF
+    )
+    second = DeterministicStockAssessor().assess(
+        "600519", second_sections, (), CUTOFF
+    )
+
+    first_news = next(item for item in first.supporting_evidence if item.source == "fixture-news")
+    second_news = next(item for item in second.supporting_evidence if item.source == "fixture-news")
+    assert first_news.evidence_id != second_news.evidence_id
+    assert first.assessment_id != second.assessment_id
 
 
 def test_missing_observation_is_a_risk_but_not_evidence() -> None:
