@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { AlertTriangle, FileText, Gauge, LoaderCircle, Search, ShieldAlert } from "lucide-react";
 import type { BondCandidates, BondDashboard, BondDiagnosis } from "./types";
+import { friendlyError } from "../../shared/friendlyError";
 
 type Props = {
   loadDashboard: () => Promise<BondDashboard>;
@@ -29,9 +30,9 @@ export function ConvertibleBondView({ loadDashboard, loadDiagnosis, loadCandidat
   const [error, setError] = useState("");
   const [filters, setFilters] = useState({ max_conversion_premium: "", min_turnover_amount: "", min_remaining_size: "", min_days_to_maturity: "" });
 
-  useEffect(() => { loadDashboard().then(setDashboard).catch((e) => setError(e.message)); }, [loadDashboard]);
-  async function inspect() { setLoading(true); setError(""); try { setDiagnosis(await loadDiagnosis(code)); } catch (e) { setError(e instanceof Error ? e.message : "诊断失败"); } finally { setLoading(false); } }
-  async function showCandidates() { setTab("candidates"); setLoading(true); setError(""); try { setCandidates(await loadCandidates(filters)); } catch (e) { setError(e instanceof Error ? e.message : "候选池加载失败"); } finally { setLoading(false); } }
+  useEffect(() => { loadDashboard().then(setDashboard).catch((e) => setError(friendlyError(e, "转债概览"))); }, [loadDashboard]);
+  async function inspect() { setLoading(true); setError(""); try { setDiagnosis(await loadDiagnosis(code)); } catch (e) { setError(friendlyError(e, "转债诊断")); } finally { setLoading(false); } }
+  async function showCandidates() { setTab("candidates"); setLoading(true); setError(""); try { setCandidates(await loadCandidates(filters)); } catch (e) { setError(friendlyError(e, "转债候选池")); } finally { setLoading(false); } }
 
   return <main className="bond-domain">
     <header className="bond-header"><div><p className="eyebrow">独立资产域 / CONVERTIBLE BONDS</p><h1>可转债专区</h1><p>行情、条款与正股上下文分层核验</p></div><div className="bond-domain-mark"><Gauge size={18} /><span>CB</span></div></header>
@@ -40,7 +41,7 @@ export function ConvertibleBondView({ loadDashboard, loadDiagnosis, loadCandidat
       <button role="tab" aria-selected={tab === "diagnosis"} onClick={() => setTab("diagnosis")}>诊断</button>
       <button role="tab" aria-selected={tab === "candidates"} onClick={() => void showCandidates()}>候选池</button>
     </div>
-    {error && <div className="bond-alert" role="alert"><ShieldAlert size={18} />{error.includes("条款") ? `条款数据为空：${error}` : error}{error.includes("授权") && openBondCompliance && <button onClick={openBondCompliance}>检查数据授权</button>}</div>}
+    {error && <div className="bond-alert" role="alert"><ShieldAlert size={18} />{error}{error === "数据源尚未配置，请在数据设置中检查连接。" && openBondCompliance && <button onClick={openBondCompliance}>打开数据设置</button>}</div>}
     {loading && <div className="bond-loading" aria-busy="true"><LoaderCircle size={18} />正在核验数据源...</div>}
     {tab === "overview" && !loading && <section className="bond-overview"><div><span>已存档转债</span><strong>{dashboard?.bond_count ?? "—"}</strong></div><div><span>条款状态</span><strong>{dashboard?.status === "empty" ? "暂无条款快照" : "快照可用"}</strong></div><p>这里仅汇总转债仓储，不读取 A 股候选排名。</p></section>}
     {tab === "diagnosis" && <section className="bond-diagnosis">

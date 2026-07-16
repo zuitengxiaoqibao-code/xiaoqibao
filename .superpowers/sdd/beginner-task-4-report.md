@@ -36,3 +36,11 @@ The interface keeps the existing dark technical identity but uses a restrained r
 - Made preparation optional in the frontend contract and labels derived fallback state as an estimate rather than a completed refresh.
 - Restricted data details to translated source names, known reason descriptions, and whitelisted metrics. Unknown or hostile values are not rendered.
 - Removed remaining department copy from reachable bond error handling and hid provider/model/hash implementation details from beginner news views.
+
+## Review Fix Pass 2
+
+- Added one shared beginner-facing error classifier and applied it to risk, history, news, A-share selection, the stock cockpit, and convertible bonds. Raw backend messages, URLs, provider names, internal codes, and department names are no longer echoed from those requests.
+- Replaced the news `质量监测` tab with `数据状态`, limited it to verified-news count, related-stock count, and latest update time, and removed citation hashes plus model/provider telemetry from visible news UI.
+- Stopped rendering arbitrary cockpit `payload.explanation`; only fixed reason copy and whitelisted metrics remain visible.
+- Added retained compliance tests for A-share/convertible-bond separation and failure/retry completion without restoring governance navigation.
+- Verification: 19 frontend test files and 80 tests passed; TypeScript and Vite production build passed; mojibake scan and `git diff --check` reported no content errors.

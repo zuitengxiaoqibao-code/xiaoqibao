@@ -99,19 +99,27 @@ describe("NewsIntelligenceView", () => {
     expect(screen.getByRole("dialog", { name: "事件证据" })).toBeInTheDocument();
     expect(screen.getByText("相反证据")).toBeInTheDocument();
     expect(screen.getAllByText("政策执行仍有不确定性")).toHaveLength(2);
+    expect(screen.queryByText("aaaaaaaaaaaaaaaa")).not.toBeInTheDocument();
   });
 
-  it("shows real quality ratios and submits a human correction", async () => {
+  it("shows beginner data status without backend or model telemetry", async () => {
     const createCorrection = vi.fn(() => Promise.resolve());
     render(<NewsIntelligenceView loadBundle={() => Promise.resolve(bundle)} syncNews={() => Promise.resolve({ fetched: 0 })} createCorrection={createCorrection} />);
     await screen.findByRole("heading", { name: "先进制造专项政策发布" });
-    fireEvent.click(screen.getByRole("tab", { name: "质量监测" }));
-    expect(screen.getByText("100.00%")).toBeInTheDocument();
-    expect(screen.getByText("50.00%")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "数据状态" }));
+    expect(screen.getByText("已核验新闻数")).toBeInTheDocument();
+    expect(screen.getByText("关联当前股票数")).toBeInTheDocument();
+    expect(screen.queryByText(/无效 JSON|模型结构|provider|prompt|人工修正率|重复率/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: "事件时间线" }));
     fireEvent.click(screen.getByRole("button", { name: "查看 2 条证据" }));
     fireEvent.change(screen.getByLabelText("复核理由"), { target: { value: "确认政策主题归属" } });
     fireEvent.click(screen.getByRole("button", { name: "确认并存档" }));
     expect(createCorrection).toHaveBeenCalledWith(expect.objectContaining({ event_id: "event-1", review_state: "verified" }));
+  });
+
+  it("sanitizes hostile news errors", async () => {
+    render(<NewsIntelligenceView loadBundle={() => Promise.reject(new Error("中书省 provider secret https://internal"))} syncNews={() => Promise.resolve({})} createCorrection={() => Promise.resolve()} />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("新闻数据暂不可用，请稍后重试。");
+    expect(screen.queryByText(/中书省|provider|https/)).not.toBeInTheDocument();
   });
 });

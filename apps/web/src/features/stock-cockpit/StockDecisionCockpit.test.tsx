@@ -68,7 +68,8 @@ describe("StockDecisionCockpit", () => {
     renderCockpit(load);
     await screen.findByText("浦发银行");
     fireEvent.click(screen.getByRole("button", { name: "刷新驾驶舱" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("offline");
+    expect(await screen.findByRole("alert")).toHaveTextContent("股票分析暂不可用，请稍后重试。");
+    expect(screen.queryByText("offline")).not.toBeInTheDocument();
     expect(screen.getByText("当前内容已陈旧")).toBeInTheDocument();
     expect(screen.getByText("浦发银行")).toBeInTheDocument();
   });
@@ -81,12 +82,12 @@ describe("StockDecisionCockpit", () => {
 
   it("never exposes hostile raw keys, JSON, reason codes, or source identifiers", async () => {
     const hostile = snapshot();
-    hostile.sections.market = { status: "partial", source: "internal_secret_feed", observed_at: observedAt, snapshot_id: "hidden", reason: "SECRET_REASON_CODE", payload: { metrics: { latest_price: "10", secret_alpha: "LEAK", nested: { token: "LEAK_JSON" } } } };
+    hostile.sections.market = { status: "partial", source: "internal_secret_feed", observed_at: observedAt, snapshot_id: "hidden", reason: "SECRET_REASON_CODE", payload: { explanation: "工部 internal-id-999", metrics: { latest_price: "10", secret_alpha: "LEAK", nested: { token: "LEAK_JSON" } } } };
     renderCockpit(() => Promise.resolve(hostile));
     await screen.findByText("数据详情");
     fireEvent.click(screen.getByText("数据详情"));
     expect(screen.getByText("未提供可展示说明")).toBeInTheDocument();
-    expect(screen.queryByText(/SECRET|internal_secret|secret_alpha|LEAK|\{"token"/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/SECRET|internal_secret|secret_alpha|LEAK|\{"token"|工部|internal-id/)).not.toBeInTheDocument();
   });
 
   it("does not retain live data when a historical request fails", async () => {

@@ -1,13 +1,14 @@
 import { AlertTriangle, CalendarDays, Clock3, ShieldAlert } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Advice, DecisionPhase, DecisionResponse } from "../decision-workbench/types";
+import { friendlyError } from "../../shared/friendlyError";
 
 const phaseNames: Record<DecisionPhase, string> = { premarket: "盘前研判", intraday: "盘中观察", postclose: "盘后复盘" };
 const actionNames: Record<Advice["action"], string> = { observe: "加入观察", wait: "暂不参与", avoid: "回避", invalidated: "已失效" };
 
 export function HistoryReview({ loadCurrent, loadDate, symbol }: { loadCurrent: () => Promise<DecisionResponse>; loadDate?: (date: string) => Promise<DecisionResponse>; symbol: string | null }) {
   const [data, setData] = useState<DecisionResponse | null>(null); const [error, setError] = useState(""); const [date, setDate] = useState(""); const request = useRef(0);
-  const load = useCallback(async (selected?: string) => { const current = ++request.current; setError(""); try { const next = selected && loadDate ? await loadDate(selected) : await loadCurrent(); if (current === request.current) { setData(next); setDate(next.trading_date); } } catch (reason) { if (current === request.current) setError(reason instanceof Error ? reason.message : "历史复盘暂不可用"); } }, [loadCurrent, loadDate]);
+  const load = useCallback(async (selected?: string) => { const current = ++request.current; setError(""); try { const next = selected && loadDate ? await loadDate(selected) : await loadCurrent(); if (current === request.current) { setData(next); setDate(next.trading_date); } } catch (reason) { if (current === request.current) setError(friendlyError(reason, "历史复盘")); } }, [loadCurrent, loadDate]);
   useEffect(() => { void load(); return () => { request.current += 1; }; }, [load]);
   return <main className="beginner-page history-review"><header><p className="eyebrow">历史复盘</p><h1>按日期查看判断变化</h1><p>只展示当时可见的结论、证据和风险。</p><label><CalendarDays size={16} />复盘日期<input aria-label="复盘日期" type="date" value={date} onChange={(event) => { setDate(event.target.value); void load(event.target.value); }} /></label></header>
     {error && <section className="beginner-empty" role="alert"><AlertTriangle /><h2>{error}</h2><button onClick={() => void load(date || undefined)}>重试</button></section>}

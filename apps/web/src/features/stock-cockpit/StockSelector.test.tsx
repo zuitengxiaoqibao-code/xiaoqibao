@@ -96,7 +96,8 @@ describe("StockSelector", () => {
     });
     renderSelector({ search });
     fireEvent.change(screen.getByRole("searchbox", { name: "搜索 A 股" }), { target: { value: "平安" } });
-    expect(await screen.findByRole("alert")).toHaveTextContent("目录暂不可用");
+    expect(await screen.findByRole("alert")).toHaveTextContent("股票搜索暂不可用，请稍后重试。");
+    expect(screen.queryByText("目录暂不可用")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "重试搜索" }));
     expect(await screen.findByRole("option", { name: /000001.*平安银行/ })).toBeInTheDocument();
     expect(search.mock.calls.filter(([query]) => query === "平安")).toHaveLength(2);
@@ -184,7 +185,8 @@ describe("StockSelector", () => {
     });
     renderSelector({ loadCandidates: () => Promise.resolve(empty), search });
     fireEvent.click(screen.getByRole("tab", { name: "自选股" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("身份目录离线");
+    expect(await screen.findByRole("alert")).toHaveTextContent("股票身份数据暂不可用，请稍后重试。");
+    expect(screen.queryByText("身份目录离线")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "重试 000001 身份" }));
     expect(await screen.findByText("平安银行")).toBeInTheDocument();
   });

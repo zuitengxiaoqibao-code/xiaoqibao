@@ -20,7 +20,8 @@ describe("BeginnerRiskView", () => {
     const old = new Promise<{ rule_version: string; limits: Record<string, string> }>((resolve) => { resolveOld = resolve; });
     const view = render(<BeginnerRiskView load={() => old} />);
     view.rerender(<BeginnerRiskView load={() => Promise.reject(new Error("最新风险请求失败"))} />);
-    expect(await screen.findByRole("alert")).toHaveTextContent("最新风险请求失败");
+    expect(await screen.findByRole("alert")).toHaveTextContent("风险数据暂不可用，请稍后重试。");
+    expect(screen.queryByText("最新风险请求失败")).not.toBeInTheDocument();
     resolveOld({ rule_version: "old", limits: {} });
     expect(screen.queryByText("风险检查正常运行")).not.toBeInTheDocument();
   });

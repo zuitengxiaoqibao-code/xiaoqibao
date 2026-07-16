@@ -1,6 +1,7 @@
 import { AlertTriangle, RefreshCw, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RiskStatus } from "../governance/GovernanceViews";
+import { friendlyError } from "../../shared/friendlyError";
 
 export function BeginnerRiskView({ load }: { load?: () => Promise<RiskStatus> }) {
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
@@ -11,7 +12,7 @@ export function BeginnerRiskView({ load }: { load?: () => Promise<RiskStatus> })
     if (!load) { setState("error"); setMessage("风险数据服务尚未连接"); return; }
     setState("loading"); setMessage("");
     try { await load(); if (current === request.current) setState("ready"); }
-    catch (error) { if (current === request.current) { setState("error"); setMessage(error instanceof Error ? error.message : "风险数据暂不可用"); } }
+    catch (error) { if (current === request.current) { setState("error"); setMessage(friendlyError(error, "风险数据")); } }
   }, [load]);
   useEffect(() => { void reload(); return () => { request.current += 1; }; }, [reload]);
   return <main className="beginner-page beginner-risk"><header><p className="eyebrow">风险提醒</p><h1>当前风险状态</h1><p>这里汇总研究过程中需要优先留意的数据与市场风险。</p></header>

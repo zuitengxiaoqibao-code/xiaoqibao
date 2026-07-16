@@ -30,7 +30,8 @@ describe("ConvertibleBondView", () => {
     const props = { loadDashboard: () => Promise.resolve({ status: "empty" as const, bond_count: 0, bond_codes: [] }), loadDiagnosis: load, loadCandidates: () => Promise.resolve({ status: "empty" as const, items: [] }) };
     const { unmount } = render(<ConvertibleBondView {...props} />);
     fireEvent.click(screen.getByRole("tab", { name: "诊断" })); fireEvent.click(screen.getByRole("button", { name: "诊断转债" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("尚未授权");
+    expect(await screen.findByRole("alert")).toHaveTextContent("数据源尚未配置，请在数据设置中检查连接。");
+    expect(screen.queryByText("尚未授权")).not.toBeInTheDocument();
     unmount(); render(<ConvertibleBondView {...props} />);
     fireEvent.click(screen.getByRole("tab", { name: "诊断" })); fireEvent.click(screen.getByRole("button", { name: "诊断转债" }));
     expect(await screen.findByText("数据源冲突")).toBeInTheDocument();

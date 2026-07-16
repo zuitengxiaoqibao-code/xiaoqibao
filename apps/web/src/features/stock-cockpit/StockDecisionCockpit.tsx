@@ -2,6 +2,7 @@ import { AlertTriangle, CheckCircle2, Clock3, Database, RefreshCw, ShieldAlert, 
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useSelectedInstrument } from "../instrument-selection/SelectedInstrumentProvider";
+import { friendlyError } from "../../shared/friendlyError";
 import type { AssessmentAIExplanation, AssessmentAIStatus, StockAssessment, StockCockpitSnapshot } from "./types";
 import { CockpitSections } from "./CockpitSections";
 import { PhaseTimeline } from "./PhaseTimeline";
@@ -87,7 +88,7 @@ export function StockDecisionCockpit({ load, asOf, refreshToken = 0, onRefreshRe
       setData(next); loadedContext.current = contextKey; hasData.current = true; setStale(false);
     } catch (caught) {
       if (request !== generation.current || nextController.signal.aborted) return;
-      setError(caught instanceof Error ? caught.message : "驾驶舱链路暂不可用");
+      setError(friendlyError(caught, "股票分析"));
       setStale(hasData.current);
     } finally { if (request === generation.current) setLoading(false); }
   }, [asOf, contextKey, load, symbol]);

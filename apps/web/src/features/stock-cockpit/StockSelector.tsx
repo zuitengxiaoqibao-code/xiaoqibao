@@ -4,6 +4,7 @@ import { Bookmark, BookmarkCheck, LoaderCircle, RefreshCw, Search, ShieldAlert }
 import type { CandidateBoard, CandidateEntry } from "../a-shares/types";
 import { isAShareSymbol, useSelectedInstrument } from "../instrument-selection/SelectedInstrumentProvider";
 import type { AShareInstrument, InstrumentSearchResponse } from "./types";
+import { friendlyError } from "../../shared/friendlyError";
 
 const WATCHLIST_KEY = "qibao.a_share.watchlist.v1";
 type CandidateTab = "short_term" | "swing" | "watchlist";
@@ -76,7 +77,7 @@ export function StockSelector({ loadCandidates, search, pollIntervalMs = 30_000 
     const request = ++candidateRequest.current;
     if (initial) setCandidateState("loading");
     try { const value = await loadCandidates(); if (mounted.current && request === candidateRequest.current) { setBoard(value); setCandidateState("ready"); setCandidateError(""); } }
-    catch (reason) { if (mounted.current && request === candidateRequest.current) { setCandidateError(reason instanceof Error ? reason.message : "候选池加载失败"); setCandidateState("error"); } }
+    catch (reason) { if (mounted.current && request === candidateRequest.current) { setCandidateError(friendlyError(reason, "候选池")); setCandidateState("error"); } }
   }, [loadCandidates]);
 
   useEffect(() => { mounted.current = true; void refreshCandidates(true); const timer = window.setInterval(() => void refreshCandidates(), pollIntervalMs); return () => { mounted.current = false; candidateRequest.current += 1; window.clearInterval(timer); }; }, [pollIntervalMs, refreshCandidates]);
@@ -94,7 +95,7 @@ export function StockSelector({ loadCandidates, search, pollIntervalMs = 30_000 
       const generation = (identityGeneration.current[symbol] ?? 0) + 1;
       identityGeneration.current[symbol] = generation;
       try { const response = await search(symbol); const item = response.items.find((candidate) => candidate.symbol === symbol); if (!item) throw new Error("身份目录未返回该 A 股"); return { symbol, generation, item }; }
-      catch (reason) { return { symbol, generation, error: reason instanceof Error ? reason.message : "身份查询失败" }; }
+      catch (reason) { return { symbol, generation, error: friendlyError(reason, "股票身份数据") }; }
     }));
     if (!mounted.current) return;
     const currentResults = settled.filter((result) => identityGeneration.current[result.symbol] === result.generation);
@@ -111,7 +112,7 @@ export function StockSelector({ loadCandidates, search, pollIntervalMs = 30_000 
 
   const executeSearch = useCallback((value: string, request = ++searchRequest.current) => {
     setSearchState("loading"); setSearchError("");
-    void search(value).then((response) => { if (request === searchRequest.current) { setResults(response.items); setSearchSourceStatus(response.source_status); setSearchState("ready"); } }).catch((reason) => { if (request === searchRequest.current) { setSearchError(reason instanceof Error ? reason.message : "搜索失败"); setSearchState("error"); } });
+    void search(value).then((response) => { if (request === searchRequest.current) { setResults(response.items); setSearchSourceStatus(response.source_status); setSearchState("ready"); } }).catch((reason) => { if (request === searchRequest.current) { setSearchError(friendlyError(reason, "股票搜索")); setSearchState("error"); } });
   }, [search]);
 
   useEffect(() => {
