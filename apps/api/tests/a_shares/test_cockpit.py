@@ -229,10 +229,18 @@ class ReadOnlyPreparation:
         raise AssertionError("cockpit GET must not mutate preparation sources")
 
 
-def service(diagnosis=None, decisions=None, clock=lambda: CUTOFF, preparation=None):
+def service(
+    diagnosis=None, decisions=None, clock=lambda: CUTOFF, preparation=None,
+    calendar=None, operations=None,
+):
+    lifecycle = {}
+    if calendar is not None:
+        lifecycle["trading_calendar"] = calendar
+    if operations is not None:
+        lifecycle["operations_repository"] = operations
     return StockDecisionCockpitService(
         Directory(), diagnosis or Diagnosis(), decisions or Decisions(),
-        preparation or ReadOnlyPreparation(), clock=clock,
+        preparation or ReadOnlyPreparation(), clock=clock, **lifecycle,
     )
 
 
@@ -244,6 +252,18 @@ async def test_cockpit_uses_read_only_preparation_inspection() -> None:
 
     assert result.preparation.refreshed is False
     assert preparation.inspections == [("600000", TRADE_DATE, None)]
+
+
+@pytest.mark.asyncio
+async def test_cockpit_exposes_completed_phase_execution_from_real_snapshot() -> None:
+    calendar = type("Calendar", (), {"is_trading_day": lambda self, value: True})()
+    operations = type("Operations", (), {"jobs": lambda self: []})()
+
+    result = await service(calendar=calendar, operations=operations).get(
+        "600000", TRADE_DATE, CUTOFF
+    )
+
+    assert result.phases["intraday"].execution.status == "completed"
 
 
 class Explainer:

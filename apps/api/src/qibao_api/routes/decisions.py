@@ -11,6 +11,7 @@ from qibao_api.dependencies import (
     get_server_time,
 )
 from qibao_api.shangshu.decision_repository import DecisionIntegrityError
+from qibao_api.shangshu.phase_lifecycle import resolve_phase_execution
 
 
 router = APIRouter(prefix="/api/v1/decisions", tags=["decisions"])
@@ -31,11 +32,14 @@ def _model_dump(value):
     return value.model_dump(mode="json") if hasattr(value, "model_dump") else value
 
 
-def _slot(aggregate, *, materialized_advice=None, change_stream=None):
+def _slot(
+    aggregate, *, materialized_advice=None, change_stream=None, execution=None
+):
     if aggregate is None:
         return {
             "phase_status": "empty", "quality": "empty", "aggregate_version": None,
             "ai_status": "not_requested", "advice": [], "evidence": [],
+            "execution": _model_dump(execution),
         }
     payload = _model_dump(aggregate)
     snapshot = payload["snapshot"]
@@ -56,6 +60,7 @@ def _slot(aggregate, *, materialized_advice=None, change_stream=None):
         "delta_version": snapshot["snapshot_id"],
         "delta_advice": payload.get("advice", []),
         "change_stream": change_stream or [],
+        "execution": _model_dump(execution),
     }
 
 
@@ -107,14 +112,33 @@ def _polling(state, server_time, market_session):
     }
 
 
-def _response(repository, trading_date: date, current_phase: str, server_time: datetime, market_session: str, poll_state=None):
+def _response(
+    repository, trading_date: date, current_phase: str, server_time: datetime,
+    market_session: str, poll_state=None, scheduler=None,
+):
     try:
-        slots = {phase: _slot(repository.latest(trading_date, phase)) for phase in PHASES}
-        latest_intraday = repository.latest(trading_date, "intraday")
+        aggregates = {
+            phase: repository.latest(trading_date, phase) for phase in PHASES
+        }
+        scheduler_status = scheduler.status() if scheduler is not None else {}
+        jobs = scheduler_status.get("jobs", [])
+        executions = {
+            phase: resolve_phase_execution(
+                phase=phase, trading_date=trading_date, now=server_time,
+                aggregate=aggregates[phase], jobs=jobs,
+            )
+            for phase in PHASES
+        }
+        slots = {
+            phase: _slot(aggregates[phase], execution=executions[phase])
+            for phase in PHASES
+        }
+        latest_intraday = aggregates["intraday"]
         if latest_intraday is not None and hasattr(repository, "cycles"):
             advice, stream = _intraday_state(repository, trading_date)
             slots["intraday"] = _slot(
                 latest_intraday, materialized_advice=advice, change_stream=stream,
+                execution=executions["intraday"],
             )
     except DecisionIntegrityError:
         raise HTTPException(status_code=503, detail={
@@ -135,17 +159,18 @@ def _response(repository, trading_date: date, current_phase: str, server_time: d
 def current_decisions(
     repository=Depends(get_decision_repository), calendar=Depends(get_decision_calendar),
     now: datetime = Depends(get_server_time), poll_state=Depends(get_decision_poll_state),
+    scheduler=Depends(get_scheduler),
 ):
     local_now = now.astimezone(CHINA_TZ)
     trading_date = local_now.date()
     if calendar.is_trading_day(trading_date):
         phase = _phase(local_now)
-        return _response(repository, trading_date, phase, now, "open" if phase == "intraday" else "closed", poll_state)
+        return _response(repository, trading_date, phase, now, "open" if phase == "intraday" else "closed", poll_state, scheduler)
     for offset in range(1, 367):
         candidate = trading_date - timedelta(days=offset)
         if calendar.is_trading_day(candidate):
-            return _response(repository, candidate, "postclose", now, "closed", poll_state)
-    return _response(repository, trading_date, "postclose", now, "closed", poll_state)
+            return _response(repository, candidate, "postclose", now, "closed", poll_state, scheduler)
+    return _response(repository, trading_date, "postclose", now, "closed", poll_state, scheduler)
 
 
 @router.get("/{trading_date}")
@@ -153,12 +178,13 @@ def decisions_for_date(
     trading_date: date, repository=Depends(get_decision_repository),
     calendar=Depends(get_decision_calendar), now: datetime = Depends(get_server_time),
     poll_state=Depends(get_decision_poll_state),
+    scheduler=Depends(get_scheduler),
 ):
     if trading_date > now.astimezone(CHINA_TZ).date():
         raise HTTPException(status_code=422, detail={"code": "future_trading_date"})
     confirmed = calendar.is_trading_day(trading_date)
     phase = _phase(now) if confirmed and trading_date == now.astimezone(CHINA_TZ).date() else "postclose"
-    return _response(repository, trading_date, phase, now, "open" if phase == "intraday" else "closed", poll_state)
+    return _response(repository, trading_date, phase, now, "open" if phase == "intraday" else "closed", poll_state, scheduler)
 
 
 @router.post("/{phase}/{trading_date}/run")

@@ -24,4 +24,19 @@ describe("PhaseTimeline", () => {
     expect(screen.getByText("本阶段已运行，当时未纳入这只股票")).toBeInTheDocument();
     expect(screen.getByText("本阶段没有生成可核验记录")).toBeInTheDocument();
   });
+
+  it("shows the authoritative scheduled time instead of a generic missing message", () => {
+    const phases = {
+      premarket: { advice: [], change_stream: [], execution: { status: "scheduled", scheduled_at: "2026-07-17T09:20:00+08:00", next_scheduled_at: "2026-07-17T09:20:00+08:00", last_completed_at: null, last_attempt_at: null, attempts: 0, error_code: null } },
+      intraday: { advice: [], change_stream: [], execution: { status: "scheduled", scheduled_at: "2026-07-17T10:30:00+08:00", next_scheduled_at: "2026-07-17T10:30:00+08:00", last_completed_at: null, last_attempt_at: null, attempts: 0, error_code: null } },
+      postclose: { advice: [], change_stream: [], execution: { status: "scheduled", scheduled_at: "2026-07-17T15:30:00+08:00", next_scheduled_at: "2026-07-17T15:30:00+08:00", last_completed_at: null, last_attempt_at: null, attempts: 0, error_code: null } },
+    } as unknown as StockCockpitSnapshot["phases"];
+
+    render(<PhaseTimeline phases={phases} symbol="600000" />);
+
+    expect(screen.getByText("计划 09:20 生成")).toBeInTheDocument();
+    expect(screen.getByText("计划 10:30 首次生成")).toBeInTheDocument();
+    expect(screen.getByText("计划 15:30 生成")).toBeInTheDocument();
+    expect(screen.queryByText("本阶段没有生成可核验记录")).not.toBeInTheDocument();
+  });
 });

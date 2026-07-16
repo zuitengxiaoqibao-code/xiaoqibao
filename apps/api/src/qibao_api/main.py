@@ -70,6 +70,7 @@ from qibao_api.zhongshu.news_ai import NewsAIGateway, UnavailableNewsAIProvider
 from qibao_api.shangshu.briefing_repository import BriefingRepository
 from qibao_api.shangshu.daily_briefing import DailyBriefingWorkflow
 from qibao_api.shangshu.trading_calendar import (
+    ExchangeCalendarsTradingDaySchedule,
     StoredTradingCalendar,
     TencentIndexTradingDaySignal,
 )
@@ -207,6 +208,7 @@ async def lifespan(application: FastAPI):
             trading_calendar = StoredTradingCalendar(
                 bar_repository,
                 live_signal=TencentIndexTradingDaySignal(history_client),
+                schedule=ExchangeCalendarsTradingDaySchedule(),
             )
             application.state.bar_repository = bar_repository
             application.state.market_data_service = MarketDataService(
@@ -400,6 +402,8 @@ async def lifespan(application: FastAPI):
                     application.state.a_share_diagnosis_service,
                     decision_repository,
                     preparation_service=application.state.a_share_preparation_service,
+                    trading_calendar=trading_calendar,
+                    operations_repository=operations_repository,
                     assessor_ai=ReloadableAssessmentGateway(
                         effective_ai_settings,
                         client=client,

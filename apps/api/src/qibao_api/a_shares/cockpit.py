@@ -16,6 +16,7 @@ from qibao_api.contracts.decision import AdviceCard, DecisionPhase, EvidenceRefe
 from qibao_api.contracts.instruments import AShareCode
 from qibao_api.contracts.market import AssetKind
 from qibao_api.libu_compliance.repository import SourceAuthorizationError
+from qibao_api.shangshu.phase_lifecycle import PhaseExecution, resolve_phase_execution
 
 
 SECTION_NAMES = (
@@ -54,6 +55,7 @@ class StockPhaseHistory(BaseModel):
 
     advice: tuple[AdviceCard, ...] = ()
     change_stream: tuple[DecisionVersion, ...] = ()
+    execution: PhaseExecution | None = None
 
 
 class StockCockpitSnapshot(BaseModel):
@@ -132,6 +134,8 @@ class StockDecisionCockpitService:
         assessor=None,
         assessor_ai=None,
         clock: Callable[[], datetime] | None = None,
+        trading_calendar=None,
+        operations_repository=None,
     ) -> None:
         self.instrument_directory = instrument_directory
         self.diagnosis_service = diagnosis_service
@@ -140,6 +144,8 @@ class StockDecisionCockpitService:
         self.assessor_ai = assessor_ai
         self.clock = clock or (lambda: datetime.now(timezone.utc))
         self.preparation_service = preparation_service
+        self.trading_calendar = trading_calendar
+        self.operations_repository = operations_repository
 
     async def get(
         self, symbol: AShareCode, as_of: date, cutoff: datetime
@@ -247,9 +253,18 @@ class StockDecisionCockpitService:
 
     def _phases(self, symbol, as_of, cutoff):
         result = {}
+        jobs = (
+            self.operations_repository.jobs()
+            if self.operations_repository is not None else []
+        )
+        confirmed_trading_day = (
+            self.trading_calendar is None
+            or self.trading_calendar.is_trading_day(as_of)
+        )
         for phase in PHASES:
             advice = []
             versions = []
+            included_aggregates = []
             for aggregate in self.decision_repository.cycles(as_of, phase):
                 snapshot = aggregate.snapshot
                 if snapshot.generated_at > cutoff or any(
@@ -266,12 +281,21 @@ class StockDecisionCockpitService:
                     )
                 )
                 advice.extend(selected)
+                included_aggregates.append(aggregate)
                 versions.append(DecisionVersion(
                     snapshot_id=snapshot.snapshot_id, sequence=snapshot.sequence,
                     generated_at=snapshot.generated_at, status=snapshot.status,
                 ))
+            execution = None
+            if confirmed_trading_day:
+                execution = resolve_phase_execution(
+                    phase=phase, trading_date=as_of, now=cutoff,
+                    aggregate=(included_aggregates[-1] if included_aggregates else None),
+                    jobs=jobs,
+                )
             result[phase] = StockPhaseHistory(
-                advice=tuple(advice), change_stream=tuple(versions)
+                advice=tuple(advice), change_stream=tuple(versions),
+                execution=execution,
             )
         return result
 

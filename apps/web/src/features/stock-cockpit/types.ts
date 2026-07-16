@@ -1,5 +1,5 @@
 import type { CandidateBoard } from "../a-shares/types";
-import type { Advice, DecisionPhase } from "../decision-workbench/types";
+import type { Advice, DecisionPhase, PhaseExecution } from "../decision-workbench/types";
 
 export type AShareInstrument = {
   symbol: string;
@@ -99,6 +99,7 @@ export type DecisionVersion = {
 export type StockPhaseHistory = {
   advice: Advice[];
   change_stream: DecisionVersion[];
+  execution?: PhaseExecution | null;
 };
 
 export type CandidateLoader = () => Promise<CandidateBoard>;

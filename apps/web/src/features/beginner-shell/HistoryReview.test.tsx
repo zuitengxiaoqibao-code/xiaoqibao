@@ -29,4 +29,19 @@ describe("HistoryReview", () => {
     expect(await screen.findByText("本阶段已运行，当时未纳入这只股票")).toBeInTheDocument();
     expect(screen.getAllByText("本阶段没有生成可核验记录")).toHaveLength(2);
   });
+  it("shows a future phase as scheduled instead of unavailable", async () => {
+    const data = response();
+    data.phases.postclose = {
+      ...data.phases.postclose,
+      execution: {
+        status: "scheduled", scheduled_at: "2026-07-15T15:30:00+08:00",
+        next_scheduled_at: "2026-07-15T15:30:00+08:00", last_completed_at: null,
+        last_attempt_at: null, attempts: 0, error_code: null,
+      },
+    } as typeof data.phases.postclose;
+
+    render(<HistoryReview loadCurrent={() => Promise.resolve(data)} symbol="600000" />);
+
+    expect(await screen.findByText("计划 15:30 生成")).toBeInTheDocument();
+  });
 });

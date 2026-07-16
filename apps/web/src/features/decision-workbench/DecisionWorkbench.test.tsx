@@ -43,6 +43,25 @@ describe("DecisionWorkbench", () => {
     expect(screen.queryByText(/模拟操作计划|行情门禁|仓位/)).not.toBeInTheDocument();
   });
 
+  it("explains that an empty premarket phase is scheduled rather than broken", async () => {
+    const scheduled = {
+      ...emptySlot,
+      execution: {
+        status: "scheduled", scheduled_at: "2026-07-17T09:20:00+08:00",
+        next_scheduled_at: "2026-07-17T09:20:00+08:00", last_completed_at: null,
+        last_attempt_at: null, attempts: 0, error_code: null,
+      },
+    } as PhaseSlot;
+    render(<DecisionWorkbench loadCurrent={() => Promise.resolve(response({
+      server_time: "2026-07-17T09:00:00+08:00", trading_date: "2026-07-17",
+      current_phase: "premarket", market_session: "closed",
+      phases: { premarket: scheduled, intraday: emptySlot, postclose: emptySlot },
+    }))} />);
+
+    expect(await screen.findByText("盘前研判计划 09:20 生成")).toBeInTheDocument();
+    expect(screen.getByText("尚未到计划时间，不会提前编造结论。")).toBeInTheDocument();
+  });
+
   it("loads explicit history and returns to the current endpoint", async () => {
     const loadCurrent = vi.fn().mockResolvedValue(response());
     const loadDate = vi.fn().mockResolvedValue(response({ trading_date: "2026-07-14", market_session: "closed" }));

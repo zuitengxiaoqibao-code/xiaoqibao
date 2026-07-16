@@ -3,6 +3,7 @@ from datetime import date, datetime
 import pytest
 
 from qibao_api.shangshu.trading_calendar import (
+    ExchangeCalendarsTradingDaySchedule,
     StoredTradingCalendar,
     TencentIndexTradingDaySignal,
 )
@@ -42,6 +43,14 @@ def test_calendar_fails_closed_when_live_signal_is_unavailable() -> None:
     assert StoredTradingCalendar(Bars(), live_signal=signal).is_trading_day(
         date(2026, 7, 15)
     ) is False
+
+
+def test_exchange_calendar_confirms_premarket_session_and_national_day() -> None:
+    schedule = ExchangeCalendarsTradingDaySchedule()
+
+    assert schedule.is_trading_day(date(2026, 7, 17)) is True
+    assert schedule.is_trading_day(date(2026, 10, 1)) is False
+    assert schedule.is_trading_day(date(2027, 1, 4)) is None
 
 
 class Response:

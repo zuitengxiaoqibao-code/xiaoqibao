@@ -1,4 +1,10 @@
 export type DecisionPhase = "premarket" | "intraday" | "postclose";
+export type PhaseExecution = {
+  status: "scheduled" | "running" | "completed" | "failed" | "overdue";
+  scheduled_at: string; next_scheduled_at: string | null;
+  last_completed_at: string | null; last_attempt_at: string | null;
+  attempts: number; error_code: string | null;
+};
 export type Evidence = { evidence_id: string; source: string; snapshot_id: string; summary: string; observed_at: string };
 export type Advice = {
   advice_id: string; snapshot_id: string; asset: "a_share" | "convertible_bond"; symbol: string; horizon: "intraday" | "swing";
@@ -16,6 +22,7 @@ export type PhaseSlot = {
   generated_at?: string; advice: Advice[]; evidence: Evidence[];
   delta_version?: string; delta_advice?: Advice[];
   change_stream?: Array<{ snapshot_id: string; sequence: number; generated_at: string; delta_advice: Advice[] }>;
+  execution?: PhaseExecution;
 };
 export type DecisionResponse = {
   server_time: string; trading_date: string; current_phase: DecisionPhase; market_session: "open" | "closed";

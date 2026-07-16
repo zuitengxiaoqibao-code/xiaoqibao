@@ -1,11 +1,27 @@
 from datetime import date, datetime, timedelta
 from typing import Protocol
 
+import exchange_calendars
 import httpx
 
 
 class TradingDaySignal(Protocol):
     def confirmed_date(self) -> date | None: ...
+
+
+class TradingDaySchedule(Protocol):
+    def is_trading_day(self, value: date) -> bool | None: ...
+
+
+class ExchangeCalendarsTradingDaySchedule:
+    def __init__(self, calendar=None) -> None:
+        self.calendar = calendar or exchange_calendars.get_calendar("XSHG")
+
+    def is_trading_day(self, value: date) -> bool | None:
+        try:
+            return bool(self.calendar.is_session(value))
+        except ValueError:
+            return None
 
 
 class TencentIndexTradingDaySignal:
@@ -43,13 +59,23 @@ class TencentIndexTradingDaySignal:
 
 
 class StoredTradingCalendar:
-    def __init__(self, bar_repository, live_signal: TradingDaySignal | None = None) -> None:
+    def __init__(
+        self,
+        bar_repository,
+        live_signal: TradingDaySignal | None = None,
+        schedule: TradingDaySchedule | None = None,
+    ) -> None:
         self.bar_repository = bar_repository
         self.live_signal = live_signal
+        self.schedule = schedule
 
     def is_trading_day(self, value: date) -> bool:
         if value in self.bar_repository.trade_dates(limit=1000):
             return True
+        if self.schedule is not None:
+            scheduled = self.schedule.is_trading_day(value)
+            if scheduled is not None:
+                return scheduled
         return self.live_signal is not None and self.live_signal.confirmed_date() == value
 
     def previous_trading_day(self, value: date) -> date:

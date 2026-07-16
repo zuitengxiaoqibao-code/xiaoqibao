@@ -41,9 +41,14 @@ class Calendar:
 
 
 class Scheduler:
-    def __init__(self, result=None):
+    def __init__(self, result=None, *, jobs=(), paused=False):
         self.calls = []
         self.result = result
+        self.jobs = list(jobs)
+        self.paused = paused
+
+    def status(self):
+        return {"paused": self.paused, "jobs": self.jobs}
 
     def run_manual(self, phase, trading_date, now):
         self.calls.append((phase, trading_date, now))
@@ -74,6 +79,98 @@ def test_current_returns_explicit_empty_phase_slots():
     assert body["market_session"] == "open"
     assert body["phases"]["intraday"]["phase_status"] == "empty"
     assert set(body["phases"]) == {"premarket", "intraday", "postclose"}
+
+
+def test_current_exposes_premarket_schedule_before_the_job_is_due():
+    now = datetime(2026, 7, 17, 9, 0, tzinfo=CHINA_TZ)
+    api, _ = client(now=now, trading_days=(now.date(),))
+
+    body = api.get("/api/v1/decisions/current").json()
+
+    execution = body["phases"]["premarket"]["execution"]
+    assert execution["status"] == "scheduled"
+    assert execution["scheduled_at"] == "2026-07-17T09:20:00+08:00"
+    assert execution["next_scheduled_at"] == "2026-07-17T09:20:00+08:00"
+
+
+def test_current_distinguishes_overdue_and_failed_phase_jobs():
+    day = date(2026, 7, 17)
+    failed_job = {
+        "job_key": "2026-07-17:intraday:1030:decision",
+        "phase": "intraday",
+        "trading_date": day.isoformat(),
+        "slot": "1030:decision",
+        "trigger": "scheduled",
+        "attempt": 1,
+        "attempts": 1,
+        "status": "failed",
+        "occurred_at": "2026-07-17T02:30:10+00:00",
+        "report_id": None,
+        "error_code": "timeout_error",
+    }
+    api, _ = client(
+        now=datetime(2026, 7, 17, 10, 31, tzinfo=CHINA_TZ),
+        trading_days=(day,),
+        scheduler=Scheduler(jobs=(failed_job,)),
+    )
+
+    phases = api.get("/api/v1/decisions/current").json()["phases"]
+
+    assert phases["premarket"]["execution"]["status"] == "overdue"
+    assert phases["intraday"]["execution"]["status"] == "failed"
+    assert phases["intraday"]["execution"]["error_code"] == "timeout_error"
+
+
+def test_current_reports_running_phase_job():
+    day = date(2026, 7, 17)
+    running_job = {
+        "job_key": "2026-07-17:premarket:0920:decision",
+        "phase": "premarket",
+        "trading_date": day.isoformat(),
+        "slot": "0920:decision",
+        "trigger": "scheduled",
+        "attempt": 1,
+        "attempts": 1,
+        "status": "started",
+        "occurred_at": "2026-07-17T01:20:05+00:00",
+        "report_id": None,
+        "error_code": None,
+    }
+    api, _ = client(
+        now=datetime(2026, 7, 17, 9, 20, 10, tzinfo=CHINA_TZ),
+        trading_days=(day,), scheduler=Scheduler(jobs=(running_job,)),
+    )
+
+    execution = api.get("/api/v1/decisions/current").json()["phases"]["premarket"]["execution"]
+
+    assert execution["status"] == "running"
+    assert execution["last_attempt_at"] == "2026-07-17T01:20:05Z"
+
+
+def test_old_manual_completion_does_not_hide_a_missed_later_intraday_slot():
+    day = date(2026, 7, 17)
+    manual_job = {
+        "job_key": "2026-07-17:intraday:manual-110000:decision",
+        "phase": "intraday",
+        "trading_date": day.isoformat(),
+        "slot": "manual-110000:decision",
+        "trigger": "manual",
+        "attempt": 1,
+        "attempts": 1,
+        "status": "completed",
+        "occurred_at": "2026-07-17T03:00:00+00:00",
+        "report_id": "intraday-manual",
+        "error_code": None,
+    }
+    api, _ = client(
+        now=datetime(2026, 7, 17, 13, 31, tzinfo=CHINA_TZ),
+        trading_days=(day,), scheduler=Scheduler(jobs=(manual_job,)),
+    )
+
+    execution = api.get("/api/v1/decisions/current").json()["phases"]["intraday"]["execution"]
+
+    assert execution["status"] == "overdue"
+    assert execution["last_attempt_at"] is None
 
 
 def test_non_trading_day_uses_most_recent_postclose_snapshot():
@@ -195,3 +292,4 @@ def test_intraday_slot_materializes_unchanged_symbols_and_keeps_latest_delta():
     assert [item["sequence"] for item in slot["change_stream"]] == [1, 2]
     assert slot["change_stream"][0]["delta_advice"][0]["advice_id"] == "a3"
     assert {item["evidence_id"] for item in slot["evidence"]} == {"pre-evidence"}
+    assert slot["execution"]["status"] == "completed"
