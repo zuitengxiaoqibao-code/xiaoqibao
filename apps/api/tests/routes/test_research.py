@@ -1,4 +1,4 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 import sqlite3
 
@@ -25,7 +25,15 @@ from qibao_api.dependencies import (
     get_pipeline,
     get_server_time,
 )
-from qibao_api.a_shares.cockpit import UnknownAShareError
+from qibao_api.a_shares.cockpit import StockDecisionCockpitService, UnknownAShareError
+from qibao_api.contracts.decision import (
+    AdviceCard,
+    DecisionCycleAggregate,
+    DecisionCycleSnapshot,
+    EvidenceReference,
+    SimulationGateAudit,
+    SimulationPlan,
+)
 from qibao_api.shangshu.decision_repository import DecisionIntegrityError
 from qibao_api.main import app
 from qibao_api.gongbu.tencent_quotes import parse_tencent_quote
@@ -435,3 +443,115 @@ def test_cockpit_rejects_future_as_of_using_server_beijing_time() -> None:
     )
     assert response.status_code == 422
     assert response.json()["detail"]["code"] == "future_as_of_not_allowed"
+
+
+COCKPIT_CUTOFF = datetime(2026, 7, 15, 2, 0, tzinfo=timezone.utc)
+COCKPIT_DATE = date(2026, 7, 15)
+
+
+class AcceptanceCockpitDirectory:
+    def resolve_at(self, symbol, cutoff):
+        assert cutoff == COCKPIT_CUTOFF
+        names = {"600000": "浦发银行", "600519": "贵州茅台", "000001": "平安银行"}
+        if symbol not in names:
+            return None
+        return AShareInstrument(
+            symbol=symbol, name=names[symbol],
+            exchange="sz" if symbol.startswith("0") else "sh",
+            observed_at=cutoff, quote_quality="ready",
+        )
+
+
+class AcceptanceCockpitDiagnosis:
+    async def diagnose(self, symbol, as_of, *, persist=True):
+        assert persist is False
+        sections = {
+            name: DiagnosisSection(
+                status="ready", observed_at=COCKPIT_CUTOFF, source="fixture",
+                metrics={"symbol": symbol}, explanation="fixture",
+            )
+            for name in (
+                "market", "price_volume", "trend", "valuation", "fundamentals",
+                "events", "industry", "risk",
+            )
+        }
+        return AShareDiagnosis(
+            symbol=symbol, as_of=as_of, action="observe", overall_status="ready",
+            sections=sections,
+        )
+
+
+def acceptance_advice():
+    evidence = EvidenceReference(
+        evidence_id="e-600000", source="fixture", snapshot_id="source-1",
+        summary="fixture", observed_at=COCKPIT_CUTOFF,
+    )
+    gate = SimulationGateAudit(
+        quote_state="ready", compliance_state="ready", evidence_state="ready",
+        risk_state="approve", risk_decision_id="risk-1",
+        compliance_snapshot_id="compliance-1",
+    )
+    return AdviceCard(
+        advice_id="a-600000", snapshot_id="cycle-1", asset=AssetKind.A_SHARE,
+        symbol="600000", horizon="intraday", observation_state="watch",
+        action="simulated_plan", conclusion="observe", confidence=Decimal("0.5"),
+        supporting_evidence=(evidence,), contrary_evidence=(), risks=("risk",),
+        invalidation_conditions=("invalid",), quantitative_result={},
+        strategy_version="v1", created_at=COCKPIT_CUTOFF,
+        simulation_plan_id="plan-1", risk_decision_id="risk-1", simulation_gate=gate,
+    )
+
+
+class AcceptanceCockpitDecisions:
+    def cycles(self, trading_date=None, phase=None):
+        if phase != "intraday":
+            return []
+        snapshot = DecisionCycleSnapshot(
+            snapshot_id="cycle-1", trading_date=COCKPIT_DATE, phase="intraday",
+            sequence=1, generated_at=COCKPIT_CUTOFF,
+            window_start=COCKPIT_CUTOFF - timedelta(minutes=1),
+            window_end=COCKPIT_CUTOFF,
+            market_state="range", data_quality="ready", source_snapshot_ids=("source-1",),
+            source_observed_at=(COCKPIT_CUTOFF,), candidate_snapshot_id=None,
+            news_event_ids=(), risk_event_ids=(), input_snapshot_hash="1" * 64,
+            previous_snapshot_id=None, status="ready", ai_status="not_requested",
+        )
+        plan = SimulationPlan(
+            plan_id="plan-1", advice_id="a-600000", risk_decision_id="risk-1",
+            compliance_snapshot_id="compliance-1", watch_price_low=Decimal("10"),
+            watch_price_high=Decimal("11"), stop_loss=Decimal("9"),
+            take_profit=(Decimal("12"),), tranches=(Decimal("0.1"),),
+            max_position=Decimal("0.2"), invalidation_conditions=("invalid",),
+            valid_from=COCKPIT_CUTOFF, valid_until=COCKPIT_CUTOFF.replace(hour=3),
+            strategy_version="v1", risk_version="v1", compliance_version="v1",
+        )
+        return [
+            DecisionCycleAggregate(
+                snapshot=snapshot, advice=(acceptance_advice(),), plans=(plan,),
+                next_focus_due_at=COCKPIT_CUTOFF, next_universe_due_at=COCKPIT_CUTOFF,
+            )
+        ]
+
+
+def test_cockpit_api_serializes_assessment_for_candidate_and_two_non_candidates() -> None:
+    service = StockDecisionCockpitService(
+        AcceptanceCockpitDirectory(), AcceptanceCockpitDiagnosis(),
+        AcceptanceCockpitDecisions(), clock=lambda: COCKPIT_CUTOFF,
+    )
+    client = cockpit_client(service)
+
+    payloads = {
+        symbol: client.get(f"/api/v1/a-shares/{symbol}/cockpit").json()
+        for symbol in ("600000", "600519", "000001")
+    }
+
+    assert all(payload["assessment"]["symbol"] == symbol for symbol, payload in payloads.items())
+    assert all(payload["ai_status"] == "unconfigured" for payload in payloads.values())
+    assert all(payload["ai_explanation"] is None for payload in payloads.values())
+    assert payloads["600000"]["assessment"]["simulation_eligible"] is True
+    for symbol in ("600519", "000001"):
+        payload = payloads[symbol]
+        assert payload["current_advice"] == []
+        assert payload["assessment"]["simulation_eligible"] is False
+        assert payload["assessment"]["authorized_simulation_advice_id"] is None
+        assert payload["assessment"]["authorized_simulation_plan_id"] is None

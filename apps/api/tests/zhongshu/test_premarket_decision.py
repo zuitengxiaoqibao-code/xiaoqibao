@@ -157,6 +157,21 @@ def test_late_premarket_run_requests_frozen_window_end(tmp_path) -> None:
     assert subject.candidate_service.cutoffs == [WINDOW_END]
 
 
+def test_premarket_recovery_one_microsecond_after_cutoff_uses_frozen_inputs(tmp_path) -> None:
+    subject, _ = service(tmp_path)
+    recovery_started_at = WINDOW_END + timedelta(microseconds=1)
+
+    result = subject.run(TRADE_DATE, recovery_started_at)
+
+    assert subject.candidate_service.cutoffs == [WINDOW_END]
+    assert result.snapshot.status != "blocked"
+    assert result.snapshot.source_observed_at
+    assert all(observed_at <= WINDOW_END for observed_at in result.snapshot.source_observed_at)
+    assert [(item.symbol, item.horizon) for item in result.advice] == [
+        ("600000", "intraday"), ("000001", "swing")
+    ]
+
+
 def test_explicit_cutoff_rejects_legacy_candidate_service() -> None:
     class LegacyCandidateService:
         def candidates(self, as_of, **kwargs):

@@ -39,9 +39,12 @@ Browser acceptance at `1440x900` and `390x844` is intentionally left to the cont
 - README and the V1 roadmap now separate deterministic assessment for any verified A-share from the candidate-only simulation layer.
 - Documentation lists `QIBAO_AI_BASE_URL`, `QIBAO_AI_API_KEY`, and `QIBAO_AI_MODEL` without claiming that AI is configured.
 - Unconfigured or failed AI preserves the deterministic assessment. The system does not connect to brokers, execute trades, or constitute investment advice.
-- The API integration test covers one candidate and two non-candidates: all retain an assessment, while non-candidates have no current ledger advice or simulation-plan reference.
-- The explicit premarket cutoff regression test remains in `test_premarket_decision.py`.
+- The service integration test covers one candidate and two non-candidates: all retain an assessment, while non-candidates have no current ledger advice or simulation-plan reference.
+- A FastAPI `TestClient` integration test now exercises `research_router`, dependency overrides, the real cockpit service, and Pydantic JSON serialization for the same candidate/non-candidate contract.
+- The explicit premarket cutoff regression now verifies that a recovery starting one microsecond after the cutoff still passes the frozen `window_end`, remains unblocked, and uses no observation after that boundary.
 
-Assessment integration verification: API `567 passed`; Ruff clean; frontend `116 passed`; TypeScript and Vite production build passed; focused cockpit and premarket tests `38 passed`; mojibake scan and `git diff --check` clean.
+Initial assessment integration verification: API `567 passed`; Ruff clean; frontend `116 passed`; TypeScript and Vite production build passed; focused cockpit and premarket tests `38 passed`; mojibake scan and `git diff --check` clean. Review follow-up verification is recorded in the subsequent commit.
+
+Review follow-up verification: route, cockpit-service, and premarket focused suites `66 passed`; full API suite `569 passed`; Ruff clean; mojibake scan and `git diff --check` clean.
 
 Real-browser acceptance at `1440x900` and `390x844` remains assigned to the controller and is not claimed here.
