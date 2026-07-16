@@ -10,13 +10,15 @@ const AUTO_SYNC_KEY = "qibao.autoSync";
 export function isAutoSyncEnabled(): boolean { return safeStorageGet(AUTO_SYNC_KEY, "true") !== "false"; }
 
 type Props = { loadAI: AISettingsLoader; saveAI: AISettingsSaver; deleteAI: AISettingsDeleter; symbol?: string | null; prepare?: PreparationLoader; preparation?: StockPreparation | null; onAIChanged?: () => void };
-const sourceNames = { quote: "实时行情", history: "历史走势", finance: "基本面", news: "新闻事件" } as const;
+const sourceNames = { quote: "实时行情", history: "历史走势", finance: "基本面", news: "新闻事件", classification: "行业与板块", fund_flow: "资金流" } as const;
 
 export function friendlySourceReason(reason: string | null): string | null {
   if (!reason) return null;
   const value = reason.toLowerCase();
   if (value.includes("lock") && value.includes("timeout")) return "同步任务繁忙，请稍后重试";
   if (value === "news_no_verified_symbol_events") return "暂未找到与这只股票直接相关且已核实的新闻";
+  if (value.includes("classification")) return "行业与板块来源暂不可用，请稍后重试";
+  if (value.includes("fund_flow") || value.includes("fund-flow") || value.includes("fund flow")) return "资金流来源暂不可用，请稍后重试";
   if (value.includes("not fresh") || value.includes("stale")) return "数据时间较早，正在等待来源更新";
   if (value.includes("history")) return "历史走势暂未补齐";
   if (value.includes("news")) return "新闻来源暂未返回内容";
@@ -45,7 +47,7 @@ export function DataSettingsView({ loadAI, saveAI, deleteAI, symbol, prepare, pr
 
   return <main className="beginner-page data-settings-view"><header><p className="eyebrow">数据设置</p><h1>数据源与 AI</h1><p>自动补齐公开数据，并在本机保存 AI 连接信息。研判规则不由 AI 改写。</p></header>
     {message && <div className="cockpit-error" role="alert"><ShieldAlert size={16} />{message}</div>}
-    <section className="settings-section"><div className="settings-heading"><div><Database size={20} /><span><h2>公开数据同步</h2><p>选择股票后检查行情、走势、基本面和新闻。</p></span></div><label className="toggle-control"><input type="checkbox" checked={autoSync} onChange={(event) => { setAutoSync(event.target.checked); safeStorageSet(AUTO_SYNC_KEY, String(event.target.checked)); }} /><span>自动同步</span></label></div>
+    <section className="settings-section"><div className="settings-heading"><div><Database size={20} /><span><h2>公开数据同步</h2><p>选择股票后检查行情、走势、基本面、行业、资金流和新闻。</p></span></div><label className="toggle-control"><input type="checkbox" checked={autoSync} onChange={(event) => { setAutoSync(event.target.checked); safeStorageSet(AUTO_SYNC_KEY, String(event.target.checked)); }} /><span>自动同步</span></label></div>
       {preparation ? <div className="source-status-list">{preparation.sources.map((source) => <article key={source.name}><div>{source.status === "ready" ? <CheckCircle2 size={17} /> : <ShieldAlert size={17} />}<b>{sourceNames[source.name]}</b><span>{source.status === "ready" ? "可用" : "待补齐"}</span></div><small>最后成功：{source.observed_at ? new Date(source.observed_at).toLocaleString("zh-CN", { hour12: false }) : "暂无成功记录"}</small>{friendlySourceReason(source.reason) && <p>{friendlySourceReason(source.reason)}</p>}</article>)}</div> : <p className="settings-empty">选择一只 A 股后，这里会显示各类数据的最新状态。</p>}
       <button type="button" className="settings-action secondary" disabled={!symbol || !prepare || prepBusy} onClick={() => void retry()}><RefreshCw size={16} />重试当前股票数据</button>
     </section>

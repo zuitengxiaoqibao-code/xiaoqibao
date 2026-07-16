@@ -15,7 +15,9 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict
 class PreparationSource(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    name: Literal["quote", "history", "finance", "news"]
+    name: Literal[
+        "quote", "history", "finance", "news", "classification", "fund_flow"
+    ]
     status: Literal["ready", "partial"]
     observed_at: AwareDatetime | None = None
     reason: str | None = None
@@ -160,6 +162,12 @@ class AStockPreparationService:
                 refreshed=False,
                 history_error=reason,
                 news_error=reason,
+                classification_error=(
+                    reason if self.classification_service is not None else None
+                ),
+                fund_flow_error=(
+                    reason if self.fund_flow_service is not None else None
+                ),
             )
 
     async def _prepare_locked(self, symbol, as_of, started_at):
@@ -192,8 +200,10 @@ class AStockPreparationService:
             history_error = str(error)
 
         news_refreshed, news_error = await self._refresh_news(symbol)
-        classification_refreshed = await self._refresh_classification(symbol)
-        fund_flow_refreshed = await self._refresh_fund_flow(symbol)
+        classification_refreshed, classification_error = (
+            await self._refresh_classification(symbol)
+        )
+        fund_flow_refreshed, fund_flow_error = await self._refresh_fund_flow(symbol)
         refreshed = (
             refreshed or news_refreshed or classification_refreshed
             or fund_flow_refreshed
@@ -206,6 +216,8 @@ class AStockPreparationService:
             refreshed=refreshed,
             history_error=history_error,
             news_error=news_error,
+            classification_error=classification_error,
+            fund_flow_error=fund_flow_error,
         )
 
     @staticmethod
@@ -234,15 +246,51 @@ class AStockPreparationService:
         refreshed,
         history_error=None,
         news_error=None,
+        classification_error=None,
+        fund_flow_error=None,
     ):
         bars = self._bars(symbol, as_of, cutoff)
         expected = await self._expected_trading_day(as_of)
         sources = [self._history_source(bars, expected, history_error)]
         sources.extend(await self._diagnosis_sources(symbol, as_of, cutoff))
         sources.append(self._news_source(symbol, as_of, cutoff, news_error))
+        auxiliary = (
+            (
+                "classification",
+                self.classification_service,
+                self._classification_marker(symbol),
+                classification_error,
+            ),
+            (
+                "fund_flow",
+                self.fund_flow_service,
+                self._fund_flow_marker(symbol),
+                fund_flow_error,
+            ),
+        )
+        sources.extend(
+            source
+            for name, service, marker, error in auxiliary
+            if service is not None
+            for source in (
+                self._auxiliary_source(
+                    name,
+                    service,
+                    symbol,
+                    as_of,
+                    cutoff,
+                    marker,
+                    error,
+                ),
+            )
+        )
+        ordered_names = ["quote", "history", "finance", "news"]
+        ordered_names.extend(
+            name for name, service, _, _ in auxiliary if service is not None
+        )
         ordered = tuple(
             next(source for source in sources if source.name == name)
-            for name in ("quote", "history", "finance", "news")
+            for name in ordered_names
         )
         return StockPreparation(
             symbol=symbol,
@@ -286,33 +334,73 @@ class AStockPreparationService:
             errors.append(str(error_value))
         return refreshed, "; ".join(dict.fromkeys(errors)) or None
 
-    async def _refresh_classification(self, symbol: str) -> bool:
+    async def _refresh_classification(self, symbol: str):
         if self.classification_service is None:
-            return False
+            return False, None
         try:
             async with self._file_lock(f"classification-{symbol}.lock"):
                 marker = self._classification_marker(symbol)
                 if self._classification_is_fresh(marker):
-                    return False
+                    return False, None
                 await self.classification_service.sync_symbol(symbol)
                 self._write_news_marker(marker, self._now())
-                return True
-        except (PreparationLockTimeout, Exception):
-            return False
+                return True, None
+        except Exception as error:
+            return False, str(error) or type(error).__name__
 
-    async def _refresh_fund_flow(self, symbol: str) -> bool:
+    async def _refresh_fund_flow(self, symbol: str):
         if self.fund_flow_service is None:
-            return False
+            return False, None
         try:
             async with self._file_lock(f"fund-flow-{symbol}.lock"):
                 marker = self._fund_flow_marker(symbol)
                 if self._fund_flow_is_fresh(marker):
-                    return False
+                    return False, None
                 await self.fund_flow_service.sync_symbol(symbol)
                 self._write_news_marker(marker, self._now())
-                return True
-        except (PreparationLockTimeout, Exception):
-            return False
+                return True, None
+        except Exception as error:
+            return False, str(error) or type(error).__name__
+
+    def _auxiliary_source(
+        self,
+        name,
+        service,
+        symbol,
+        as_of,
+        cutoff,
+        marker,
+        refresh_error,
+    ):
+        repository = getattr(service, "repository", None)
+        snapshot = None
+        repository_error = None
+        if repository is not None and hasattr(repository, "latest"):
+            try:
+                snapshot = repository.latest(symbol, as_of, cutoff=cutoff)
+            except Exception as error:
+                repository_error = str(error) or type(error).__name__
+        observed_at = self._aware(getattr(snapshot, "observed_at", None))
+        if repository is None:
+            marker_time = self._marker_time(marker)
+            marker_is_fresh = (
+                self._classification_is_fresh(marker)
+                if name == "classification"
+                else self._fund_flow_is_fresh(marker)
+            )
+            if marker_is_fresh and (
+                cutoff is None or marker_time is None or marker_time <= cutoff
+            ):
+                observed_at = marker_time
+        reason = refresh_error or repository_error
+        if reason is None and observed_at is None:
+            reason = f"{name}_no_verified_snapshot"
+        return PreparationSource(
+            name=name,
+            status="partial" if reason else "ready",
+            observed_at=observed_at,
+            reason=reason,
+        )
 
     async def _diagnosis_sources(self, symbol, as_of, cutoff):
         try:
@@ -433,6 +521,12 @@ class AStockPreparationService:
             return (self._now() - refreshed_at).total_seconds() < self.news_cooldown_seconds
         except (OSError, ValueError):
             return False
+
+    def _marker_time(self, marker: Path):
+        try:
+            return self._aware(datetime.fromisoformat(marker.read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            return None
 
     def _classification_is_fresh(self, marker: Path):
         try:

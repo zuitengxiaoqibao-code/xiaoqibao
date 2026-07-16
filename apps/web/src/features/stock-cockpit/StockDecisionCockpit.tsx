@@ -83,8 +83,9 @@ function AssessmentConclusion({ assessment, aiStatus, aiExplanation }: { assessm
 function PreparationStatus({ data, preparing = false }: { data: StockCockpitSnapshot; preparing?: boolean }) {
   const fallbackSources = [
     ["quote", "market"], ["history", "trend"], ["finance", "fundamentals"], ["news", "news"],
+    ["classification", "industry"], ["fund_flow", "funds"],
   ].map(([name, section]) => ({
-    name: name as "quote" | "history" | "finance" | "news",
+    name: name as "quote" | "history" | "finance" | "news" | "classification" | "fund_flow",
     status: data.sections[section]?.status === "ready" ? "ready" as const : "partial" as const,
     observed_at: data.sections[section]?.observed_at ?? null,
     reason: data.sections[section]?.reason ?? null,
@@ -94,7 +95,7 @@ function PreparationStatus({ data, preparing = false }: { data: StockCockpitSnap
     sources: fallbackSources, refreshed: false, started_at: data.cutoff, completed_at: data.cutoff,
   };
   const ready = preparation.sources.filter((source) => source.status === "ready").length;
-  const names = { quote: "实时行情", history: "历史走势", finance: "基本面", news: "新闻" } as const;
+  const names = { quote: "实时行情", history: "历史走势", finance: "基本面", news: "新闻", classification: "行业与板块", fund_flow: "资金流" } as const;
   const title = preparing ? "正在补齐数据" : !data.preparation ? "根据现有数据估算" : preparation.status === "ready" ? "数据已准备" : "部分数据待补齐";
   const detail = preparation.refreshed ? "已自动检查并更新" : !data.preparation ? "尚未执行自动补齐" : preparation.status === "ready" ? "数据无需再次补齐" : "仍有数据等待补齐";
   return <section className={`preparation-status ${preparation.status}`} aria-label="数据准备状态"><div><Database size={17} /><span><b>{title}</b><small>{detail}</small></span></div><div className="preparation-sources">{preparation.sources.map((source) => <span className={source.status} key={source.name}>{names[source.name]}<b>{source.status === "ready" ? "可用" : "待补齐"}</b></span>)}</div><small>{ready}/{preparation.sources.length} 类核心数据可用</small></section>;

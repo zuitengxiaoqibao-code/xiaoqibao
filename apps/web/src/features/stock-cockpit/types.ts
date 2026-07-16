@@ -58,7 +58,7 @@ export type AssessmentAIExplanation = {
 };
 
 export type PreparationSource = {
-  name: "quote" | "history" | "finance" | "news";
+  name: "quote" | "history" | "finance" | "news" | "classification" | "fund_flow";
   status: "ready" | "partial";
   observed_at: string | null;
   reason: string | null;

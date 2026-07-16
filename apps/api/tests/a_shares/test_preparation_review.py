@@ -125,6 +125,16 @@ class FundFlow:
         return type("Snapshot", (), {"snapshot_id": "fund-flow-1"})()
 
 
+class LatestSnapshotRepository:
+    def __init__(self, snapshot=None):
+        self.snapshot = snapshot
+        self.calls = []
+
+    def latest(self, symbol, as_of, *, cutoff=None):
+        self.calls.append((symbol, as_of, cutoff))
+        return self.snapshot
+
+
 class Calendar:
     def is_trading_day(self, value):
         return value.weekday() < 5
@@ -292,6 +302,54 @@ async def test_fund_flow_failure_retries_without_degrading_core_status(tmp_path)
     assert second.status == "partial"
     assert second.refreshed is True
     assert fund_flow.calls == ["600519", "600519"]
+
+
+@pytest.mark.asyncio
+async def test_auxiliary_failures_are_reported_and_successful_retry_clears_reason(tmp_path):
+    classification = Classification(fail_once=True)
+    fund_flow = FundFlow(fail_once=True)
+    service = subject(
+        tmp_path, classification=classification, fund_flow=fund_flow
+    )
+
+    first = await service.prepare("600519", as_of=FRIDAY)
+    first_sources = {item.name: item for item in first.sources}
+    assert first_sources["classification"].status == "partial"
+    assert first_sources["classification"].reason == "classification offline"
+    assert first_sources["fund_flow"].status == "partial"
+    assert first_sources["fund_flow"].reason == "fund flow offline"
+
+    second = await service.prepare("600519", as_of=FRIDAY)
+    second_sources = {item.name: item for item in second.sources}
+    assert second_sources["classification"].status == "ready"
+    assert second_sources["classification"].reason is None
+    assert second_sources["fund_flow"].status == "ready"
+    assert second_sources["fund_flow"].reason is None
+
+
+@pytest.mark.asyncio
+async def test_auxiliary_sources_show_last_verified_repository_timestamp(tmp_path):
+    observed = datetime(2026, 7, 17, 7, 30, tzinfo=UTC)
+    classification = Classification()
+    classification.repository = LatestSnapshotRepository(
+        type("Snapshot", (), {"observed_at": observed})()
+    )
+    fund_flow = FundFlow()
+    fund_flow.repository = LatestSnapshotRepository(
+        type("Snapshot", (), {"observed_at": observed})()
+    )
+    service = subject(
+        tmp_path, classification=classification, fund_flow=fund_flow
+    )
+
+    result = await service.inspect("600519", as_of=FRIDAY)
+    sources = {item.name: item for item in result.sources}
+    assert sources["classification"].status == "ready"
+    assert sources["classification"].observed_at == observed
+    assert sources["fund_flow"].status == "ready"
+    assert sources["fund_flow"].observed_at == observed
+    assert classification.repository.calls == [("600519", FRIDAY, None)]
+    assert fund_flow.repository.calls == [("600519", FRIDAY, None)]
 
 
 @pytest.mark.asyncio
