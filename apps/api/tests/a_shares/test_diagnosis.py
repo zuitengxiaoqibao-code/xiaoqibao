@@ -109,6 +109,18 @@ class NewsWithOtherAsset:
         ]
 
 
+class MultiStockIndustryNews(NewsWithOtherAsset):
+    def events(self):
+        event = super().events()[0]
+        return [event.model_copy(update={
+            "affected_instruments": (
+                (AssetKind.A_SHARE, "600000"),
+                (AssetKind.A_SHARE, "000001"),
+            ),
+            "industries": ("医药生物",),
+        })]
+
+
 class AdverseNews(NewsWithOtherAsset):
     def events(self):
         event = super().events()[0]
@@ -289,6 +301,20 @@ async def test_diagnosis_only_uses_frozen_events_linked_to_symbol() -> None:
     assert result.sections["events"].evidence_ids == ("event-target",)
     assert result.sections["events"].metrics["event_count"] == 1
     assert result.sections["industry"].metrics["industries"] == "银行"
+
+
+@pytest.mark.asyncio
+async def test_multi_stock_news_does_not_assign_article_keywords_as_stock_industry() -> None:
+    service = AShareDiagnosisService(
+        bar_repository=FakeBars({"600000": bars()}), market_source=FakeMarket(),
+        finance_source=FailingFinance(), news_repository=MultiStockIndustryNews(),
+    )
+
+    result = await service.diagnose("600000", AS_OF, persist=False)
+
+    assert result.sections["events"].metrics["event_count"] == 1
+    assert result.sections["industry"].metrics["industries"] == ""
+    assert result.sections["industry"].explanation == "当前没有已核验行业标签。"
 
 
 def test_candidates_use_only_local_symbols_with_enough_history() -> None:

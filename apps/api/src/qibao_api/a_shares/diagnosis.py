@@ -455,7 +455,12 @@ class AShareDiagnosisService:
             1 for event in events
             if "risk" in event.event_type or "风险事件" in event.themes
         )
-        industries = sorted({industry for event in events for industry in event.industries})
+        industries = sorted({
+            industry
+            for event in events
+            if len(event.affected_instruments) == 1
+            for industry in event.industries
+        })
         observed_at = max((event.normalized_at for event in events), default=None)
         events_section = DiagnosisSection(
             status="ready", observed_at=observed_at, source="frozen-news-events",

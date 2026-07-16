@@ -5,6 +5,7 @@ import pytest
 
 from qibao_api.gongbu.news_collection import (
     EastmoneyGlobalNewsSource,
+    EastmoneyStockNewsSource,
     NewsHttpResponse,
     deduplicate_articles,
 )
@@ -17,6 +18,15 @@ def payload(items: list[dict]) -> bytes:
     return json.dumps(
         {"data": {"fastNewsList": items}}, ensure_ascii=False, separators=(",", ":")
     ).encode("utf-8")
+
+
+def stock_payload(items: list[dict]) -> bytes:
+    body = json.dumps(
+        {"code": 0, "result": {"cmsArticleWebOld": items}},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return f"jQuery_news({body})".encode("utf-8")
 
 
 @pytest.mark.asyncio
@@ -44,6 +54,72 @@ async def test_eastmoney_global_news_preserves_article_evidence() -> None:
     assert articles[0].content_hash
     assert articles[0].source_verified is True
     assert articles[0].published_at.isoformat() == "2026-07-14T08:55:00+08:00"
+
+
+@pytest.mark.asyncio
+async def test_eastmoney_stock_news_queries_symbol_and_preserves_article_evidence() -> None:
+    requests = []
+
+    async def transport(url, params, headers):
+        requests.append((url, params, headers))
+        return NewsHttpResponse(200, stock_payload([{
+            "code": "202607163808318738",
+            "title": "22股受融资客青睐，净买入超亿元",
+            "content": "600519 贵州茅台融资净买入4.74亿元。",
+            "date": "2026-07-16 09:10:00",
+            "mediaName": "证券时报网",
+            "url": "http://finance.eastmoney.com/a/202607163808318738.html",
+        }]))
+
+    source = EastmoneyStockNewsSource(
+        transport=transport,
+        clock=lambda: datetime(2026, 7, 16, 2, 0, tzinfo=UTC),
+    )
+    articles = await source.fetch("600519", page_size=10)
+
+    assert len(articles) == 1
+    assert articles[0].publisher == "证券时报网"
+    assert articles[0].summary == "600519 贵州茅台融资净买入4.74亿元。"
+    assert articles[0].canonical_url.startswith("http://finance.eastmoney.com/")
+    assert articles[0].source_verified is True
+    assert json.loads(articles[0].raw_snapshot)["mediaName"] == "证券时报网"
+    request = json.loads(requests[0][1]["param"])
+    assert request["keyword"] == "600519"
+    assert request["param"]["cmsArticleWebOld"]["pageSize"] == 10
+
+
+@pytest.mark.asyncio
+async def test_eastmoney_stock_news_rejects_invalid_jsonp_and_upstream_errors() -> None:
+    responses = [
+        NewsHttpResponse(200, b"not-jsonp"),
+        NewsHttpResponse(200, b'jQuery_news({"code":400,"msg":"bad request"})'),
+    ]
+
+    async def transport(_url, _params, _headers):
+        return responses.pop(0)
+
+    source = EastmoneyStockNewsSource(transport=transport, clock=lambda: NOW)
+
+    with pytest.raises(ValueError, match="JSONP"):
+        await source.fetch("600519")
+    with pytest.raises(OSError, match="bad request"):
+        await source.fetch("600519")
+
+
+@pytest.mark.asyncio
+async def test_eastmoney_stock_news_treats_missing_rows_with_hits_as_transient() -> None:
+    raw = (
+        'jQuery_news({"code":0,"hitsTotal":12,"result":{"passportWeb":[]}})'
+        .encode("utf-8")
+    )
+
+    async def transport(_url, _params, _headers):
+        return NewsHttpResponse(200, raw)
+
+    source = EastmoneyStockNewsSource(transport=transport, clock=lambda: NOW)
+
+    with pytest.raises(OSError, match="missing article rows"):
+        await source.fetch("600519")
 
 
 @pytest.mark.asyncio

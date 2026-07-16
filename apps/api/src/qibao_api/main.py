@@ -23,7 +23,10 @@ from qibao_api.convertible_bonds.adapters import EastmoneyBondValuationSource, E
 from qibao_api.convertible_bonds.repository import BondClauseRepository
 from qibao_api.convertible_bonds.service import ConvertibleBondService
 from qibao_api.convertible_bonds.diagnosis_repository import BondDiagnosisRepository
-from qibao_api.gongbu.news_collection import EastmoneyGlobalNewsSource
+from qibao_api.gongbu.news_collection import (
+    EastmoneyGlobalNewsSource,
+    EastmoneyStockNewsSource,
+)
 from qibao_api.gongbu.news_ingestion import NewsIngestionService
 from qibao_api.gongbu.news_linking import DeterministicNewsLinker
 from qibao_api.gongbu.news_repository import NewsRepository
@@ -220,13 +223,7 @@ async def lifespan(application: FastAPI):
                 news_repository,
                 DeterministicNewsLinker(
                     instrument_aliases={},
-                    industry_keywords={
-                        "半导体": ("半导体", "芯片"),
-                        "人工智能": ("人工智能", "AI算力", "大模型"),
-                        "新能源": ("新能源", "光伏", "锂电"),
-                        "医药生物": ("创新药", "医疗器械", "医药"),
-                        "高端制造": ("先进制造", "工业母机", "机器人"),
-                    },
+                    industry_keywords={},
                     theme_keywords={
                         "政策支持": ("支持政策", "专项政策", "政策支持"),
                         "业绩变化": ("业绩预增", "业绩预减", "业绩快报"),
@@ -242,6 +239,7 @@ async def lifespan(application: FastAPI):
                     model="none",
                     prompt_version="news-v1",
                 ),
+                stock_source=EastmoneyStockNewsSource(client=client),
             )
             application.state.a_share_preparation_service = AStockPreparationService(
                 bar_repository,

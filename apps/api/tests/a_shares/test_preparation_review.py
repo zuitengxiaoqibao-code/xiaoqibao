@@ -69,6 +69,20 @@ class News:
         return {"events": 0}
 
 
+class SymbolNews(News):
+    def __init__(self, *, fail_symbol_once=False):
+        super().__init__()
+        self.symbol_calls = []
+        self.fail_symbol_once = fail_symbol_once
+
+    async def sync_symbol(self, symbol):
+        self.symbol_calls.append(symbol)
+        if self.fail_symbol_once:
+            self.fail_symbol_once = False
+            raise TimeoutError("symbol news offline")
+        return {"events": 1}
+
+
 class NewsRepo:
     def __init__(self, events_by_symbol=None):
         self.queries = []
@@ -163,6 +177,35 @@ async def test_global_news_cooldown_is_shared_across_different_symbols(tmp_path)
 
 
 @pytest.mark.asyncio
+async def test_symbol_news_uses_independent_per_stock_cooldown(tmp_path):
+    bars = Bars(latest=FRIDAY)
+    news = SymbolNews()
+    service = subject(tmp_path, bars=bars, news=news)
+
+    await service.prepare("600519", as_of=FRIDAY)
+    await service.prepare("600000", as_of=FRIDAY)
+    await service.prepare("600519", as_of=FRIDAY)
+
+    assert news.calls == 1
+    assert news.symbol_calls == ["600519", "600000"]
+
+
+@pytest.mark.asyncio
+async def test_symbol_news_failure_is_retried_without_repeating_fresh_global_sync(tmp_path):
+    bars = Bars(latest=FRIDAY)
+    news = SymbolNews(fail_symbol_once=True)
+    service = subject(tmp_path, bars=bars, news=news)
+
+    first = await service.prepare("600519", as_of=FRIDAY)
+    second = await service.prepare("600519", as_of=FRIDAY)
+
+    assert first.status == "partial"
+    assert second.refreshed is True
+    assert news.calls == 1
+    assert news.symbol_calls == ["600519", "600519"]
+
+
+@pytest.mark.asyncio
 async def test_partial_refresh_is_not_cached_and_retries(tmp_path):
     bars = Bars(latest=date(2026, 7, 16), count=59)
     history = History(bars, fail_once=True)
@@ -215,7 +258,7 @@ class LinkedEvent:
 @pytest.mark.asyncio
 async def test_fresh_global_news_without_verified_symbol_event_is_partial(tmp_path):
     service = subject(tmp_path)
-    service._write_news_marker(service._now())
+    service._write_news_marker(service._global_news_marker(), service._now())
 
     result = await service.inspect("600519", as_of=SATURDAY)
 
@@ -229,7 +272,7 @@ async def test_fresh_global_news_without_verified_symbol_event_is_partial(tmp_pa
 async def test_unrelated_verified_news_does_not_make_symbol_ready(tmp_path):
     repository = NewsRepo({"600000": [LinkedEvent(datetime(2026, 7, 18, 2, tzinfo=UTC))]})
     service = subject(tmp_path, news_repository=repository)
-    service._write_news_marker(service._now())
+    service._write_news_marker(service._global_news_marker(), service._now())
 
     result = await service.inspect("600519", as_of=SATURDAY)
 
@@ -244,7 +287,7 @@ async def test_linked_verified_news_makes_symbol_ready(tmp_path):
     service = subject(
         tmp_path, news_repository=NewsRepo({"600519": [LinkedEvent(observed)]})
     )
-    service._write_news_marker(service._now())
+    service._write_news_marker(service._global_news_marker(), service._now())
 
     result = await service.inspect("600519", as_of=SATURDAY)
 
@@ -351,7 +394,7 @@ async def test_inspect_calendar_does_not_block_event_loop(tmp_path):
 
 def test_news_marker_publication_is_atomic(tmp_path, monkeypatch):
     service = subject(tmp_path)
-    marker = service._news_marker()
+    marker = service._global_news_marker()
     marker.write_text("2026-07-18T02:59:00+00:00", encoding="utf-8")
     observed = []
     real_replace = __import__("os").replace
@@ -361,7 +404,7 @@ def test_news_marker_publication_is_atomic(tmp_path, monkeypatch):
         real_replace(source, destination)
 
     monkeypatch.setattr("qibao_api.a_shares.preparation.os.replace", inspect_before_replace)
-    service._write_news_marker(datetime(2026, 7, 18, 3, tzinfo=UTC))
+    service._write_news_marker(marker, datetime(2026, 7, 18, 3, tzinfo=UTC))
 
     assert observed == ["2026-07-18T02:59:00+00:00"]
     assert marker.read_text(encoding="utf-8") == "2026-07-18T03:00:00+00:00"

@@ -183,7 +183,7 @@ class AStockPreparationService:
         except PreparationLockTimeout as error:
             history_error = str(error)
 
-        news_refreshed, news_error = await self._refresh_news()
+        news_refreshed, news_error = await self._refresh_news(symbol)
         refreshed = refreshed or news_refreshed
         return await self._inspect(
             symbol,
@@ -243,21 +243,35 @@ class AStockPreparationService:
             completed_at=self._now(),
         )
 
-    async def _refresh_news(self):
-        error = None
+    async def _refresh_news(self, symbol):
+        errors = []
         refreshed = False
         try:
             async with self._file_lock("news-global.lock"):
-                if not self._news_is_fresh():
+                if not self._news_is_fresh(self._global_news_marker()):
                     try:
                         await self.news_service.sync()
-                        self._write_news_marker(self._now())
+                        self._write_news_marker(
+                            self._global_news_marker(), self._now()
+                        )
                         refreshed = True
                     except Exception as error_value:
-                        error = str(error_value)
+                        errors.append(str(error_value))
         except PreparationLockTimeout as error_value:
-            error = str(error_value)
-        return refreshed, error
+            errors.append(str(error_value))
+        try:
+            async with self._file_lock(f"news-{symbol}.lock"):
+                marker = self._symbol_news_marker(symbol)
+                if not self._news_is_fresh(marker):
+                    try:
+                        await self.news_service.sync_symbol(symbol)
+                        self._write_news_marker(marker, self._now())
+                        refreshed = True
+                    except Exception as error_value:
+                        errors.append(str(error_value))
+        except PreparationLockTimeout as error_value:
+            errors.append(str(error_value))
+        return refreshed, "; ".join(dict.fromkeys(errors)) or None
 
     async def _diagnosis_sources(self, symbol, as_of, cutoff):
         try:
@@ -343,12 +357,15 @@ class AStockPreparationService:
             ),
         )
 
-    def _news_marker(self):
+    def _global_news_marker(self):
         self.lock_dir.mkdir(parents=True, exist_ok=True)
         return self.lock_dir / "news-success.txt"
 
-    def _write_news_marker(self, refreshed_at: datetime) -> None:
-        marker = self._news_marker()
+    def _symbol_news_marker(self, symbol: str):
+        self.lock_dir.mkdir(parents=True, exist_ok=True)
+        return self.lock_dir / f"news-{symbol}-success.txt"
+
+    def _write_news_marker(self, marker: Path, refreshed_at: datetime) -> None:
         temporary = marker.with_name(f".{marker.name}.{uuid4().hex}.tmp")
         try:
             with temporary.open("w", encoding="utf-8") as handle:
@@ -359,10 +376,10 @@ class AStockPreparationService:
         finally:
             temporary.unlink(missing_ok=True)
 
-    def _news_is_fresh(self):
+    def _news_is_fresh(self, marker: Path):
         try:
             refreshed_at = datetime.fromisoformat(
-                self._news_marker().read_text(encoding="utf-8")
+                marker.read_text(encoding="utf-8")
             )
             return (self._now() - refreshed_at).total_seconds() < self.news_cooldown_seconds
         except (OSError, ValueError):

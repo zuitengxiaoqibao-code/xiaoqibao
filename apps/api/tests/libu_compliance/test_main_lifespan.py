@@ -66,6 +66,8 @@ async def test_lifespan_injects_guarded_production_sources_and_closes_compliance
         assert len(compliance.list_feature_source_history("market_news", "a_share")) == 1
         news_repository = application.state.news_repository
         assert application.state.news_service.repository is news_repository
+        assert application.state.news_service.stock_source is not None
+        assert application.state.news_service.linker.industry_keywords == {}
         briefing_repository = application.state.briefing_repository
         assert application.state.briefing_workflow.briefing_repository is briefing_repository
         decision_repository = application.state.decision_repository

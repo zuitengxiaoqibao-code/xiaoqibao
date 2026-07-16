@@ -53,6 +53,27 @@ class RefetchedSource:
         )]
 
 
+class StockSource:
+    def __init__(self, *, explicit: bool = True) -> None:
+        self.symbols = []
+        self.explicit = explicit
+
+    async def fetch(self, symbol):
+        import hashlib
+
+        self.symbols.append(symbol)
+        raw = f"stock-news-{symbol}-{self.explicit}".encode()
+        summary = f"{symbol} 公司发布公告" if self.explicit else "搜索结果未提及该股票"
+        return [NewsArticle(
+            article_id=f"stock-{symbol}-{self.explicit}",
+            canonical_url="https://finance.eastmoney.com/a/stock.html",
+            publisher="测试来源", title="个股新闻", summary=summary,
+            published_at=NOW, fetched_at=NOW,
+            content_hash=hashlib.sha256(raw).hexdigest(), raw_snapshot=raw,
+            source_verified=True,
+        )]
+
+
 def authorize(repository: ComplianceRepository) -> None:
     repository.append_record(ComplianceRecord(
         record_id="news-eastmoney", asset=AssetKind.A_SHARE, source="eastmoney",
@@ -124,5 +145,38 @@ async def test_ingestion_reuses_the_first_snapshot_for_a_refetched_article(tmp_p
     assert second["events"] == 0
     assert repository.articles()[0].raw_snapshot == b"600000 policy news poll 1"
     assert repository.events()[0].normalized_at == NOW + timedelta(minutes=1)
+    repository.close()
+    compliance.close()
+
+
+@pytest.mark.asyncio
+async def test_symbol_ingestion_requires_explicit_article_link_before_verification(tmp_path) -> None:
+    compliance = ComplianceRepository(tmp_path / "compliance.sqlite3")
+    compliance.set_feature_sources("market_news", AssetKind.A_SHARE, ("eastmoney",))
+    authorize(compliance)
+    repository = NewsRepository(tmp_path / "news.sqlite3")
+    explicit = StockSource()
+    unrelated = StockSource(explicit=False)
+    linker = DeterministicNewsLinker(
+        instrument_aliases={}, industry_keywords={}, theme_keywords={}
+    )
+    service = NewsIngestionService(
+        Source(), repository, linker, compliance, stock_source=explicit
+    )
+
+    result = await service.sync_symbol("600519")
+    other = NewsIngestionService(
+        Source(), repository, linker, compliance, stock_source=unrelated
+    )
+    await other.sync_symbol("000001")
+
+    assert result["fetched"] == 1
+    assert explicit.symbols == ["600519"]
+    assert repository.events_for_symbol("600519")[0].review_state == "verified"
+    unrelated_event = next(
+        item for item in repository.events() if item.event_id.startswith("event-stock-000001")
+    )
+    assert unrelated_event.affected_instruments == ()
+    assert unrelated_event.review_state == "pending"
     repository.close()
     compliance.close()

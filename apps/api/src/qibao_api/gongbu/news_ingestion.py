@@ -3,8 +3,12 @@ from qibao_api.gongbu.news_collection import deduplicate_articles
 
 
 class NewsIngestionService:
-    def __init__(self, source, repository, linker, compliance, ai_gateway=None) -> None:
+    def __init__(
+        self, source, repository, linker, compliance, ai_gateway=None, *,
+        stock_source=None,
+    ) -> None:
         self.source = source
+        self.stock_source = stock_source
         self.repository = repository
         self.linker = linker
         self.compliance = compliance
@@ -13,6 +17,19 @@ class NewsIngestionService:
     async def sync(self) -> dict[str, int]:
         self.compliance.require_feature_sources("market_news", AssetKind.A_SHARE)
         articles = await self.source.fetch()
+        return await self._ingest(articles)
+
+    async def sync_symbol(self, symbol: str) -> dict[str, int]:
+        self.compliance.require_feature_sources("market_news", AssetKind.A_SHARE)
+        if self.stock_source is None:
+            return {
+                "fetched": 0, "inserted": 0, "clusters": 0, "events": 0,
+                "interpretations": 0,
+            }
+        articles = await self.stock_source.fetch(symbol)
+        return await self._ingest(articles)
+
+    async def _ingest(self, articles) -> dict[str, int]:
         clusters = deduplicate_articles(articles)
         inserted = self.repository.append_articles(tuple(articles))
         for cluster in clusters:

@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import html
 import json
 import re
 import time
@@ -9,16 +10,19 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
+from urllib.parse import urlparse
 
 import httpx
 from pydantic import BaseModel, ConfigDict
 
 from qibao_api.contracts.news import NewsArticle
+from qibao_api.contracts.instruments import validate_a_share_code
 
 
 EASTMONEY_GLOBAL_NEWS_URL = (
     "https://np-weblist.eastmoney.com/comm/web/getFastNewsList"
 )
+EASTMONEY_STOCK_NEWS_URL = "https://search-api-web.eastmoney.com/search/jsonp"
 CHINA_TZ = timezone(timedelta(hours=8))
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 
@@ -169,6 +173,172 @@ class EastmoneyGlobalNewsSource:
                 )
             )
         return articles
+
+
+class EastmoneyStockNewsSource:
+    def __init__(
+        self,
+        transport: NewsTransport | None = None,
+        *,
+        client: httpx.AsyncClient | None = None,
+        clock=lambda: datetime.now(timezone.utc),
+        monotonic=time.monotonic,
+        sleep=asyncio.sleep,
+        minimum_interval: float = 1.0,
+    ) -> None:
+        self.transport = transport
+        self.client = client
+        self.clock = clock
+        self.monotonic = monotonic
+        self.sleep = sleep
+        self.minimum_interval = minimum_interval
+        self._last_request_at: float | None = None
+        self._request_lock = asyncio.Lock()
+
+    async def fetch(self, symbol: str, page_size: int = 20) -> list[NewsArticle]:
+        symbol = validate_a_share_code(symbol)
+        if not 1 <= page_size <= 50:
+            raise ValueError("page_size must be between 1 and 50")
+        callback = "jQuery_news"
+        query = {
+            "uid": "",
+            "keyword": symbol,
+            "type": ["cmsArticleWebOld"],
+            "client": "web",
+            "clientType": "web",
+            "clientVersion": "curr",
+            "param": {
+                "cmsArticleWebOld": {
+                    "searchScope": "default",
+                    "sort": "default",
+                    "pageIndex": 1,
+                    "pageSize": page_size,
+                    "preTag": "",
+                    "postTag": "",
+                }
+            },
+        }
+        params = {
+            "cb": callback,
+            "param": json.dumps(query, ensure_ascii=False, separators=(",", ":")),
+        }
+        headers = {
+            "User-Agent": USER_AGENT,
+            "Referer": "https://so.eastmoney.com/",
+        }
+        response: NewsHttpResponse | None = None
+        for attempt in range(2):
+            try:
+                async with self._request_lock:
+                    await self._wait_for_rate_limit()
+                    response = await self._request(params, headers)
+            except (OSError, httpx.TransportError):
+                if attempt == 1:
+                    raise
+                continue
+            if response.status_code not in {429, 500, 502, 503, 504}:
+                break
+            if attempt == 1:
+                raise OSError(f"Eastmoney stock news status {response.status_code}")
+        assert response is not None
+        if response.status_code != 200:
+            raise OSError(f"Eastmoney stock news status {response.status_code}")
+        return self._parse(response.body, callback)
+
+    async def _wait_for_rate_limit(self) -> None:
+        now = self.monotonic()
+        if self._last_request_at is not None:
+            remaining = self.minimum_interval - (now - self._last_request_at)
+            if remaining > 0:
+                await self.sleep(remaining)
+                now = self.monotonic()
+        self._last_request_at = now
+
+    async def _request(
+        self, params: dict[str, str], headers: dict[str, str]
+    ) -> NewsHttpResponse:
+        if self.transport is not None:
+            return await self.transport(EASTMONEY_STOCK_NEWS_URL, params, headers)
+        if self.client is not None:
+            result = await self.client.get(
+                EASTMONEY_STOCK_NEWS_URL, params=params, headers=headers
+            )
+            return NewsHttpResponse(result.status_code, result.content)
+        async with httpx.AsyncClient(timeout=15) as client:
+            result = await client.get(
+                EASTMONEY_STOCK_NEWS_URL, params=params, headers=headers
+            )
+            return NewsHttpResponse(result.status_code, result.content)
+
+    def _parse(self, raw: bytes, callback: str) -> list[NewsArticle]:
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise ValueError("Eastmoney stock news response is not valid JSONP") from error
+        prefix = f"{callback}("
+        if not text.startswith(prefix) or not text.endswith(")"):
+            raise ValueError("Eastmoney stock news response is not valid JSONP")
+        try:
+            payload = json.loads(text[len(prefix):-1])
+        except json.JSONDecodeError as error:
+            raise ValueError("Eastmoney stock news response is not valid JSONP") from error
+        if payload.get("code") != 0:
+            raise OSError(str(payload.get("msg") or "Eastmoney stock news request failed"))
+        rows = (payload.get("result") or {}).get("cmsArticleWebOld") or []
+        if not rows and int(payload.get("hitsTotal") or 0) > 0:
+            raise OSError("Eastmoney stock news response is missing article rows")
+        fetched_at = self.clock()
+        articles = []
+        for row in rows:
+            row_raw = json.dumps(
+                row, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
+            title = _plain_text(row.get("title"))
+            summary = _plain_text(row.get("content")) or None
+            published_at = _parse_eastmoney_time(row.get("date"))
+            source_url = str(row.get("url") or "").strip()
+            provider_code = str(row.get("code") or "").strip()
+            publisher = _plain_text(row.get("mediaName")) or "东方财富"
+            semantic_payload = json.dumps(
+                {
+                    "published_at": published_at.isoformat(),
+                    "publisher": publisher,
+                    "summary": summary,
+                    "title": title,
+                    "url": source_url,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            content_hash = hashlib.sha256(semantic_payload).hexdigest()
+            article_id = (
+                f"{provider_code}-{content_hash[:16]}"
+                if provider_code else content_hash[:24]
+            )
+            url = source_url or f"{EASTMONEY_STOCK_NEWS_URL}#{article_id}"
+            host = (urlparse(url).hostname or "").lower()
+            articles.append(NewsArticle(
+                article_id=article_id,
+                canonical_url=url,
+                publisher=publisher,
+                title=title,
+                summary=summary,
+                published_at=published_at,
+                fetched_at=fetched_at,
+                content_hash=content_hash,
+                raw_snapshot=row_raw,
+                source_verified=(
+                    bool(title)
+                    and (host == "eastmoney.com" or host.endswith(".eastmoney.com"))
+                ),
+            ))
+        return articles
+
+
+def _plain_text(value: object) -> str:
+    text = re.sub(r"<[^>]+>", "", str(value or ""))
+    return re.sub(r"\s+", " ", html.unescape(text)).strip()
 
 
 def _parse_eastmoney_time(value: object) -> datetime:
