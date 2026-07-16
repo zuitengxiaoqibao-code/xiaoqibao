@@ -1,10 +1,12 @@
+import hashlib
 import json
 import sqlite3
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from qibao_api.contracts.bars import DailyBar
 from qibao_api.gongbu.backup_service import BackupService
+from qibao_api.gongbu.fund_flow import FundFlowRepository, FundFlowSnapshot
 from qibao_api.storage.bar_repository import BarRepository
 
 
@@ -105,3 +107,44 @@ def test_restore_drill_verifies_decision_repository_hash_chain(tmp_path) -> None
     created = service.create()
 
     assert service.verify(created.backup_id, restore_drill=True).restore_drill_passed is True
+
+
+def test_restore_drill_rejects_tampered_fund_flow_business_hash(tmp_path) -> None:
+    data_dir = tmp_path / "runtime"
+    data_dir.mkdir()
+    repository = FundFlowRepository(data_dir / "fund-flow.sqlite3")
+    raw_snapshot = b'{"daily":{},"minute":{}}'
+    content_hash = hashlib.sha256(b"verified-fund-flow").hexdigest()
+    repository.append(FundFlowSnapshot(
+        snapshot_id="fund-flow-" + "a" * 24,
+        symbol="600519",
+        observed_at=datetime(2026, 7, 17, 6, tzinfo=timezone.utc),
+        latest_trade_date=date(2026, 7, 17),
+        latest_main_net=Decimal("100000000"),
+        latest_super_net=Decimal("60000000"),
+        latest_large_net=Decimal("40000000"),
+        main_net_5d=Decimal("300000000"),
+        main_net_20d=Decimal("700000000"),
+        intraday_main_net=Decimal("80000000"),
+        daily_sample_count=20,
+        intraday_sample_count=120,
+        flow_direction="inflow",
+        content_hash=content_hash,
+        raw_snapshot=raw_snapshot,
+    ))
+    repository.close()
+    bars = BarRepository(
+        data_dir / "market.duckdb", data_dir / "parquet" / "a-shares"
+    )
+    service = BackupService(data_dir, bars)
+    created = service.create()
+    backup_data = data_dir / "backups" / created.backup_id / "data"
+    database = backup_data / "fund-flow.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.execute("DROP TRIGGER reject_update_fund_flow_snapshots")
+        connection.execute(
+            "UPDATE fund_flow_snapshots SET raw_snapshot=?",
+            (b'{"daily":{"tampered":true},"minute":{}}',),
+        )
+
+    assert BackupService._restore_drill(backup_data) is False

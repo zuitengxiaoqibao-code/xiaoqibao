@@ -16,6 +16,7 @@ from qibao_api.gongbu.stock_classification import (
     StockBoard,
     StockClassificationSnapshot,
 )
+from qibao_api.gongbu.fund_flow import FundFlowSnapshot
 from qibao_api.libu_compliance.repository import SourceAuthorizationError
 
 
@@ -120,6 +121,41 @@ class Classifications:
                 StockBoard(code="BK0896", name="白酒概念"),
             ),
             content_hash="b" * 64,
+            raw_snapshot=b"{}",
+        )
+
+
+class FundFlows:
+    def __init__(
+        self,
+        *,
+        observed_at=datetime(2026, 7, 14, 10, 0, tzinfo=UTC),
+        direction="inflow",
+    ):
+        self.observed_at = observed_at
+        self.direction = direction
+        self.queries = []
+
+    def latest(self, symbol, as_of, *, cutoff=None):
+        self.queries.append((symbol, as_of, cutoff))
+        if cutoff is not None and self.observed_at > cutoff:
+            return None
+        sign = Decimal("1") if self.direction == "inflow" else Decimal("-1")
+        return FundFlowSnapshot(
+            snapshot_id="fund-flow-" + "c" * 24,
+            symbol=symbol,
+            observed_at=self.observed_at,
+            latest_trade_date=as_of,
+            latest_main_net=sign * Decimal("120000000"),
+            latest_super_net=sign * Decimal("70000000"),
+            latest_large_net=sign * Decimal("50000000"),
+            main_net_5d=sign * Decimal("350000000"),
+            main_net_20d=sign * Decimal("800000000"),
+            intraday_main_net=sign * Decimal("90000000"),
+            daily_sample_count=20,
+            intraday_sample_count=120,
+            flow_direction=self.direction,
+            content_hash="d" * 64,
             raw_snapshot=b"{}",
         )
 
@@ -378,6 +414,70 @@ async def test_diagnosis_only_uses_frozen_events_linked_to_symbol() -> None:
         "stock-classification-" + "a" * 24,
     )
     assert classifications.queries == [("600000", AS_OF, None)]
+
+
+@pytest.mark.asyncio
+async def test_diagnosis_exposes_verified_fund_flow_without_changing_core_risk() -> None:
+    funds = FundFlows()
+    service = AShareDiagnosisService(
+        bar_repository=FakeBars({"600000": bars()}),
+        market_source=FakeMarket(),
+        finance_source=FailingFinance(),
+        news_repository=EmptyNews(),
+        fund_flow_repository=funds,
+    )
+
+    result = await service.diagnose("600000", AS_OF, persist=False)
+
+    section = result.sections["funds"]
+    assert section.status == "ready"
+    assert section.source == "eastmoney-fund-flow"
+    assert section.evidence_ids == ("fund-flow-" + "c" * 24,)
+    assert section.metrics == {
+        "latest_trade_date": AS_OF.isoformat(),
+        "latest_main_net": Decimal("120000000"),
+        "latest_super_net": Decimal("70000000"),
+        "latest_large_net": Decimal("50000000"),
+        "main_net_5d": Decimal("350000000"),
+        "main_net_20d": Decimal("800000000"),
+        "intraday_main_net": Decimal("90000000"),
+        "daily_sample_count": 20,
+        "intraday_sample_count": 120,
+        "flow_direction": "inflow",
+    }
+    assert result.sections["risk"].metrics["missing_section_count"] == 1
+    assert funds.queries == [("600000", AS_OF, None)]
+
+
+@pytest.mark.asyncio
+async def test_fund_flow_respects_historical_cutoff_and_remains_optional() -> None:
+    cutoff = datetime(2026, 7, 14, 9, 0, tzinfo=UTC)
+    funds = FundFlows(
+        observed_at=datetime(2026, 7, 14, 10, 0, tzinfo=UTC)
+    )
+
+    class EarlierMarket(FakeMarket):
+        async def fetch_snapshot(self, symbol: str) -> TencentMarketSnapshot:
+            snapshot = await super().fetch_snapshot(symbol)
+            return snapshot.model_copy(update={
+                "observed_at": datetime(2026, 7, 14, 8, 0, tzinfo=UTC)
+            })
+
+    service = AShareDiagnosisService(
+        bar_repository=FakeBars({"600000": bars()}),
+        market_source=EarlierMarket(),
+        finance_source=FailingFinance(),
+        news_repository=EmptyNews(),
+        fund_flow_repository=funds,
+    )
+
+    result = await service.diagnose(
+        "600000", AS_OF, persist=False, cutoff=cutoff
+    )
+
+    assert result.sections["funds"].status == "unavailable"
+    assert result.sections["risk"].metrics["missing_section_count"] == 1
+    assert funds.queries == [("600000", AS_OF, cutoff)]
 
 
 @pytest.mark.asyncio

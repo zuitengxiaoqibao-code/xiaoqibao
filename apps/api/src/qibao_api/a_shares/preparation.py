@@ -107,10 +107,12 @@ class AStockPreparationService:
         trading_calendar,
         *,
         classification_service=None,
+        fund_flow_service=None,
         lock_dir: Path,
         clock: Callable[[], datetime] | None = None,
         news_cooldown_seconds: int = 300,
         classification_cooldown_seconds: int = 86400,
+        fund_flow_cooldown_seconds: int = 300,
         lock_timeout_seconds: float = 5.0,
         lock_retry_seconds: float = 0.01,
     ) -> None:
@@ -121,10 +123,12 @@ class AStockPreparationService:
         self.news_repository = news_repository
         self.trading_calendar = trading_calendar
         self.classification_service = classification_service
+        self.fund_flow_service = fund_flow_service
         self.lock_dir = Path(lock_dir)
         self.clock = clock or (lambda: datetime.now(timezone.utc))
         self.news_cooldown_seconds = news_cooldown_seconds
         self.classification_cooldown_seconds = classification_cooldown_seconds
+        self.fund_flow_cooldown_seconds = fund_flow_cooldown_seconds
         self.lock_timeout_seconds = lock_timeout_seconds
         self.lock_retry_seconds = lock_retry_seconds
         self._active_locks = 0
@@ -189,7 +193,11 @@ class AStockPreparationService:
 
         news_refreshed, news_error = await self._refresh_news(symbol)
         classification_refreshed = await self._refresh_classification(symbol)
-        refreshed = refreshed or news_refreshed or classification_refreshed
+        fund_flow_refreshed = await self._refresh_fund_flow(symbol)
+        refreshed = (
+            refreshed or news_refreshed or classification_refreshed
+            or fund_flow_refreshed
+        )
         return await self._inspect(
             symbol,
             as_of,
@@ -292,6 +300,20 @@ class AStockPreparationService:
         except (PreparationLockTimeout, Exception):
             return False
 
+    async def _refresh_fund_flow(self, symbol: str) -> bool:
+        if self.fund_flow_service is None:
+            return False
+        try:
+            async with self._file_lock(f"fund-flow-{symbol}.lock"):
+                marker = self._fund_flow_marker(symbol)
+                if self._fund_flow_is_fresh(marker):
+                    return False
+                await self.fund_flow_service.sync_symbol(symbol)
+                self._write_news_marker(marker, self._now())
+                return True
+        except (PreparationLockTimeout, Exception):
+            return False
+
     async def _diagnosis_sources(self, symbol, as_of, cutoff):
         try:
             checks = await self.diagnosis_service.inspect_sources(
@@ -388,6 +410,10 @@ class AStockPreparationService:
         self.lock_dir.mkdir(parents=True, exist_ok=True)
         return self.lock_dir / f"classification-{symbol}-success.txt"
 
+    def _fund_flow_marker(self, symbol: str):
+        self.lock_dir.mkdir(parents=True, exist_ok=True)
+        return self.lock_dir / f"fund-flow-{symbol}-success.txt"
+
     def _write_news_marker(self, marker: Path, refreshed_at: datetime) -> None:
         temporary = marker.with_name(f".{marker.name}.{uuid4().hex}.tmp")
         try:
@@ -416,6 +442,17 @@ class AStockPreparationService:
             return (
                 self._now() - refreshed_at
             ).total_seconds() < self.classification_cooldown_seconds
+        except (OSError, ValueError):
+            return False
+
+    def _fund_flow_is_fresh(self, marker: Path):
+        try:
+            refreshed_at = datetime.fromisoformat(
+                marker.read_text(encoding="utf-8")
+            )
+            return (
+                self._now() - refreshed_at
+            ).total_seconds() < self.fund_flow_cooldown_seconds
         except (OSError, ValueError):
             return False
 

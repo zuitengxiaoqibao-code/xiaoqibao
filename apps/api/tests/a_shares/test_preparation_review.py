@@ -112,6 +112,19 @@ class Classification:
         return type("Snapshot", (), {"classification_id": "classification-1"})()
 
 
+class FundFlow:
+    def __init__(self, *, fail_once=False):
+        self.calls = []
+        self.fail_once = fail_once
+
+    async def sync_symbol(self, symbol):
+        self.calls.append(symbol)
+        if self.fail_once:
+            self.fail_once = False
+            raise TimeoutError("fund flow offline")
+        return type("Snapshot", (), {"snapshot_id": "fund-flow-1"})()
+
+
 class Calendar:
     def is_trading_day(self, value):
         return value.weekday() < 5
@@ -126,7 +139,7 @@ class Calendar:
 def subject(
     tmp_path, *, bars=None, history=None, news=None, clock=None,
     calendar=None, news_repository=None, lock_timeout_seconds=1.0,
-    classification=None,
+    classification=None, fund_flow=None,
 ):
     bars = bars or Bars()
     return AStockPreparationService(
@@ -137,9 +150,11 @@ def subject(
         news_repository or NewsRepo(),
         calendar or Calendar(),
         classification_service=classification,
+        fund_flow_service=fund_flow,
         lock_dir=tmp_path,
         clock=clock or (lambda: datetime(2026, 7, 18, 3, tzinfo=UTC)),
         news_cooldown_seconds=300,
+        fund_flow_cooldown_seconds=300,
         lock_timeout_seconds=lock_timeout_seconds,
     )
 
@@ -251,6 +266,32 @@ async def test_classification_failure_retries_without_repeating_fresh_news(tmp_p
     assert news.calls == 1
     assert news.symbol_calls == ["600519"]
     assert classification.calls == ["600519", "600519"]
+
+
+@pytest.mark.asyncio
+async def test_fund_flow_uses_independent_per_stock_cooldown(tmp_path):
+    fund_flow = FundFlow()
+    service = subject(tmp_path, fund_flow=fund_flow)
+
+    await service.prepare("600519", as_of=FRIDAY)
+    await service.prepare("600000", as_of=FRIDAY)
+    await service.prepare("600519", as_of=FRIDAY)
+
+    assert fund_flow.calls == ["600519", "600000"]
+
+
+@pytest.mark.asyncio
+async def test_fund_flow_failure_retries_without_degrading_core_status(tmp_path):
+    fund_flow = FundFlow(fail_once=True)
+    service = subject(tmp_path, fund_flow=fund_flow)
+
+    first = await service.prepare("600519", as_of=FRIDAY)
+    second = await service.prepare("600519", as_of=FRIDAY)
+
+    assert first.status == "partial"
+    assert second.status == "partial"
+    assert second.refreshed is True
+    assert fund_flow.calls == ["600519", "600519"]
 
 
 @pytest.mark.asyncio

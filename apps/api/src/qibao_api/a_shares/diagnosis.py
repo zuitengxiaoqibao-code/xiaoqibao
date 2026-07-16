@@ -17,6 +17,7 @@ from qibao_api.a_shares.models import (
 from qibao_api.contracts.bars import DailyBar
 from qibao_api.contracts.market import AssetKind
 from qibao_api.contracts.news import NormalizedNewsEvent
+from qibao_api.gongbu.fund_flow import FundFlowSnapshot
 from qibao_api.gongbu.tencent_quotes import TencentMarketSnapshot
 from qibao_api.gongbu.stock_classification import StockClassificationSnapshot
 from qibao_api.libu_compliance.repository import SourceAuthorizationError
@@ -24,7 +25,7 @@ from qibao_api.libu_compliance.repository import SourceAuthorizationError
 
 SECTION_NAMES = {
     "market", "price_volume", "trend", "valuation", "fundamentals",
-    "events", "industry", "risk",
+    "funds", "events", "industry", "risk",
 }
 
 
@@ -94,6 +95,12 @@ class ClassificationRepositoryPort(Protocol):
     ) -> StockClassificationSnapshot | None: ...
 
 
+class FundFlowRepositoryPort(Protocol):
+    def latest(
+        self, symbol: str, as_of: date, *, cutoff: datetime | None = None
+    ) -> FundFlowSnapshot | None: ...
+
+
 class ResearchSnapshotRepositoryPort(Protocol):
     def append_candidate_board(
         self, board: CandidateBoard, input_payload: dict | None = None
@@ -119,6 +126,7 @@ class AShareDiagnosisService:
         research_repository: ResearchSnapshotRepositoryPort | None = None,
         clock: Callable[[], datetime] = datetime.now,
         classification_repository: ClassificationRepositoryPort | None = None,
+        fund_flow_repository: FundFlowRepositoryPort | None = None,
     ) -> None:
         self.bar_repository = bar_repository
         self.market_source = market_source
@@ -127,6 +135,7 @@ class AShareDiagnosisService:
         self.research_repository = research_repository
         self.clock = clock
         self.classification_repository = classification_repository
+        self.fund_flow_repository = fund_flow_repository
 
     async def inspect_sources(
         self, symbol: str, as_of: date, *, cutoff: datetime | None = None
@@ -208,9 +217,13 @@ class AShareDiagnosisService:
         classification, classification_error = self._classification(
             symbol, as_of, cutoff=cutoff
         )
+        fund_flow, fund_flow_error = self._fund_flow(
+            symbol, as_of, cutoff=cutoff
+        )
         sections = self._sections(
             symbol, as_of, bars, market, market_error, finance, finance_error,
             events, news_error, classification, classification_error,
+            fund_flow, fund_flow_error,
         )
         missing = [name for name, section in sections.items() if section.status == "unavailable"]
         diagnosis = AShareDiagnosis(
@@ -238,6 +251,11 @@ class AShareDiagnosisService:
                 if classification is not None else None
             ),
             "classification_error": classification_error,
+            "fund_flow": (
+                fund_flow.model_dump(mode="json", exclude={"raw_snapshot"})
+                if fund_flow is not None else None
+            ),
+            "fund_flow_error": fund_flow_error,
             "factor_version": FACTOR_VERSION,
         }
         snapshot_id = self.research_repository.append_diagnosis(
@@ -320,6 +338,21 @@ class AShareDiagnosisService:
             return None, "no verified classification snapshot at cutoff"
         return snapshot, None
 
+    def _fund_flow(
+        self, symbol: str, as_of: date, *, cutoff: datetime | None = None,
+    ) -> tuple[FundFlowSnapshot | None, str | None]:
+        if self.fund_flow_repository is None:
+            return None, None
+        try:
+            snapshot = self.fund_flow_repository.latest(
+                symbol, as_of, cutoff=cutoff
+            )
+        except Exception as error:
+            return None, str(error)
+        if snapshot is None:
+            return None, "no verified fund-flow snapshot at cutoff"
+        return snapshot, None
+
     def _sections(
         self,
         symbol: str,
@@ -333,19 +366,23 @@ class AShareDiagnosisService:
         news_error: str | None,
         classification: StockClassificationSnapshot | None,
         classification_error: str | None,
+        fund_flow: FundFlowSnapshot | None,
+        fund_flow_error: str | None,
     ) -> dict[str, DiagnosisSection]:
         sections: dict[str, DiagnosisSection] = {}
         sections["market"] = self._market_section(market, market_error)
         sections["valuation"] = self._valuation_section(market, market_error)
         sections.update(self._bar_sections(symbol, bars, as_of))
         sections["fundamentals"] = self._fundamental_section(finance, finance_error)
+        sections["funds"] = self._fund_flow_section(fund_flow, fund_flow_error)
         sections["events"] = self._event_section(events, news_error)
         sections["industry"] = self._industry_section(
             classification, classification_error
         )
         risk_missing = [
             name for name, section in sections.items()
-            if name != "industry" and section.status == "unavailable"
+            if name not in {"funds", "industry"}
+            and section.status == "unavailable"
         ]
         sections["risk"] = DiagnosisSection(
             status="ready",
@@ -513,6 +550,39 @@ class AShareDiagnosisService:
             explanation=(
                 "只展示冻结事件中明确关联该股票的记录；"
                 "行业标签仅取自单一股票关联事件。"
+            ),
+        )
+
+    @staticmethod
+    def _fund_flow_section(
+        snapshot: FundFlowSnapshot | None, error: str | None
+    ) -> DiagnosisSection:
+        if snapshot is None:
+            return _unavailable(
+                "eastmoney-fund-flow",
+                "资金流数据不可用："
+                f"{error or '未配置资金流仓储'}",
+            )
+        return DiagnosisSection(
+            status="ready",
+            observed_at=snapshot.observed_at,
+            source=snapshot.source,
+            metrics={
+                "latest_trade_date": snapshot.latest_trade_date.isoformat(),
+                "latest_main_net": snapshot.latest_main_net,
+                "latest_super_net": snapshot.latest_super_net,
+                "latest_large_net": snapshot.latest_large_net,
+                "main_net_5d": snapshot.main_net_5d,
+                "main_net_20d": snapshot.main_net_20d,
+                "intraday_main_net": snapshot.intraday_main_net,
+                "daily_sample_count": snapshot.daily_sample_count,
+                "intraday_sample_count": snapshot.intraday_sample_count,
+                "flow_direction": snapshot.flow_direction,
+            },
+            evidence_ids=(snapshot.snapshot_id,),
+            explanation=(
+                "资金流来自东方财富冻结快照，仅作为观察证据，"
+                "不单独改变动作或置信度。"
             ),
         )
 

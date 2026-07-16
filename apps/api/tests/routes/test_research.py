@@ -146,7 +146,7 @@ class FakeDiagnosisService:
             )
             for name in (
                 "market", "price_volume", "trend", "valuation", "fundamentals",
-                "events", "industry", "risk",
+                "funds", "events", "industry", "risk",
             )
         }
         return AShareDiagnosis(
@@ -190,7 +190,7 @@ def test_a_share_candidates_return_separate_empty_boards() -> None:
     assert response.json()["universe_status"] == "empty"
 
 
-def test_a_share_diagnosis_returns_all_eight_sections() -> None:
+def test_a_share_diagnosis_returns_all_nine_sections() -> None:
     with diagnosis_client() as client:
         response = client.get("/api/v1/a-shares/600000/diagnosis?as_of=2026-07-14")
 
@@ -198,7 +198,7 @@ def test_a_share_diagnosis_returns_all_eight_sections() -> None:
     assert response.json()["asset"] == "a_share"
     assert set(response.json()["sections"]) == {
         "market", "price_volume", "trend", "valuation", "fundamentals",
-        "events", "industry", "risk",
+        "funds", "events", "industry", "risk",
     }
 
 
@@ -579,7 +579,7 @@ class AcceptanceCockpitDiagnosis:
             )
             for name in (
                 "market", "price_volume", "trend", "valuation", "fundamentals",
-                "events", "industry", "risk",
+                "funds", "events", "industry", "risk",
             )
         }
         if symbol == "600519":

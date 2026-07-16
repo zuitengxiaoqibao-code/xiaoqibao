@@ -6,7 +6,12 @@ import pytest
 from fastapi import FastAPI
 
 import qibao_api.main as main_module
-from qibao_api.libu_compliance.guard import AuthorizedHistorySource, AuthorizedQuoteSource
+from qibao_api.gongbu.fund_flow import FundFlowRepository
+from qibao_api.libu_compliance.guard import (
+    AuthorizedFundFlowSource,
+    AuthorizedHistorySource,
+    AuthorizedQuoteSource,
+)
 from qibao_api.libu_compliance.repository import ComplianceRepository
 from qibao_api.shangshu.decision_repository import DecisionRepository
 from qibao_api.shangshu.decision_runtime import (
@@ -67,6 +72,9 @@ async def test_lifespan_injects_guarded_production_sources_and_closes_compliance
         assert len(
             compliance.list_feature_source_history("stock_classification", "a_share")
         ) == 1
+        assert len(
+            compliance.list_feature_source_history("stock_fund_flow", "a_share")
+        ) == 1
         news_repository = application.state.news_repository
         assert application.state.news_service.repository is news_repository
         assert application.state.news_service.stock_source is not None
@@ -79,6 +87,20 @@ async def test_lifespan_injects_guarded_production_sources_and_closes_compliance
         assert (
             application.state.a_share_preparation_service.classification_service.repository
             is classification_repository
+        )
+        fund_flow_repository = application.state.fund_flow_repository
+        assert isinstance(fund_flow_repository, FundFlowRepository)
+        assert (
+            application.state.a_share_diagnosis_service.fund_flow_repository
+            is fund_flow_repository
+        )
+        assert (
+            application.state.a_share_preparation_service.fund_flow_service.repository
+            is fund_flow_repository
+        )
+        assert isinstance(
+            application.state.fund_flow_service.source,
+            AuthorizedFundFlowSource,
         )
         briefing_repository = application.state.briefing_repository
         assert application.state.briefing_workflow.briefing_repository is briefing_repository
@@ -103,6 +125,8 @@ async def test_lifespan_injects_guarded_production_sources_and_closes_compliance
     with pytest.raises(sqlite3.ProgrammingError, match="closed"):
         classification_repository.count()
     with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        fund_flow_repository.count()
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
         briefing_repository.reports()
     with pytest.raises(sqlite3.ProgrammingError, match="closed"):
         decision_repository.cycles()
@@ -123,6 +147,7 @@ async def test_lifespan_dependency_registration_is_idempotent(tmp_path, monkeypa
     repository = ComplianceRepository(tmp_path / "compliance.sqlite3")
     assert len(repository.list_feature_source_history("realtime_quotes", "a_share")) == 1
     assert len(repository.list_feature_source_history("history_sync.baidu", "a_share")) == 1
+    assert len(repository.list_feature_source_history("stock_fund_flow", "a_share")) == 1
 
 
 @pytest.mark.asyncio

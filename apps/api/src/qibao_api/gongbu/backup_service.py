@@ -291,6 +291,7 @@ class BackupService:
         )
         from qibao_api.dongchang.repository import AuditFindingRepository
         from qibao_api.gongbu.news_repository import NewsRepository
+        from qibao_api.gongbu.fund_flow import FundFlowRepository
         from qibao_api.libu_compliance.repository import ComplianceRepository
         from qibao_api.shangshu.briefing_repository import BriefingRepository
         from qibao_api.shangshu.operations_repository import OperationsRepository
@@ -316,6 +317,8 @@ class BackupService:
             ("operations.sqlite3", OperationsRepository, lambda repo: repo.jobs()),
             ("decisions.sqlite3", DecisionRepository, lambda repo: repo.cycles()),
             ("a-share-research.sqlite3", AShareResearchRepository,
+             lambda repo: repo.verify_all()),
+            ("fund-flow.sqlite3", FundFlowRepository,
              lambda repo: repo.verify_all()),
         )
         for filename, repository_type, read in checks:

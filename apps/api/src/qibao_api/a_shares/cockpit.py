@@ -20,7 +20,7 @@ from qibao_api.libu_compliance.repository import SourceAuthorizationError
 
 SECTION_NAMES = (
     "market", "price_volume", "trend", "valuation", "fundamentals",
-    "news", "industry", "risk",
+    "funds", "news", "industry", "risk",
 )
 PHASES: tuple[DecisionPhase, ...] = ("premarket", "intraday", "postclose")
 

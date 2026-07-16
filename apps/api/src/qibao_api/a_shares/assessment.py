@@ -12,7 +12,7 @@ from qibao_api.contracts.instruments import AShareCode
 
 EVIDENCE_ORDER = (
     "market", "price_volume", "trend", "valuation", "fundamentals",
-    "news", "industry", "risk",
+    "funds", "news", "industry", "risk",
 )
 
 
@@ -60,6 +60,11 @@ def _percent(value: Any, *, fraction: bool = False) -> str | None:
     return f"{parsed:.2f}%"
 
 
+def _billions(value: Any) -> str | None:
+    parsed = _decimal(value)
+    return f"{parsed / Decimal('100000000'):.2f}" if parsed is not None else None
+
+
 def _summary(name: str, status: str, metrics: dict[str, Any]) -> str:
     if name == "market":
         values = (
@@ -98,6 +103,15 @@ def _summary(name: str, status: str, metrics: dict[str, Any]) -> str:
             ("净资产收益率", _percent(metrics.get("roe")), ""),
         )
         label = "基本面"
+    elif name == "funds":
+        values = (
+            ("最新交易日", str(metrics.get("latest_trade_date") or "") or None, ""),
+            ("当日主力净额", _billions(metrics.get("latest_main_net")), " 亿元"),
+            ("近5日主力净额", _billions(metrics.get("main_net_5d")), " 亿元"),
+            ("近20日主力净额", _billions(metrics.get("main_net_20d")), " 亿元"),
+            ("盘中主力净额", _billions(metrics.get("intraday_main_net")), " 亿元"),
+        )
+        label = "资金流观察"
     elif name == "news":
         values = [
             ("关联事件", str(metrics.get("event_count", "")) or None, " 条"),
@@ -161,6 +175,14 @@ def _ordered_sections(sections: dict[str, Any]):
     return ((name, sections[name]) for name in (*known, *extras))
 
 
+def _is_fund_outflow(name: str, section: Any) -> bool:
+    return (
+        name == "funds"
+        and section.status == "ready"
+        and section.payload.get("metrics", {}).get("flow_direction") == "outflow"
+    )
+
+
 class DeterministicStockAssessor:
     def assess(
         self,
@@ -217,12 +239,16 @@ class DeterministicStockAssessor:
             evidence
             for name, section in _ordered_sections(usable)
             if section.status == "ready"
+            if not _is_fund_outflow(name, section)
             if (evidence := _evidence(name, section)) is not None
         )
         contrary = tuple(
             evidence
             for name, section in _ordered_sections(usable)
-            if section.status in {"partial", "unavailable", "blocked"}
+            if (
+                section.status in {"partial", "unavailable", "blocked"}
+                or _is_fund_outflow(name, section)
+            )
             if (evidence := _evidence(name, section)) is not None
         )
         assessment_id = _digest({
@@ -235,6 +261,7 @@ class DeterministicStockAssessor:
         })
         missing = tuple(
             name for name, section in sorted(sections.items())
+            if name not in {"funds", "industry"}
             if section.observed_at is None or section.observed_at > cutoff
         )
         snapshot_risks = tuple(
@@ -253,6 +280,13 @@ class DeterministicStockAssessor:
                 (adverse_count > 0, f"存在重大反方事件：{adverse_count}。"),
                 (volatility >= Decimal("0.08"), f"20日波动率偏高：{volatility}。"),
                 (drawdown <= Decimal("-0.20"), f"60日回撤较深：{drawdown}。"),
+                (
+                    any(
+                        _is_fund_outflow(name, section)
+                        for name, section in usable.items()
+                    ),
+                    "近5日主力资金净流出，资金方向属于反方证据。",
+                ),
             ) if condition
         )
         risks = (primary_risk, *metric_risks, *(

@@ -65,6 +65,26 @@ describe("StockDecisionCockpit", () => {
     expect(prepare).toHaveBeenCalledTimes(1);
   });
 
+  it("prepares a live ready snapshot once so optional sources can refresh", async () => {
+    const load = vi.fn()
+      .mockResolvedValueOnce(snapshot())
+      .mockResolvedValueOnce(snapshot());
+    const prepare = vi.fn().mockResolvedValue({
+      ...snapshot().preparation!, refreshed: true,
+    });
+    window.localStorage.setItem("qibao.autoSync", "true");
+    window.history.replaceState({}, "", "/?symbol=600000");
+
+    render(
+      <SelectedInstrumentProvider>
+        <StockDecisionCockpit load={load} prepare={prepare} />
+      </SelectedInstrumentProvider>,
+    );
+
+    await waitFor(() => expect(prepare).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
+  });
+
   it("never prepares historical snapshots", async () => {
     const load = vi.fn().mockResolvedValue(snapshot({ preparation: { ...snapshot().preparation!, status: "partial" } }));
     const prepare = vi.fn();
@@ -105,6 +125,64 @@ describe("StockDecisionCockpit", () => {
     expect(screen.getAllByText("0.63%")).toHaveLength(2);
     expect(screen.queryByText("0.633862484613048135%")).not.toBeInTheDocument();
     expect(screen.getByText("来源：通达信财务快照")).toBeInTheDocument();
+  });
+
+  it("shows signed verified fund flow and preserves missing values", async () => {
+    const detailed = snapshot();
+    detailed.sections.funds.source = "eastmoney-fund-flow";
+    detailed.sections.funds.payload.metrics = {
+      latest_trade_date: "2026-07-15",
+      latest_main_net: "120000000",
+      latest_super_net: "70000000",
+      latest_large_net: "50000000",
+      main_net_5d: "350000000",
+      main_net_20d: "-120000000",
+      intraday_main_net: null,
+      daily_sample_count: 20,
+      intraday_sample_count: 0,
+      flow_direction: "inflow",
+    };
+    detailed.sections.funds.payload.evidence_ids = [
+      "fund-flow-1234567890abcdef12345678",
+    ];
+
+    renderCockpit(() => Promise.resolve(detailed));
+    fireEvent.click(await screen.findByText("数据详情"));
+
+    const funds = screen.getByRole("region", { name: "资金流" });
+    fireEvent.click(within(funds).getByText("查看详细指标"));
+    expect(within(funds).getByText("近5日主力净额")).toBeInTheDocument();
+    expect(within(funds).getByText("+3.50 亿元")).toBeInTheDocument();
+    expect(within(funds).getByText("-1.20 亿元")).toBeInTheDocument();
+    expect(within(funds).getByText("未提供")).toBeInTheDocument();
+    expect(within(funds).getByText("净流入")).toBeInTheDocument();
+    expect(within(funds).getByText("来源：东方财富资金流")).toBeInTheDocument();
+    expect(within(funds).getByText(/时间：.*2026/)).toBeInTheDocument();
+    fireEvent.click(within(funds).getByText("1 条证据编号"));
+    expect(within(funds).getByText(
+      "fund-flow-1234567890abcdef12345678",
+    )).toBeInTheDocument();
+  });
+
+  it("explains unavailable fund flow without implying it affected the decision", async () => {
+    const detailed = snapshot();
+    detailed.sections.funds = {
+      status: "unavailable",
+      source: "eastmoney-fund-flow",
+      observed_at: null,
+      snapshot_id: "diagnosis-section-unavailable-funds",
+      reason: "diagnosis_section_unavailable",
+      payload: { metrics: {}, evidence_ids: [] },
+    };
+
+    renderCockpit(() => Promise.resolve(detailed));
+    fireEvent.click(await screen.findByText("数据详情"));
+
+    const funds = screen.getByRole("region", { name: "资金流" });
+    expect(within(funds).getByText(
+      "东方财富资金流暂未返回可核验数据，本项未参与当前研判。",
+    )).toBeInTheDocument();
+    expect(within(funds).queryByText("该分区数据暂不可用")).not.toBeInTheDocument();
   });
 
   it("separates structured classification from news event labels", async () => {

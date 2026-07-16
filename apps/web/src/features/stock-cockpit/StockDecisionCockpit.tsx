@@ -127,7 +127,7 @@ export function StockDecisionCockpit({ load, prepare, asOf, refreshToken = 0, on
       const next = await loadRef.current(symbol, asOf || undefined, nextController.signal);
       if (request !== generation.current || nextController.signal.aborted) return;
       setData(next); snapshotRef.current?.(next); loadedContext.current = contextKey; hasData.current = true; setStale(false);
-      if (!asOf && prepareRef.current && next.preparation?.status !== "ready" && isAutoSyncEnabled() && preparedContext.current !== contextKey) {
+      if (!asOf && prepareRef.current && isAutoSyncEnabled() && preparedContext.current !== contextKey) {
         preparedContext.current = contextKey; setPreparing(true);
         try {
           const report = await prepareRef.current(symbol, nextController.signal);

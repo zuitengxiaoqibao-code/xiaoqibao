@@ -63,7 +63,7 @@ class Diagnosis:
             )
             for name in (
                 "market", "price_volume", "trend", "valuation", "fundamentals",
-                "events", "industry", "risk",
+                "funds", "events", "industry", "risk",
             )
         }
         return AShareDiagnosis(
@@ -123,6 +123,27 @@ class ChangedExplanationDiagnosis(Diagnosis):
         sections = dict(result.sections)
         sections["market"] = sections["market"].model_copy(
             update={"explanation": "changed visible explanation"}
+        )
+        return result.model_copy(update={"sections": sections})
+
+
+class FundFlowDiagnosis(Diagnosis):
+    async def diagnose(self, symbol, as_of, *, persist=True, cutoff=None):
+        result = await super().diagnose(
+            symbol, as_of, persist=persist, cutoff=cutoff
+        )
+        sections = dict(result.sections)
+        sections["funds"] = DiagnosisSection(
+            status="ready",
+            observed_at=CUTOFF,
+            source="eastmoney-fund-flow",
+            metrics={
+                "latest_trade_date": TRADE_DATE.isoformat(),
+                "main_net_5d": Decimal("350000000"),
+                "flow_direction": "inflow",
+            },
+            evidence_ids=("fund-flow-" + "c" * 24,),
+            explanation="verified fund flow",
         )
         return result.model_copy(update={"sections": sections})
 
@@ -314,6 +335,21 @@ async def test_cockpit_degrades_only_failed_section() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cockpit_maps_verified_fund_flow_section() -> None:
+    result = await service(diagnosis=FundFlowDiagnosis()).get(
+        "600000", TRADE_DATE, CUTOFF
+    )
+
+    assert result.sections["funds"].source == "eastmoney-fund-flow"
+    assert result.sections["funds"].payload["metrics"]["main_net_5d"] == Decimal(
+        "350000000"
+    )
+    assert result.sections["funds"].payload["evidence_ids"] == (
+        "fund-flow-" + "c" * 24,
+    )
+
+
+@pytest.mark.asyncio
 async def test_live_cockpit_extends_cutoff_to_quote_observed_during_request() -> None:
     completed_at = CUTOFF.replace(second=3)
     result = await service(
@@ -379,9 +415,9 @@ async def test_live_cockpit_rejects_observation_after_completion() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cockpit_omits_removed_funds_and_backtest_sections() -> None:
+async def test_cockpit_keeps_funds_and_omits_removed_backtest_section() -> None:
     result = await service().get("600000", TRADE_DATE, CUTOFF)
-    assert "funds" not in result.sections
+    assert "funds" in result.sections
     assert "backtest" not in result.sections
 
 

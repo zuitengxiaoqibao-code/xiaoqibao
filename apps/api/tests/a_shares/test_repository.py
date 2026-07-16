@@ -40,7 +40,7 @@ def diagnosis() -> AShareDiagnosis:
         )
         for name in (
             "market", "price_volume", "trend", "valuation", "fundamentals",
-            "events", "industry", "risk",
+            "funds", "events", "industry", "risk",
         )
     }
     return AShareDiagnosis(

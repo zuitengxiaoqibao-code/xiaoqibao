@@ -192,6 +192,63 @@ def test_structured_classification_adds_evidence_without_changing_action() -> No
     )
 
 
+def test_fund_inflow_is_supporting_without_changing_action_or_confidence() -> None:
+    values = sections()
+    values["funds"] = section("funds", metrics={
+        "latest_trade_date": "2026-07-15",
+        "latest_main_net": "120000000",
+        "main_net_5d": "350000000",
+        "main_net_20d": "800000000",
+        "intraday_main_net": "90000000",
+        "flow_direction": "inflow",
+    }).model_copy(update={"source": "eastmoney-fund-flow"})
+
+    result = DeterministicStockAssessor().assess(
+        "600519", values, (), CUTOFF
+    )
+
+    assert result.action == "observe"
+    assert result.confidence == Decimal("0.75")
+    evidence = next(
+        item for item in result.supporting_evidence
+        if item.source == "eastmoney-fund-flow"
+    )
+    assert "近5日主力净额 3.50 亿元" in evidence.summary
+    assert not any(
+        item.source == "eastmoney-fund-flow"
+        for item in result.contrary_evidence
+    )
+
+
+def test_fund_outflow_is_contrary_but_does_not_change_action() -> None:
+    values = sections()
+    values["funds"] = section("funds", metrics={
+        "latest_trade_date": "2026-07-15",
+        "latest_main_net": "-120000000",
+        "main_net_5d": "-350000000",
+        "main_net_20d": "-800000000",
+        "intraday_main_net": None,
+        "flow_direction": "outflow",
+    }).model_copy(update={"source": "eastmoney-fund-flow"})
+
+    result = DeterministicStockAssessor().assess(
+        "600519", values, (), CUTOFF
+    )
+
+    assert result.action == "observe"
+    assert result.confidence == Decimal("0.75")
+    assert not any(
+        item.source == "eastmoney-fund-flow"
+        for item in result.supporting_evidence
+    )
+    evidence = next(
+        item for item in result.contrary_evidence
+        if item.source == "eastmoney-fund-flow"
+    )
+    assert "近5日主力净额 -3.50 亿元" in evidence.summary
+    assert any("近5日主力资金净流出" in risk for risk in result.risks)
+
+
 def test_news_industry_labels_keep_news_source_and_timestamp() -> None:
     values = sections()
     news_observed_at = CUTOFF.replace(minute=1)

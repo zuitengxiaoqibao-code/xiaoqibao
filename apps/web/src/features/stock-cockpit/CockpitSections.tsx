@@ -4,7 +4,7 @@ import type { CockpitSection } from "./types";
 
 const definitions = [
   ["market", "实时行情"], ["price_volume", "量价"], ["trend", "趋势"], ["valuation", "估值"],
-  ["fundamentals", "基本面"], ["news", "新闻与事件"],
+  ["fundamentals", "基本面"], ["funds", "资金流"], ["news", "新闻与事件"],
   ["industry", "行业与题材"], ["risk", "风险"],
 ] as const;
 
@@ -20,6 +20,7 @@ const reasonNames: Record<string, string> = {
 const sourceNames: Record<string, string> = {
   tencent: "腾讯行情", mootdx: "通达信数据", eastmoney: "东方财富公开数据", baidu: "百度行情",
   "mootdx-finance": "通达信财务快照",
+  "eastmoney-fund-flow": "东方财富资金流",
   "eastmoney-stock-classification": "东方财富行业与板块",
   "frozen-news-events": "已核验新闻事件",
   cockpit: "本地研判数据", assessment: "本地研判数据",
@@ -34,6 +35,11 @@ const metricNames: Record<string, string> = {
   report_period: "报告期", data_updated_on: "数据更新日", industry: "所属行业",
   eps: "每股收益", roe: "净资产收益率", net_profit: "净利润", revenue: "营业收入",
   book_value_per_share: "每股净资产", total_shares: "总股本",
+  latest_trade_date: "最新交易日", latest_main_net: "当日主力净额",
+  latest_super_net: "当日超大单净额", latest_large_net: "当日大单净额",
+  main_net_5d: "近5日主力净额", main_net_20d: "近20日主力净额",
+  intraday_main_net: "盘中主力净额", daily_sample_count: "日线样本",
+  intraday_sample_count: "盘中样本", flow_direction: "资金方向",
   event_count: "关联事件", adverse_event_count: "重大反方事件",
   board_tags: "板块标签", event_industries: "新闻事件行业标签",
   missing_section_count: "缺失分区", symbol: "股票代码",
@@ -43,6 +49,13 @@ const percentMetrics = new Set(["change_percent", "turnover_rate", "roe"]);
 const fractionPercentMetrics = new Set(["return_5d", "return_20d", "distance_ma20", "volatility_20d", "drawdown_60d"]);
 const priceMetrics = new Set(["latest_price", "price", "open", "high", "low", "close", "eps", "book_value_per_share"]);
 const moneyMetrics = new Set(["average_amount_20d", "net_profit", "revenue"]);
+const fundFlowMoneyMetrics = new Set([
+  "latest_main_net", "latest_super_net", "latest_large_net",
+  "main_net_5d", "main_net_20d", "intraday_main_net",
+]);
+const flowDirectionNames: Record<string, string> = {
+  inflow: "净流入", outflow: "净流出", balanced: "基本平衡",
+};
 
 function formatTime(value: string | null): string {
   return value ? new Date(value).toLocaleString("zh-CN", { hour12: false }) : "未提供";
@@ -59,6 +72,10 @@ function formatMetric(key: string, value: unknown): string {
   if (value === null || value === undefined || value === "") return "未提供";
   const numeric = Number(value);
   if (Number.isFinite(numeric)) {
+    if (fundFlowMoneyMetrics.has(key)) {
+      const amount = numeric / 100_000_000;
+      return `${amount > 0 ? "+" : ""}${amount.toFixed(2)} 亿元`;
+    }
     if (percentMetrics.has(key)) return `${numeric.toFixed(2)}%`;
     if (fractionPercentMetrics.has(key)) return `${(numeric * 100).toFixed(2)}%`;
     if (priceMetrics.has(key)) return `${numeric.toFixed(2)} 元`;
@@ -67,8 +84,11 @@ function formatMetric(key: string, value: unknown): string {
     if (key === "total_shares") return `${(numeric / 100_000_000).toFixed(2)} 亿股`;
     if (key === "pe_ttm" || key === "pb") return `${numeric.toFixed(2)} 倍`;
     if (key === "event_count" || key === "adverse_event_count" || key === "missing_section_count") return `${numeric} 项`;
+    if (key === "daily_sample_count") return `${numeric} 个交易日`;
+    if (key === "intraday_sample_count") return `${numeric} 个分钟点`;
     if (key === "volume_ratio") return numeric.toFixed(2);
   }
+  if (key === "flow_direction") return flowDirectionNames[String(value)] ?? "未提供";
   return renderValue(value);
 }
 
@@ -78,7 +98,12 @@ function SectionBand({ sectionKey, title, section }: { sectionKey: string; title
   const evidenceIds = Array.isArray(section.payload.evidence_ids)
     ? section.payload.evidence_ids.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
     : [];
-  const reason = section.reason ? reasonNames[section.reason] ?? "未提供可展示说明" : null;
+  const unavailableFundsReason = sectionKey === "funds"
+    && section.reason === "diagnosis_section_unavailable"
+    ? "东方财富资金流暂未返回可核验数据，本项未参与当前研判。"
+    : null;
+  const reason = unavailableFundsReason
+    ?? (section.reason ? reasonNames[section.reason] ?? "未提供可展示说明" : null);
   const source = sourceNames[section.source] ?? "公开数据来源";
   return <section className={`cockpit-section status-${section.status}`} aria-labelledby={`cockpit-${sectionKey}`}>
     <header><div><Database size={15} /><h3 id={`cockpit-${sectionKey}`}>{title}</h3></div><span>{statusNames[section.status]}</span></header>
