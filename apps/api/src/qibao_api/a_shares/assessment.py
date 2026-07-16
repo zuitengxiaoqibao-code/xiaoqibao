@@ -90,8 +90,10 @@ def _summary(name: str, status: str, metrics: dict[str, Any]) -> str:
         )
         label = "估值概览"
     elif name == "fundamentals":
+        date_label = "报告期" if metrics.get("report_period") else "数据更新日"
+        date_value = metrics.get("report_period") or metrics.get("data_updated_on")
         values = (
-            ("报告期", str(metrics.get("report_period") or "") or None, ""),
+            (date_label, str(date_value or "") or None, ""),
             ("每股收益", _formatted(metrics.get("eps")), " 元"),
             ("净资产收益率", _percent(metrics.get("roe")), ""),
         )

@@ -86,6 +86,40 @@ describe("StockDecisionCockpit", () => {
     expect(screen.queryByText(/模拟操作|候选账本|策略：|研判编号|中书省|工部/)).not.toBeInTheDocument();
   });
 
+  it("shows verified trend and fundamental metrics with beginner units", async () => {
+    const detailed = snapshot();
+    detailed.sections.market.payload.metrics = { latest_price: "10.25", change_percent: "0.633862484613048135" };
+    detailed.sections.price_volume.payload.metrics = { close: "10.25", return_5d: "0.052", average_amount_20d: "880000000", volume_ratio: "1.18" };
+    detailed.sections.fundamentals.source = "mootdx-finance";
+    detailed.sections.fundamentals.payload.metrics = { data_updated_on: "2026-04-25", eps: "1.33", roe: "11.43", net_profit: "3200000000", revenue: "88000000000", total_shares: "2400000000" };
+    renderCockpit(() => Promise.resolve(detailed));
+    fireEvent.click(await screen.findByText("数据详情"));
+    expect(screen.getByText("近5日涨跌")).toBeInTheDocument();
+    expect(screen.getByText("5.20%")).toBeInTheDocument();
+    expect(screen.getByText("净资产收益率")).toBeInTheDocument();
+    expect(screen.getByText("11.43%")).toBeInTheDocument();
+    expect(screen.getByText("净利润")).toBeInTheDocument();
+    expect(screen.getByText("32.00 亿元")).toBeInTheDocument();
+    expect(screen.getByText("数据更新日")).toBeInTheDocument();
+    expect(screen.getByText("2026-04-25")).toBeInTheDocument();
+    expect(screen.getAllByText("0.63%")).toHaveLength(2);
+    expect(screen.queryByText("0.633862484613048135%")).not.toBeInTheDocument();
+    expect(screen.getByText("来源：通达信财务快照")).toBeInTheDocument();
+  });
+
+  it("keeps a missing market percentage visibly unknown", async () => {
+    const missing = snapshot();
+    missing.sections.market.payload.metrics = { latest_price: "10.25", change_percent: null };
+
+    renderCockpit(() => Promise.resolve(missing));
+
+    await screen.findByText("浦发银行");
+    expect(screen.getByText("--")).toBeInTheDocument();
+    expect(screen.queryByText("0.00%")).not.toBeInTheDocument();
+    expect(document.querySelector(".cockpit-quote .lucide-trending-up")).not.toBeInTheDocument();
+    expect(document.querySelector(".cockpit-quote .lucide-trending-down")).not.toBeInTheDocument();
+  });
+
   it("translates internal assessment codes into deduplicated beginner language", async () => {
     const hostile = snapshot();
     hostile.assessment.risks = ["source_snapshot_unavailable:market", "source_snapshot_unavailable:market", "缺失或晚于截止时间的分区：industry、news。", "SECRET_INTERNAL_CODE"];

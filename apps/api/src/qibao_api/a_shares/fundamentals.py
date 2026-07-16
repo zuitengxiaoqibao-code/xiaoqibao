@@ -15,6 +15,7 @@ class FundamentalSnapshot(BaseModel):
     symbol: str = Field(pattern=r"^\d{6}$")
     observed_at: datetime
     report_period: date | None = None
+    data_updated_on: date | None = None
     industry: str | None = None
     eps: Decimal | None = None
     roe: Decimal | None = None
@@ -47,14 +48,51 @@ def _date_or_none(value: Any) -> date | None:
         return None
 
 
+def _industry_name_or_none(value: Any) -> str | None:
+    text = str(value or "").strip()
+    return text if text and not text.isdigit() else None
+
+
+def _tdx_money_scale(payload: Mapping[str, Any]) -> Decimal | None:
+    net_assets = _decimal_or_none(payload.get("jingzichan"))
+    total_shares = _decimal_or_none(payload.get("zongguben"))
+    book_value_per_share = _decimal_or_none(payload.get("meigujingzichan"))
+    if (
+        net_assets is None or total_shares is None or book_value_per_share is None
+        or total_shares <= 0 or book_value_per_share <= 0
+    ):
+        return None
+    ratio = net_assets / total_shares / book_value_per_share
+    for decoded_ratio, scale in (
+        (Decimal("10"), Decimal("0.1")),
+        (Decimal("1"), Decimal("1")),
+    ):
+        if abs(ratio - decoded_ratio) <= decoded_ratio * Decimal("0.15"):
+            return scale
+    return None
+
+
 def parse_tdx_finance(
     payload: Mapping[str, Any],
     symbol: str,
     observed_at: datetime,
 ) -> FundamentalSnapshot:
-    net_profit = _decimal_or_none(payload.get("jinglirun"))
-    revenue = _decimal_or_none(payload.get("zhuyingshouru"))
-    net_assets = _decimal_or_none(payload.get("jingzichan"))
+    money_scale = _tdx_money_scale(payload)
+    net_profit_raw = _decimal_or_none(payload.get("jinglirun"))
+    revenue_raw = _decimal_or_none(payload.get("zhuyingshouru"))
+    net_assets_raw = _decimal_or_none(payload.get("jingzichan"))
+    net_profit = (
+        net_profit_raw * money_scale
+        if net_profit_raw is not None and money_scale is not None else None
+    )
+    revenue = (
+        revenue_raw * money_scale
+        if revenue_raw is not None and money_scale is not None else None
+    )
+    net_assets = (
+        net_assets_raw * money_scale
+        if net_assets_raw is not None and money_scale is not None else None
+    )
     total_shares = _decimal_or_none(payload.get("zongguben"))
     eps = (
         net_profit / total_shares
@@ -69,8 +107,9 @@ def parse_tdx_finance(
     return FundamentalSnapshot(
         symbol=symbol,
         observed_at=observed_at,
-        report_period=_date_or_none(payload.get("updated_date")),
-        industry=str(payload.get("industry") or "").strip() or None,
+        report_period=None,
+        data_updated_on=_date_or_none(payload.get("updated_date")),
+        industry=_industry_name_or_none(payload.get("industry")),
         eps=eps,
         roe=roe,
         net_profit=net_profit,

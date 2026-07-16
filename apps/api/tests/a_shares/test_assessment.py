@@ -156,6 +156,25 @@ def test_assessment_identity_changes_with_frozen_source_evidence() -> None:
     assert first.assessment_id != second.assessment_id
 
 
+def test_fundamental_summary_distinguishes_data_update_date_from_report_period() -> None:
+    values = sections()
+    values["fundamentals"] = section("fundamentals", metrics={
+        "report_period": None,
+        "data_updated_on": "2026-04-25",
+        "eps": "1.33",
+        "roe": "11.43",
+    })
+
+    result = DeterministicStockAssessor().assess("600519", values, (), CUTOFF)
+    evidence = next(
+        item for item in result.supporting_evidence
+        if item.source == "fixture-fundamentals"
+    )
+
+    assert "数据更新日 2026-04-25" in evidence.summary
+    assert "报告期 2026-04-25" not in evidence.summary
+
+
 def test_missing_observation_is_a_risk_but_not_evidence() -> None:
     result = DeterministicStockAssessor().assess(
         "600519", sections(no_market=True), ("swing",), CUTOFF

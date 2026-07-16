@@ -19,13 +19,27 @@ const reasonNames: Record<string, string> = {
 };
 const sourceNames: Record<string, string> = {
   tencent: "腾讯行情", mootdx: "通达信数据", eastmoney: "东方财富公开数据", baidu: "百度行情",
+  "mootdx-finance": "通达信财务快照",
   cockpit: "本地研判数据", assessment: "本地研判数据",
 };
 const metricNames: Record<string, string> = {
-  latest_price: "最新价", change_percent: "涨跌幅", open: "开盘价", high: "最高价", low: "最低价",
-  volume: "成交量", amount: "成交额", pe_ttm: "市盈率（TTM）", pb: "市净率", eps: "每股收益",
-  industry: "所属行业", symbol: "股票代码",
+  latest_price: "最新价", price: "最新价", change_percent: "涨跌幅", turnover_rate: "换手率",
+  open: "开盘价", high: "最高价", low: "最低价", close: "收盘价",
+  volume: "成交量", amount: "成交额", average_amount_20d: "20日平均成交额", volume_ratio: "量比",
+  return_5d: "近5日涨跌", return_20d: "近20日涨跌", distance_ma20: "距20日均线",
+  volatility_20d: "20日波动率", drawdown_60d: "60日最大回撤",
+  pe_ttm: "市盈率（TTM）", pb: "市净率", market_cap_yi: "总市值",
+  report_period: "报告期", data_updated_on: "数据更新日", industry: "所属行业",
+  eps: "每股收益", roe: "净资产收益率", net_profit: "净利润", revenue: "营业收入",
+  book_value_per_share: "每股净资产", total_shares: "总股本",
+  event_count: "关联事件", adverse_event_count: "重大反方事件",
+  industries: "已核验行业标签", missing_section_count: "缺失分区", symbol: "股票代码",
 };
+
+const percentMetrics = new Set(["change_percent", "turnover_rate", "roe"]);
+const fractionPercentMetrics = new Set(["return_5d", "return_20d", "distance_ma20", "volatility_20d", "drawdown_60d"]);
+const priceMetrics = new Set(["latest_price", "price", "open", "high", "low", "close", "eps", "book_value_per_share"]);
+const moneyMetrics = new Set(["average_amount_20d", "net_profit", "revenue"]);
 
 function formatTime(value: string | null): string {
   return value ? new Date(value).toLocaleString("zh-CN", { hour12: false }) : "未提供";
@@ -38,6 +52,23 @@ function renderValue(value: unknown): string {
   return String(value).slice(0, 120);
 }
 
+function formatMetric(key: string, value: unknown): string {
+  if (value === null || value === undefined || value === "") return "未提供";
+  const numeric = Number(value);
+  if (Number.isFinite(numeric)) {
+    if (percentMetrics.has(key)) return `${numeric.toFixed(2)}%`;
+    if (fractionPercentMetrics.has(key)) return `${(numeric * 100).toFixed(2)}%`;
+    if (priceMetrics.has(key)) return `${numeric.toFixed(2)} 元`;
+    if (moneyMetrics.has(key)) return `${(numeric / 100_000_000).toFixed(2)} 亿元`;
+    if (key === "market_cap_yi") return `${numeric.toFixed(2)} 亿元`;
+    if (key === "total_shares") return `${(numeric / 100_000_000).toFixed(2)} 亿股`;
+    if (key === "pe_ttm" || key === "pb") return `${numeric.toFixed(2)} 倍`;
+    if (key === "event_count" || key === "adverse_event_count" || key === "missing_section_count") return `${numeric} 项`;
+    if (key === "volume_ratio") return numeric.toFixed(2);
+  }
+  return renderValue(value);
+}
+
 function SectionBand({ sectionKey, title, section }: { sectionKey: string; title: string; section: CockpitSection }) {
   const rawMetrics = section.payload.metrics && typeof section.payload.metrics === "object" ? section.payload.metrics as Record<string, unknown> : {};
   const metrics = Object.keys(metricNames).filter((key) => key in rawMetrics).map((key) => [key, rawMetrics[key]] as const);
@@ -47,7 +78,7 @@ function SectionBand({ sectionKey, title, section }: { sectionKey: string; title
     <header><div><Database size={15} /><h3 id={`cockpit-${sectionKey}`}>{title}</h3></div><span>{statusNames[section.status]}</span></header>
     {reason && <p className="section-reason">{reason}</p>}
     {section.status === "unavailable" || section.status === "blocked" ? !reason && <p className="section-degraded">当前没有可验证数据</p> : <>
-      {metrics.length > 0 ? <details><summary><ChevronDown size={14} />查看详细指标</summary><dl>{metrics.map(([key, value]) => <div key={key}><dt>{metricNames[key] ?? key}</dt><dd>{renderValue(value)}</dd></div>)}</dl></details> : <p className="section-summary">当前快照没有可展开的指标。</p>}
+      {metrics.length > 0 ? <details><summary><ChevronDown size={14} />查看详细指标</summary><dl>{metrics.map(([key, value]) => <div key={key}><dt>{metricNames[key] ?? key}</dt><dd>{formatMetric(key, value)}</dd></div>)}</dl></details> : <p className="section-summary">当前快照没有可展开的指标。</p>}
     </>}
     <footer><span>来源：{source}</span><span>时间：{formatTime(section.observed_at)}</span>{section.status === "stale" && <span>当前数据已陈旧</span>}</footer>
   </section>;

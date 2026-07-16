@@ -260,6 +260,8 @@ class AShareDiagnosisService:
                 return None, "finance snapshot is later than diagnosis cutoff"
             if snapshot.report_period is not None and snapshot.report_period > as_of:
                 return None, "finance report period is later than diagnosis as_of"
+            if snapshot.data_updated_on is not None and snapshot.data_updated_on > as_of:
+                return None, "finance data update is later than diagnosis as_of"
             return snapshot, None
         except SourceAuthorizationError as error:
             if not degrade_authorization:
@@ -427,6 +429,10 @@ class AShareDiagnosisService:
                 "report_period": (
                     finance.report_period.isoformat()
                     if finance.report_period is not None else None
+                ),
+                "data_updated_on": (
+                    finance.data_updated_on.isoformat()
+                    if finance.data_updated_on is not None else None
                 ),
                 "industry": finance.industry,
                 "eps": finance.eps, "roe": finance.roe,

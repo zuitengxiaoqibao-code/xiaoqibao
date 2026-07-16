@@ -23,6 +23,15 @@ function metric(data: StockCockpitSnapshot, key: string): unknown {
 function displayNumber(value: unknown, suffix = ""): string {
   return value === null || value === undefined || value === "" ? "--" : `${String(value)}${suffix}`;
 }
+function numericOrNull(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+function displayPercent(value: unknown): string {
+  const numeric = numericOrNull(value);
+  return numeric === null ? "--" : `${numeric.toFixed(2)}%`;
+}
 const sectionChanges: Record<string, string> = {
   market: "实时行情发生变化需重评", quote: "实时行情发生变化需重评",
   trend: "走势数据发生变化需重评", price_volume: "走势数据发生变化需重评",
@@ -152,10 +161,10 @@ export function StockDecisionCockpit({ load, prepare, asOf, refreshToken = 0, on
   if (!data && loading) return <main className="stock-cockpit cockpit-loading" aria-busy="true"><RefreshCw size={22} /><h1>正在组装单股决策底稿</h1><p>{symbol}</p></main>;
   if (!data) return <main className="stock-cockpit cockpit-loading"><AlertTriangle size={22} /><h1>驾驶舱暂不可用</h1><p role="alert">{error}</p><button type="button" onClick={() => void refresh()}>重试</button></main>;
 
-  const change = Number(metric(data, "change_percent"));
-  const positive = Number.isFinite(change) && change >= 0;
+  const change = numericOrNull(metric(data, "change_percent"));
+  const positive = change !== null && change >= 0;
   return <main className="stock-cockpit">
-    <header className="cockpit-identity"><div><p className="eyebrow">A 股观察 / {data.instrument.exchange.toUpperCase()}</p><h1>{data.instrument.name} <span>{data.symbol}</span></h1><div className="cockpit-quote"><strong>{displayNumber(metric(data, "latest_price"))}</strong><span className={positive ? "positive" : "negative"}>{Number.isFinite(change) ? positive ? <TrendingUp size={15} /> : <TrendingDown size={15} /> : null}{displayNumber(metric(data, "change_percent"), "%")}</span></div></div>
+    <header className="cockpit-identity"><div><p className="eyebrow">A 股观察 / {data.instrument.exchange.toUpperCase()}</p><h1>{data.instrument.name} <span>{data.symbol}</span></h1><div className="cockpit-quote"><strong>{displayNumber(metric(data, "latest_price"))}</strong><span className={change === null ? undefined : positive ? "positive" : "negative"}>{change !== null ? positive ? <TrendingUp size={15} /> : <TrendingDown size={15} /> : null}{displayPercent(metric(data, "change_percent"))}</span></div></div>
       <div className="cockpit-quality"><div><Clock3 size={15} /><span>行情时间</span><b>{data.sections.market?.observed_at ? new Date(data.sections.market.observed_at).toLocaleString("zh-CN", { hour12: false }) : "未提供"}</b></div><div><span>快照质量</span><b>{qualityNames[data.overall_quality]}</b><small>{data.sections.market ? sectionQualityNames[data.sections.market.status] : "行情不可用"}</small></div><button type="button" aria-label="刷新驾驶舱" onClick={() => onRefreshRequest ? onRefreshRequest() : void refresh()} disabled={loading}><RefreshCw size={15} className={loading ? "spin" : ""} /></button></div>
     </header>
     {error && <div className="cockpit-error" role="alert"><AlertTriangle size={16} /><span>{error}</span>{stale && <b>当前内容已陈旧</b>}</div>}

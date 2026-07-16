@@ -5,6 +5,7 @@ import pytest
 
 from qibao_api.a_shares.diagnosis import AShareDiagnosisService
 from qibao_api.a_shares.cockpit import StockDecisionCockpitService
+from qibao_api.a_shares.fundamentals import FundamentalSnapshot
 from qibao_api.a_shares.preparation import StockPreparation
 from qibao_api.a_shares.instrument_directory import AShareInstrument
 from qibao_api.contracts.bars import DailyBar
@@ -60,6 +61,15 @@ class FailingFinance:
 class UnauthorizedFinance:
     def fetch(self, symbol: str):
         raise SourceAuthorizationError("mootdx:missing")
+
+
+class FutureUpdatedFinance:
+    def fetch(self, symbol: str) -> FundamentalSnapshot:
+        return FundamentalSnapshot(
+            symbol=symbol, observed_at=OBSERVED_AT,
+            data_updated_on=date(2026, 7, 15), eps=Decimal("1.25"),
+            source="mootdx-finance",
+        )
 
 
 class UnauthorizedMarket:
@@ -334,6 +344,18 @@ async def test_historical_diagnosis_rejects_future_market_and_news() -> None:
     assert result.sections["market"].status == "unavailable"
     assert result.sections["events"].metrics["event_count"] == 0
     assert "event-future" not in result.sections["events"].evidence_ids
+
+
+@pytest.mark.asyncio
+async def test_historical_diagnosis_rejects_future_finance_update() -> None:
+    service = AShareDiagnosisService(
+        bar_repository=FakeBars({"600000": bars()}), market_source=FakeMarket(),
+        finance_source=FutureUpdatedFinance(), news_repository=EmptyNews(),
+    )
+
+    result = await service.diagnose("600000", AS_OF, persist=False)
+
+    assert result.sections["fundamentals"].status == "unavailable"
 
 
 def test_candidates_expose_invalid_history_without_failing_other_symbols() -> None:

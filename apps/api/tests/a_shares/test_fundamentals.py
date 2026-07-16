@@ -18,16 +18,16 @@ def test_tdx_finance_source_default_clock_is_utc_aware() -> None:
     assert snapshot.observed_at.tzinfo == timezone.utc
 
 
-def test_tdx_finance_preserves_real_values_and_missing_fields() -> None:
+def test_tdx_finance_normalizes_monetary_fields_without_scaling_share_fields() -> None:
     snapshot = parse_tdx_finance(
         {
-            "jinglirun": "3200000000",
-            "zhuyingshouru": "88000000000",
-            "jingzichan": "28000000000",
+            "jinglirun": "32000000000",
+            "zhuyingshouru": "880000000000",
+            "jingzichan": "280000000000",
             "zongguben": "2400000000",
             "meigujingzichan": "12.40",
-            "updated_date": 20260331,
-            "industry": "银行",
+            "updated_date": 20260425,
+            "industry": 37,
         },
         symbol="600000",
         observed_at=datetime(2026, 7, 14, 10, 30),
@@ -39,9 +39,52 @@ def test_tdx_finance_preserves_real_values_and_missing_fields() -> None:
     assert snapshot.revenue == Decimal("88000000000")
     assert snapshot.book_value_per_share == Decimal("12.40")
     assert snapshot.total_shares == Decimal("2400000000")
-    assert snapshot.report_period.isoformat() == "2026-03-31"
-    assert snapshot.industry == "银行"
+    assert snapshot.report_period is None
+    assert snapshot.data_updated_on.isoformat() == "2026-04-25"
+    assert snapshot.industry is None
     assert snapshot.source == "mootdx-finance"
+
+
+def test_tdx_finance_preserves_a_textual_industry_name() -> None:
+    snapshot = parse_tdx_finance(
+        {"industry": "银行", "updated_date": 20260425},
+        symbol="600000",
+        observed_at=datetime(2026, 7, 14, 10, 30),
+    )
+
+    assert snapshot.industry == "银行"
+    assert snapshot.report_period is None
+    assert snapshot.data_updated_on.isoformat() == "2026-04-25"
+
+
+def test_tdx_finance_accepts_already_normalized_monetary_values() -> None:
+    snapshot = parse_tdx_finance(
+        {
+            "jinglirun": "3200000000",
+            "zhuyingshouru": "88000000000",
+            "jingzichan": "28000000000",
+            "zongguben": "2400000000",
+            "meigujingzichan": "12.40",
+        },
+        symbol="600000",
+        observed_at=datetime(2026, 7, 14, 10, 30),
+    )
+
+    assert snapshot.net_profit == Decimal("3200000000")
+    assert snapshot.revenue == Decimal("88000000000")
+    assert snapshot.eps == Decimal("3200000000") / Decimal("2400000000")
+
+
+def test_tdx_finance_hides_uncalibrated_monetary_values() -> None:
+    snapshot = parse_tdx_finance(
+        {"jinglirun": "32000000000", "zongguben": "2400000000"},
+        symbol="600000",
+        observed_at=datetime(2026, 7, 14, 10, 30),
+    )
+
+    assert snapshot.net_profit is None
+    assert snapshot.eps is None
+    assert snapshot.total_shares == Decimal("2400000000")
 
 
 def test_tdx_finance_treats_nan_and_zero_placeholder_as_missing() -> None:
