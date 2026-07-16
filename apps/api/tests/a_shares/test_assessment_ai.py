@@ -11,7 +11,11 @@ from qibao_api.a_shares.assessment_ai import (
     ReloadableAssessmentGateway,
 )
 from qibao_api.contracts.decision import EvidenceReference
-from qibao_api.settings_repository import AISettings, AISettingsRepository
+from qibao_api.settings_repository import (
+    AISettings,
+    AISettingsRepository,
+    EffectiveAISettingsResolver,
+)
 
 
 NOW = datetime(2026, 7, 15, 6, tzinfo=UTC)
@@ -214,7 +218,9 @@ async def test_reloadable_gateway_reads_new_local_settings_without_restart(tmp_p
 
         return httpx.AsyncClient(transport=httpx.MockTransport(handler))
 
-    ai = ReloadableAssessmentGateway(repository, client_factory=client_factory)
+    ai = ReloadableAssessmentGateway(
+        EffectiveAISettingsResolver(repository), client_factory=client_factory
+    )
     assert (await ai.explain(assessment(), (evidence(),))).status == "unconfigured"
 
     repository.save(AISettings(
@@ -245,7 +251,8 @@ async def test_reloadable_gateway_uses_environment_fallback_until_local_is_saved
         return httpx.AsyncClient(transport=httpx.MockTransport(handler))
 
     ai = ReloadableAssessmentGateway(
-        repository, fallback=fallback, client_factory=client_factory
+        EffectiveAISettingsResolver(repository, fallback=fallback),
+        client_factory=client_factory,
     )
     assert (await ai.explain(assessment(), (evidence(),))).status == "ready"
     repository.save(AISettings(

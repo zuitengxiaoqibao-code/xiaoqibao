@@ -3,9 +3,15 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from qibao_api.settings_repository import AISettings, AISettingsRepository
+from qibao_api.settings_repository import (
+    AISettings,
+    AISettingsRepository,
+    EffectiveAISettingsResolver,
+)
 
 
+# Local-admin trust boundary: the application binds locally and intentionally supports
+# localhost/private OpenAI-compatible providers. Deployment authentication is out of scope here.
 router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
 
 
@@ -18,6 +24,10 @@ class AISettingsView(BaseModel):
 
 def get_ai_settings_repository(request: Request) -> AISettingsRepository:
     return request.app.state.ai_settings_repository
+
+
+def get_effective_ai_settings(request: Request) -> EffectiveAISettingsResolver:
+    return request.app.state.effective_ai_settings
 
 
 def _view(settings: AISettings | object) -> AISettingsView:
@@ -37,9 +47,9 @@ def _view(settings: AISettings | object) -> AISettingsView:
 
 @router.get("/ai", response_model=AISettingsView)
 def get_ai_settings(
-    repository: Annotated[AISettingsRepository, Depends(get_ai_settings_repository)],
+    settings: Annotated[EffectiveAISettingsResolver, Depends(get_effective_ai_settings)],
 ) -> AISettingsView:
-    return _view(repository.load())
+    return _view(settings.resolve())
 
 
 @router.put("/ai", response_model=AISettingsView)
@@ -63,6 +73,7 @@ async def put_ai_settings(
 @router.delete("/ai", response_model=AISettingsView)
 def delete_ai_settings(
     repository: Annotated[AISettingsRepository, Depends(get_ai_settings_repository)],
+    settings: Annotated[EffectiveAISettingsResolver, Depends(get_effective_ai_settings)],
 ) -> AISettingsView:
     repository.delete()
-    return _view(repository.load())
+    return _view(settings.resolve())

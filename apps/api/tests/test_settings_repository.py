@@ -78,3 +78,20 @@ def test_saved_configuration_is_owner_only(tmp_path: Path) -> None:
     repository.save(settings())
 
     assert (repository.path.stat().st_mode & 0o777) == 0o600
+
+
+@pytest.mark.parametrize(
+    ("base_url", "model", "api_key"),
+    [
+        ("https://api.example/v1", "same-secret", "same-secret"),
+        ("https://api.example/v1", "model-with-secret-value-inside", "secret-value"),
+        ("https://api.example/v1/secret-value", "model-a", "secret-value"),
+        ("https://api.example/v1?token=secret-value", "model-a", "secret-value"),
+        ("https://api.example/v1#secret-value", "model-a", "secret-value"),
+    ],
+)
+def test_settings_reject_secret_reflection(base_url: str, model: str, api_key: str) -> None:
+    with pytest.raises(ValueError) as error:
+        AISettings(base_url=base_url, model=model, api_key=api_key)
+
+    assert api_key not in str(error.value)

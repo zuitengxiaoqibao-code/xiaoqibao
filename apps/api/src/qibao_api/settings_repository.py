@@ -14,15 +14,22 @@ class AISettings:
     api_key: str
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "base_url", self.base_url.strip())
+        object.__setattr__(self, "model", self.model.strip())
+        object.__setattr__(self, "api_key", self.api_key.strip())
         parsed = urlsplit(self.base_url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise ValueError("base_url must be an HTTP(S) URL")
         if parsed.username is not None or parsed.password is not None:
             raise ValueError("base_url must not contain user information")
-        if not self.model.strip():
+        if parsed.query or parsed.fragment:
+            raise ValueError("base_url must not contain a query or fragment")
+        if not self.model:
             raise ValueError("model must not be blank")
-        if not self.api_key.strip():
+        if not self.api_key:
             raise ValueError("api_key must not be blank")
+        if self.api_key in self.model or self.api_key in self.base_url:
+            raise ValueError("api_key must not appear in other settings")
 
     def model_dump(self) -> dict[str, str]:
         return asdict(self)
@@ -81,3 +88,19 @@ class AISettingsRepository:
 
     def delete(self) -> None:
         self.path.unlink(missing_ok=True)
+
+
+class EffectiveAISettingsResolver:
+    def __init__(
+        self, repository: AISettingsRepository, *, fallback: AISettings | None = None
+    ) -> None:
+        self.repository = repository
+        self._fallback = fallback
+
+    def resolve(self) -> AISettingsState:
+        local = self.repository.load()
+        if isinstance(local, AISettings):
+            return local
+        if local.reason == "missing" and self._fallback is not None:
+            return self._fallback
+        return local

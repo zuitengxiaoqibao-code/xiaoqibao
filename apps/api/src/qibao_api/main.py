@@ -39,7 +39,7 @@ from qibao_api.routes.health import router as health_router
 from qibao_api.routes.research import router as research_router
 from qibao_api.routes.settings import router as settings_router
 from qibao_api.settings import Settings
-from qibao_api.settings_repository import AISettingsRepository
+from qibao_api.settings_repository import AISettingsRepository, EffectiveAISettingsResolver
 from qibao_api.shangshu.pipeline import ResearchPipeline
 from qibao_api.storage.database import create_schema
 from qibao_api.storage.bar_repository import BarRepository
@@ -113,6 +113,11 @@ async def lifespan(application: FastAPI):
     application.state.write_gate = write_gate
     ai_settings_repository = AISettingsRepository(settings.data_dir)
     application.state.ai_settings_repository = ai_settings_repository
+    effective_ai_settings = EffectiveAISettingsResolver(
+        ai_settings_repository,
+        fallback=getattr(settings, "initial_ai_settings", None),
+    )
+    application.state.effective_ai_settings = effective_ai_settings
     engine = create_engine(settings.database_url)
     create_schema(engine)
     compliance = ComplianceRepository(settings.data_dir / "compliance.sqlite3")
@@ -346,8 +351,7 @@ async def lifespan(application: FastAPI):
                     decision_repository,
                     preparation_service=application.state.a_share_preparation_service,
                     assessor_ai=ReloadableAssessmentGateway(
-                        ai_settings_repository,
-                        fallback=getattr(settings, "initial_ai_settings", None),
+                        effective_ai_settings,
                         client=client,
                     ),
                 )
