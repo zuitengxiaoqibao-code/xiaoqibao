@@ -112,6 +112,11 @@ class DeterministicStockAssessor:
             name for name, section in sorted(sections.items())
             if section.observed_at is None or section.observed_at > cutoff
         )
+        snapshot_risks = tuple(
+            f"source_snapshot_unavailable:{name}"
+            for name, section in sorted(usable.items())
+            if section.observed_at is not None and section.snapshot_id is None
+        )
         primary_risk = (
             "风险分区阻断。" if action == "avoid" else
             "核心行情或趋势证据不足。" if action == "wait" else
@@ -119,7 +124,7 @@ class DeterministicStockAssessor:
         )
         risks = (primary_risk, *(
             (f"缺失或晚于截止时间的分区：{'、'.join(missing)}。",) if missing else ()
-        ))
+        ), *snapshot_risks)
         return StockAssessment(
             assessment_id=assessment_id,
             symbol=symbol,
@@ -129,7 +134,9 @@ class DeterministicStockAssessor:
             supporting_evidence=supporting,
             contrary_evidence=contrary,
             risks=risks,
-            invalidation_conditions=("任一核心分区状态或指标发生变化。",),
+            invalidation_conditions=(
+                "任一核心分区状态或指标发生变化。", *snapshot_risks
+            ),
             simulation_eligible=False,
             generated_at=cutoff,
         )

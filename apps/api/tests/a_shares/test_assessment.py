@@ -107,3 +107,14 @@ def test_future_source_observation_never_enters_assessment_evidence() -> None:
     assert result.action == "wait"
     assert not any(item.source == "fixture-market" for item in result.supporting_evidence)
     assert "future" not in "".join(item.summary for item in result.supporting_evidence)
+
+
+def test_observed_section_without_source_snapshot_is_an_explicit_risk() -> None:
+    values = sections()
+    values["valuation"] = section("valuation").model_copy(update={"snapshot_id": None})
+
+    result = DeterministicStockAssessor().assess("600519", values, (), CUTOFF)
+
+    assert not any(item.source == "fixture-valuation" for item in result.supporting_evidence)
+    assert "source_snapshot_unavailable:valuation" in result.risks
+    assert "source_snapshot_unavailable:valuation" in result.invalidation_conditions

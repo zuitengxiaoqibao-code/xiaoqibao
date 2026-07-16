@@ -1,7 +1,5 @@
 from datetime import date, datetime, timezone
 from decimal import Decimal
-from types import SimpleNamespace
-
 import pytest
 
 from qibao_api.a_shares.cockpit import StockDecisionCockpitService
@@ -17,6 +15,8 @@ from qibao_api.contracts.decision import (
     DecisionCycleAggregate,
     DecisionCycleSnapshot,
     EvidenceReference,
+    SimulationGateAudit,
+    SimulationPlan,
 )
 from qibao_api.contracts.market import AssetKind
 from qibao_api.shangshu.decision_repository import DecisionIntegrityError
@@ -94,7 +94,7 @@ def advice(symbol, created_at=CUTOFF, action="observe"):
     )
 
 
-def aggregate(items, *, source_observed_at=CUTOFF, sequence=1):
+def aggregate(items, *, source_observed_at=CUTOFF, sequence=1, plans=()):
     snapshot = DecisionCycleSnapshot(
         snapshot_id=f"cycle-{sequence}", trading_date=TRADE_DATE,
         phase="intraday", sequence=sequence,
@@ -106,7 +106,7 @@ def aggregate(items, *, source_observed_at=CUTOFF, sequence=1):
         status="ready", ai_status="not_requested",
     )
     return DecisionCycleAggregate(
-        snapshot=snapshot, advice=tuple(items), next_focus_due_at=CUTOFF,
+        snapshot=snapshot, advice=tuple(items), plans=tuple(plans), next_focus_due_at=CUTOFF,
         next_universe_due_at=CUTOFF,
     )
 
@@ -179,43 +179,74 @@ async def test_live_cockpit_rejects_observation_after_completion() -> None:
     assert result.sections["market"].reason == "observed_after_cutoff"
 
 
-def simulated_advice_with_gate(**updates):
-    gate = {
-        "quote_state": "ready",
-        "compliance_state": "ready",
-        "evidence_state": "ready",
-        "risk_state": "approve",
-        "risk_decision_id": "risk-1",
-        "compliance_snapshot_id": "compliance-1",
-    }
-    gate.update(updates)
-    return SimpleNamespace(
-        action="simulated_plan",
-        simulation_plan_id="plan-1",
-        risk_decision_id="risk-1",
-        simulation_gate=SimpleNamespace(**gate),
+def simulated_advice():
+    gate = SimulationGateAudit(
+        quote_state="ready", compliance_state="ready", evidence_state="ready",
+        risk_state="approve", risk_decision_id="risk-1",
+        compliance_snapshot_id="compliance-1",
     )
+    return advice("600000").model_copy(update={
+        "action": "simulated_plan", "simulation_plan_id": "plan-1",
+        "risk_decision_id": "risk-1", "simulation_gate": gate,
+    })
 
 
+def simulation_plan(**updates):
+    values = {
+        "plan_id": "plan-1", "advice_id": "a-600000", "risk_decision_id": "risk-1",
+        "compliance_snapshot_id": "compliance-1", "watch_price_low": Decimal("10"),
+        "watch_price_high": Decimal("11"), "stop_loss": Decimal("9"),
+        "take_profit": (Decimal("12"),), "tranches": (Decimal("0.1"),),
+        "max_position": Decimal("0.2"), "invalidation_conditions": ("invalid",),
+        "valid_from": CUTOFF.replace(hour=5), "valid_until": CUTOFF.replace(hour=7),
+        "strategy_version": "v1", "risk_version": "v1", "compliance_version": "v1",
+    }
+    values.update(updates)
+    return SimulationPlan(**values)
+
+
+class SimulationDecisions:
+    def __init__(self, plans):
+        self.plans = plans
+
+    def cycles(self, trading_date=None, phase=None):
+        if phase != "intraday":
+            return []
+        return [aggregate((simulated_advice(),), plans=self.plans)]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "failed_gate",
+    "plans",
     [
-        {"quote_state": "blocked"},
-        {"compliance_state": "blocked"},
-        {"evidence_state": "blocked"},
-        {"risk_state": "reject"},
+        (),
+        (simulation_plan(advice_id="wrong-advice"),),
+        (simulation_plan(risk_decision_id="wrong-risk"),),
+        (simulation_plan(compliance_snapshot_id="wrong-compliance"),),
     ],
 )
-def test_simulation_eligibility_requires_every_authoritative_gate(failed_gate) -> None:
+async def test_simulation_eligibility_requires_persisted_mutually_verified_plan(plans) -> None:
+    result = await service(decisions=SimulationDecisions(plans)).get(
+        "600000", TRADE_DATE, CUTOFF
+    )
+
+    assert result.assessment.simulation_eligible is False
+
+
+@pytest.mark.asyncio
+async def test_simulation_eligibility_accepts_complete_persisted_plan_chain() -> None:
+    result = await service(
+        decisions=SimulationDecisions((simulation_plan(),))
+    ).get("600000", TRADE_DATE, CUTOFF)
+
+    assert result.assessment.action == "observe"
+    assert result.assessment.simulation_eligible is True
+
+
+def test_avoid_assessment_cannot_reuse_old_ready_plan() -> None:
     assert StockDecisionCockpitService._simulation_eligible(
-        (simulated_advice_with_gate(**failed_gate),)
+        "avoid", (simulated_advice(),), {"a-600000"}
     ) is False
-
-
-def test_simulation_eligibility_accepts_mutually_verified_plan() -> None:
-    assert StockDecisionCockpitService._simulation_eligible(
-        (simulated_advice_with_gate(),)
-    ) is True
 
 
 @pytest.mark.asyncio

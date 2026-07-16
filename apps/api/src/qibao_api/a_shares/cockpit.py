@@ -121,12 +121,14 @@ class StockDecisionCockpitService:
         sections = self._enforce_cutoff(sections, effective_cutoff)
         sections["funds"] = _unavailable("not-connected", "fund_data_not_connected")
         sections["backtest"] = _unavailable("not-run", "backtest_not_run")
-        phases = self._phases(symbol, as_of, effective_cutoff)
+        phases, authorized_advice_ids = self._phases(symbol, as_of, effective_cutoff)
         current = self._current_advice(phases)
         membership = self._candidate_membership(current)
         assessment = self.assessor.assess(symbol, sections, membership, effective_cutoff)
         assessment = assessment.model_copy(update={
-            "simulation_eligible": self._simulation_eligible(current)
+            "simulation_eligible": self._simulation_eligible(
+                assessment.action, current, authorized_advice_ids
+            )
         })
         qualities = {section.status for section in sections.values()}
         overall: Literal["ready", "partial", "blocked"] = (
@@ -151,21 +153,11 @@ class StockDecisionCockpitService:
         }
 
     @staticmethod
-    def _simulation_eligible(current_advice) -> bool:
+    def _simulation_eligible(action, current_advice, authorized_advice_ids) -> bool:
+        if action != "observe":
+            return False
         for item in current_advice:
-            gate = getattr(item, "simulation_gate", None)
-            if (
-                item.action == "simulated_plan"
-                and bool(item.simulation_plan_id)
-                and bool(item.risk_decision_id)
-                and gate is not None
-                and gate.quote_state == "ready"
-                and gate.compliance_state == "ready"
-                and gate.evidence_state == "ready"
-                and gate.risk_state == "approve"
-                and gate.risk_decision_id == item.risk_decision_id
-                and bool(gate.compliance_snapshot_id)
-            ):
+            if item.advice_id in authorized_advice_ids:
                 return True
         return False
 
@@ -219,6 +211,7 @@ class StockDecisionCockpitService:
 
     def _phases(self, symbol, as_of, cutoff):
         result = {}
+        authorized_advice_ids = set()
         for phase in PHASES:
             advice = []
             versions = []
@@ -239,6 +232,24 @@ class StockDecisionCockpitService:
                 )
                 if not selected:
                     continue
+                for item in selected:
+                    gate = item.simulation_gate
+                    if item.action != "simulated_plan" or gate is None:
+                        continue
+                    for plan in aggregate.plans:
+                        if (
+                            plan.plan_id == item.simulation_plan_id
+                            and plan.advice_id == item.advice_id
+                            and plan.risk_decision_id == item.risk_decision_id
+                            and plan.risk_decision_id == gate.risk_decision_id
+                            and plan.compliance_snapshot_id == gate.compliance_snapshot_id
+                            and gate.quote_state == "ready"
+                            and gate.compliance_state == "ready"
+                            and gate.evidence_state == "ready"
+                            and gate.risk_state == "approve"
+                            and plan.valid_from <= cutoff <= plan.valid_until
+                        ):
+                            authorized_advice_ids.add(item.advice_id)
                 advice.extend(selected)
                 versions.append(DecisionVersion(
                     snapshot_id=snapshot.snapshot_id, sequence=snapshot.sequence,
@@ -247,7 +258,7 @@ class StockDecisionCockpitService:
             result[phase] = StockPhaseHistory(
                 advice=tuple(advice), change_stream=tuple(versions)
             )
-        return result
+        return result, authorized_advice_ids
 
     @staticmethod
     def _current_advice(phases):
