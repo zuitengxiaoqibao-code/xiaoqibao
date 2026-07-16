@@ -17,6 +17,38 @@ const emptyDecision = {
   polling: { focus_interval_seconds: 60, universe_interval_seconds: 240, stale_after_seconds: 180, next_check_seconds: 60 },
 };
 
+function decisionAdvice(symbol: string, conclusion: string) {
+  return {
+    advice_id: `advice-${symbol}`, snapshot_id: "snapshot-intraday", asset: "a_share" as const,
+    symbol, horizon: "intraday" as const, observation_state: "watching", action: "observe" as const,
+    conclusion, confidence: "0.72",
+    supporting_evidence: [{
+      evidence_id: `evidence-${symbol}`, source: "tencent", snapshot_id: `quote-${symbol}`,
+      summary: `${symbol} 行情已验证`, observed_at: "2026-07-15T10:29:00+08:00",
+    }],
+    contrary_evidence: [], risks: ["短线波动可能放大"], invalidation_conditions: ["量价条件失效"],
+    plain_language_explanation: "先观察确认，不追涨。", quantitative_result: {}, ai_interpretation_id: null,
+    risk_decision_id: null, previous_advice_id: null, changed_fields: [], strategy_version: "decision-v1",
+    created_at: "2026-07-15T10:30:00+08:00",
+  };
+}
+
+function marketDecision() {
+  const advice = [decisionAdvice("600000", "等待放量确认"), decisionAdvice("000001", "趋势仍需观察")];
+  return {
+    ...emptyDecision,
+    current_phase: "intraday" as const,
+    phases: {
+      ...emptyDecision.phases,
+      intraday: {
+        ...emptyPhase, phase_status: "ready" as const, quality: "ready" as const,
+        aggregate_version: "snapshot-intraday", advice,
+        evidence: advice.flatMap((item) => item.supporting_evidence),
+      },
+    },
+  };
+}
+
 describe("Dashboard beginner shell", () => {
   beforeEach(() => window.history.replaceState({}, "", "/"));
 
@@ -92,6 +124,43 @@ describe("Dashboard beginner shell", () => {
     fireEvent.click(screen.getByRole("button", { name: "A 股观察" }));
     expect(await screen.findByRole("heading", { name: "选择观察股票" })).toBeInTheDocument();
     expect(screen.queryByText(/secret-factor|snapshot|中书省|工部|候选生成|诊断/)).not.toBeInTheDocument();
+  });
+
+  it("uses 今日研判 as the market-wide three-phase overview instead of another stock cockpit", async () => {
+    const loadCockpit = vi.fn();
+    const { container } = render(<SelectedInstrumentProvider><Dashboard
+      loadSnapshot={() => Promise.resolve(card)}
+      loadDecisionCurrent={() => Promise.resolve(marketDecision())}
+      loadAShareCandidates={() => Promise.resolve({ asset: "a_share", snapshot_id: null, input_snapshot_hash: null, universe_status: "empty", as_of: "2026-07-15", factor_version: "v1", short_term: [], swing: [], exclusions: [] })}
+      searchAShareInstruments={() => Promise.resolve({ query: "", items: [], server_time: "2026-07-15T09:30:00+08:00", source_status: "ready" })}
+      loadStockCockpit={loadCockpit}
+    /></SelectedInstrumentProvider>);
+
+    expect(await screen.findByRole("heading", { name: "今日判断与三阶段跟踪" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "盘前研判" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "盘中监测" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "盘后复盘" })).toBeInTheDocument();
+    expect(screen.getByText("600000 · 等待放量确认")).toBeInTheDocument();
+    expect(screen.getByText("000001 · 趋势仍需观察")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "选择观察股票" })).not.toBeInTheDocument();
+    expect(loadCockpit).not.toHaveBeenCalled();
+    expect(container.querySelector("main main")).toBeNull();
+    expect(container.querySelectorAll("main")).toHaveLength(1);
+  });
+
+  it("filters 今日研判 only after the user explicitly chooses the selected A share", async () => {
+    window.history.replaceState({}, "", "/?symbol=600000");
+    render(<SelectedInstrumentProvider><Dashboard
+      loadSnapshot={() => Promise.resolve(card)}
+      loadDecisionCurrent={() => Promise.resolve(marketDecision())}
+    /></SelectedInstrumentProvider>);
+
+    expect(await screen.findByText("000001 · 趋势仍需观察")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "只看 600000" }));
+    expect(screen.getByText("600000 · 等待放量确认")).toBeInTheDocument();
+    expect(screen.queryByText("000001 · 趋势仍需观察")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "全市场" }));
+    expect(screen.getByText("000001 · 趋势仍需观察")).toBeInTheDocument();
   });
 
   it("keeps the selected A share while opening news", async () => {

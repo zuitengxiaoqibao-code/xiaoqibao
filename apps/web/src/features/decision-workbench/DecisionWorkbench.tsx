@@ -12,6 +12,15 @@ type Props = {
 const phaseNames: Record<DecisionPhase, string> = { premarket: "盘前研判", intraday: "盘中监测", postclose: "盘后复盘" };
 const actionNames: Record<Advice["action"], string> = { observe: "观察", wait: "等待", avoid: "回避", invalidated: "已失效" };
 
+function phaseSummary(slot: PhaseSlot, phase: DecisionPhase): string {
+  const execution = phaseExecutionCopy(slot.execution, phase);
+  if (execution) return execution.label;
+  if (slot.phase_status === "empty") return "暂无已验证结果";
+  if (slot.phase_status === "blocked") return "已拦截";
+  if (slot.phase_status === "partial") return `部分可用 · ${slot.advice.length} 条建议`;
+  return `已生成 ${slot.advice.length} 条建议`;
+}
+
 function ChangeStream({ slot }: { slot: PhaseSlot }) {
   if (!slot.change_stream?.length) return null;
   return <section className="change-stream" aria-label="盘中变化流"><h4>变化流</h4>{slot.change_stream.map((version) => <details key={version.snapshot_id} open><summary>变化版本 #{version.sequence} · {version.delta_advice.length} 项 · {new Date(version.generated_at).toLocaleTimeString("zh-CN")}</summary><div>{version.delta_advice.length === 0 ? <p>本版本没有建议字段变化</p> : version.delta_advice.map((advice) => <article key={advice.advice_id}><b>{advice.symbol} · {actionNames[advice.action]} · {advice.conclusion}</b><span>变更字段：{advice.changed_fields?.length ? advice.changed_fields.join("、") : "首次记录或未标注字段级变化"}</span><span>前序建议：{advice.previous_advice_id ?? "无（当前记录未提供前序）"}</span><div>{advice.supporting_evidence.length ? advice.supporting_evidence.map((evidence) => <p key={evidence.evidence_id}>触发证据：{evidence.summary}<small>{evidence.source} · {new Date(evidence.observed_at).toLocaleString("zh-CN")}</small></p>) : <p>确定性原因：{advice.risks.join("；") || advice.invalidation_conditions.join("；") || "当前记录未提供具体原因"}</p>}</div></article>)}</div></details>)}</section>;
@@ -66,7 +75,7 @@ export function DecisionWorkbench({ loadCurrent, loadDate, selectedSymbol, asOf,
   function tabKey(event: React.KeyboardEvent, item: DecisionPhase) { const index = phases.indexOf(item); const next = event.key === "ArrowRight" ? phases[(index + 1) % phases.length] : event.key === "ArrowLeft" ? phases[(index - 1 + phases.length) % phases.length] : null; if (next) { event.preventDefault(); selectPhase(next, true); } }
   return <main className="decision-workbench"><header className="decision-header"><div><p className="eyebrow">A 股 · 每日决策工作台</p><h1>今日判断与三阶段跟踪</h1></div><div className="decision-date-controls"><label>交易日期<input aria-label="交易日期" type="date" value={date} onChange={(event) => { setHistoricalMode(true); selectDate(event.target.value); void load(event.target.value); }} /></label>{historicalMode && <button type="button" onClick={() => { setHistoricalMode(false); onReturnLive?.(); void load(); }}><Clock3 size={14} />返回实时</button>}<button type="button" onClick={() => onRefresh ? onRefresh("manual") : void load(historicalMode ? date : undefined)}><RefreshCw size={14} />刷新当前</button></div></header>
     {data && <section className="session-status"><div><Clock3 size={15} /><b>{data.market_session === "open" ? "市场进行中" : "市场已休市"}</b><span>焦点 {data.polling.focus_interval_seconds ?? "--"}s</span></div><div><span>全域 {data.polling.universe_interval_seconds ?? "--"}s</span><span>超时阈值 {data.polling.stale_after_seconds}s</span><span>下次检查 {data.polling.next_check_seconds ?? "--"}s</span></div></section>}
-    <div className="phase-tabs" role="tablist">{phases.map((item) => <button id={`decision-tab-${item}`} aria-controls={`decision-panel-${item}`} tabIndex={phase === item ? 0 : -1} key={item} role="tab" aria-selected={phase === item} onKeyDown={(event) => tabKey(event, item)} onClick={() => selectPhase(item)}>{phaseNames[item]}</button>)}</div>
+    <div className="phase-tabs" role="tablist">{phases.map((item) => <button id={`decision-tab-${item}`} aria-label={phaseNames[item]} aria-controls={`decision-panel-${item}`} data-phase-state={data?.phases[item].execution?.status ?? data?.phases[item].phase_status ?? "loading"} tabIndex={phase === item ? 0 : -1} key={item} role="tab" aria-selected={phase === item} onKeyDown={(event) => tabKey(event, item)} onClick={() => selectPhase(item)}><span>{phaseNames[item]}</span><small>{data ? phaseSummary(data.phases[item], item) : "正在读取"}</small></button>)}</div>
     {loading && !data && <section className="decision-message" aria-busy="true"><RefreshCw size={22} /><h2>正在读取决策聚合</h2></section>}
     {error && <section className="decision-error" role="alert"><AlertTriangle size={18} /><p>{error}</p><button onClick={() => void load(historicalMode ? date : undefined)}>重试</button></section>}
     {data && !error && <div id={`decision-panel-${phase}`} role="tabpanel" aria-labelledby={`decision-tab-${phase}`}><PhaseContent phase={phase} slot={selectedSlot(data.phases[phase], selectedSymbol)} serverTime={data.server_time} staleAfter={data.polling.stale_after_seconds} pollingStatus={data.polling.status} selectedSymbol={selectedSymbol} /></div>}

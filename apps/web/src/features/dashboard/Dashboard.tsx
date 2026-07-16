@@ -1,4 +1,4 @@
-import { type ComponentProps, FormEvent, useCallback, useEffect, useState } from "react";
+import { type ComponentProps, FormEvent, useEffect, useState } from "react";
 import {
   Activity, Archive, BarChart3, BookOpenCheck, Boxes, BriefcaseBusiness, Building2,
   ChevronRight, CircleDollarSign, Database, Gauge, Landmark, Radar, Search,
@@ -18,8 +18,8 @@ import { OperationsView } from "../operations/OperationsView";
 import type { BackupRecord, BackupVerification, OperationsStatus } from "../operations/types";
 import { AShareResearchView } from "../a-shares/AShareResearchView";
 import type { AShareDiagnosis, CandidateBoard } from "../a-shares/types";
-import { DecisionWorkbench } from "../decision-workbench/DecisionWorkbench";
 import type { DecisionResponse } from "../decision-workbench/types";
+import { TodayDecisionView } from "../decision-workbench/TodayDecisionView";
 import { StockSelector } from "../stock-cockpit/StockSelector";
 import { StockDecisionCockpit } from "../stock-cockpit/StockDecisionCockpit";
 import type { InstrumentSearchResponse, StockCockpitSnapshot } from "../stock-cockpit/types";
@@ -135,24 +135,6 @@ function ResearchPanel({ card }: { card: ResearchCard }) {
   );
 }
 
-function CoordinatedStockWorkbench({ loadCockpit, loadCurrent, loadDate }: {
-  loadCockpit?: (symbol: string, asOf?: string, signal?: AbortSignal) => Promise<StockCockpitSnapshot>;
-  loadCurrent: () => Promise<DecisionResponse>; loadDate?: (date: string) => Promise<DecisionResponse>;
-}) {
-  const { symbol } = useSelectedInstrument();
-  const [displayAsOf, setDisplayAsOf] = useState("");
-  const [historicalAsOf, setHistoricalAsOf] = useState<string | undefined>();
-  const [refreshToken, setRefreshToken] = useState(0);
-  const selectHistory = useCallback((date: string) => { setDisplayAsOf(date); setHistoricalAsOf(date); }, []);
-  const resolveDate = useCallback((date: string) => setDisplayAsOf(date), []);
-  const returnLive = useCallback(() => setHistoricalAsOf(undefined), []);
-  const refreshBoth = useCallback(() => setRefreshToken((value) => value + 1), []);
-  return <div className="stock-workbench-main">
-    {loadCockpit && <StockDecisionCockpit load={loadCockpit} asOf={historicalAsOf} refreshToken={refreshToken} onRefreshRequest={refreshBoth} />}
-    <DecisionWorkbench loadCurrent={loadCurrent} loadDate={loadDate} selectedSymbol={symbol} asOf={displayAsOf} onAsOfChange={selectHistory} onResolvedAsOf={resolveDate} onReturnLive={returnLive} refreshToken={refreshToken} onRefresh={refreshBoth} />
-  </div>;
-}
-
 function SelectedNewsWorkspace({ loadBundle, syncNews, createCorrection, openNewsCompliance }: {
   loadBundle: () => Promise<NewsIntelligenceBundle>; syncNews: () => Promise<Record<string, number>>;
   createCorrection: (input: CorrectionInput) => Promise<unknown>; openNewsCompliance: () => void;
@@ -236,10 +218,12 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, lo
       {activeView === "settings" && loadAISettings && saveAISettings && deleteAISettings && <DataSettingsView loadAI={loadAISettings} saveAI={saveAISettings} deleteAI={deleteAISettings} symbol={selectedSymbol} prepare={prepareStockData} preparation={preparationForSymbol(latestCockpit, selectedSymbol)} onAIChanged={() => setCockpitRefreshToken((value) => value + 1)} />}
       {activeView === "settings" && (!loadAISettings || !saveAISettings || !deleteAISettings) && <main className="beginner-page"><header><p className="eyebrow">数据设置</p><h1>数据源与 AI</h1><p>设置服务暂不可用，请检查本地服务后重试。</p></header></main>}
 
-      {activeView === "dashboard" && loadDecisionCurrent && <div className="stock-workbench-layout">
-        {loadAShareCandidates && searchAShareInstruments && <StockSelector loadCandidates={loadAShareCandidates} search={searchAShareInstruments} />}
-        {loadStockCockpit && <StockDecisionCockpit load={loadStockCockpit} prepare={prepareStockData} refreshToken={cockpitRefreshToken} onSnapshot={setLatestCockpit} />}
-      </div>}
+      {activeView === "dashboard" && loadDecisionCurrent && <TodayDecisionView
+        loadCurrent={loadDecisionCurrent}
+        loadDate={loadDecisionDate}
+        selectedSymbol={selectedSymbol}
+        onOpenAShares={() => navigate("a_shares")}
+      />}
 
       {activeView === "dashboard" && !loadDecisionCurrent && <main className="command-center beginner-fallback">
         <header className="topbar">

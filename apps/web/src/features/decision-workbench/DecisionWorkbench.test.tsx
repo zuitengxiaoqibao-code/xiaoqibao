@@ -62,6 +62,30 @@ describe("DecisionWorkbench", () => {
     expect(screen.getByText("尚未到计划时间，不会提前编造结论。")).toBeInTheDocument();
   });
 
+  it("keeps every phase lifecycle visible before the user switches tabs", async () => {
+    const scheduled = {
+      ...emptySlot,
+      execution: {
+        status: "scheduled", scheduled_at: "2026-07-17T09:20:00+08:00",
+        next_scheduled_at: "2026-07-17T09:20:00+08:00", last_completed_at: null,
+        last_attempt_at: null, attempts: 0, error_code: null,
+      },
+    } as PhaseSlot;
+    const item = advice();
+    const ready = {
+      ...emptySlot, phase_status: "ready" as const, quality: "ready" as const,
+      aggregate_version: "s1", advice: [item], evidence: item.supporting_evidence,
+    };
+    render(<DecisionWorkbench loadCurrent={() => Promise.resolve(response({
+      server_time: "2026-07-17T10:30:00+08:00", trading_date: "2026-07-17",
+      phases: { premarket: scheduled, intraday: ready, postclose: emptySlot },
+    }))} />);
+
+    expect(await screen.findByText("计划 09:20 生成")).toBeInTheDocument();
+    expect(screen.getByText("已生成 1 条建议")).toBeInTheDocument();
+    expect(screen.getByText("暂无已验证结果")).toBeInTheDocument();
+  });
+
   it("loads explicit history and returns to the current endpoint", async () => {
     const loadCurrent = vi.fn().mockResolvedValue(response());
     const loadDate = vi.fn().mockResolvedValue(response({ trading_date: "2026-07-14", market_session: "closed" }));
