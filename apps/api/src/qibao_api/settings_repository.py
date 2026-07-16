@@ -1,10 +1,29 @@
 import json
 import os
+import re
 import tempfile
+import unicodedata
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Literal
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
+
+
+_MALFORMED_PERCENT_ESCAPE = re.compile(r"%(?![0-9A-Fa-f]{2})")
+
+
+def _decoded_url_forms(value: str) -> tuple[str, ...]:
+    if _MALFORMED_PERCENT_ESCAPE.search(value):
+        raise ValueError("base_url contains an invalid percent escape")
+    forms = [value]
+    current = value
+    for _ in range(3):
+        decoded = unquote(current, errors="strict")
+        forms.append(decoded)
+        if decoded == current:
+            break
+        current = decoded
+    return tuple(forms)
 
 
 @dataclass(frozen=True)
@@ -15,8 +34,8 @@ class AISettings:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "base_url", self.base_url.strip())
-        object.__setattr__(self, "model", self.model.strip())
-        object.__setattr__(self, "api_key", self.api_key.strip())
+        object.__setattr__(self, "model", unicodedata.normalize("NFKC", self.model).strip())
+        object.__setattr__(self, "api_key", unicodedata.normalize("NFKC", self.api_key).strip())
         parsed = urlsplit(self.base_url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise ValueError("base_url must be an HTTP(S) URL")
@@ -28,7 +47,11 @@ class AISettings:
             raise ValueError("model must not be blank")
         if not self.api_key:
             raise ValueError("api_key must not be blank")
-        if self.api_key in self.model or self.api_key in self.base_url:
+        decoded_urls = _decoded_url_forms(self.base_url)
+        if self.api_key in self.model or any(
+            self.api_key in unicodedata.normalize("NFKC", value)
+            for value in decoded_urls
+        ):
             raise ValueError("api_key must not appear in other settings")
 
     def model_dump(self) -> dict[str, str]:

@@ -95,3 +95,66 @@ def test_settings_reject_secret_reflection(base_url: str, model: str, api_key: s
         AISettings(base_url=base_url, model=model, api_key=api_key)
 
     assert api_key not in str(error.value)
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "https://api.example/v1/%73ecret-value",
+        "https://api.example/v1/%73%65%63%72%65%74%2D%76%61%6C%75%65",
+        "https://api.example/v1/%2573ecret-value",
+    ],
+)
+def test_settings_reject_percent_encoded_secret_in_url_path(base_url: str) -> None:
+    secret = "secret-value"
+
+    with pytest.raises(ValueError) as error:
+        AISettings(base_url=base_url, model="model-a", api_key=secret)
+
+    assert secret not in str(error.value)
+
+
+def test_settings_allows_percent_encoded_nonsecret_url_path() -> None:
+    result = AISettings(
+        base_url="http://localhost:11434/models/%E6%B5%8B%E8%AF%95",
+        model="model-a",
+        api_key="secret-value",
+    )
+
+    assert result.base_url.endswith("/%E6%B5%8B%E8%AF%95")
+
+
+def test_settings_rejects_malformed_percent_escape_without_echoing_input() -> None:
+    with pytest.raises(ValueError) as error:
+        AISettings(
+            base_url="https://api.example/v1/bad%2/path",
+            model="model-a",
+            api_key="secret-value",
+        )
+
+    assert "bad%2" not in str(error.value)
+    assert "secret-value" not in str(error.value)
+
+
+def test_settings_nfkc_normalizes_before_secret_comparison() -> None:
+    fullwidth_secret = "ｓｅｃｒｅｔ"
+
+    with pytest.raises(ValueError) as error:
+        AISettings(
+            base_url="https://api.example/v1",
+            model=fullwidth_secret,
+            api_key="secret",
+        )
+
+    assert "secret" not in str(error.value)
+
+
+def test_settings_returns_nfkc_normalized_safe_values() -> None:
+    result = AISettings(
+        base_url="https://api.example/v1",
+        model="ｍｏｄｅｌ",
+        api_key="ｓｅｃｒｅｔ",
+    )
+
+    assert result.model == "model"
+    assert result.api_key == "secret"
