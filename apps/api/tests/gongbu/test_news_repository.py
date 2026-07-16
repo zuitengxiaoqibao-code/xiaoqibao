@@ -100,6 +100,21 @@ def test_repository_rejects_provider_id_collision_and_tampering(tmp_path) -> Non
     repository.close()
 
 
+def test_repository_preserves_legacy_id_when_appending_a_versioned_article(tmp_path) -> None:
+    repository = NewsRepository(tmp_path / "news.sqlite3")
+    legacy = article(article_id="provider-1", raw=b"legacy raw snapshot")
+    versioned = article(
+        article_id="provider-1-a1b2c3d4e5f60718",
+        raw=b"versioned raw snapshot",
+    )
+
+    repository.append_articles((legacy,))
+    repository.append_articles((versioned,))
+
+    assert repository.articles() == [legacy, versioned]
+    repository.close()
+
+
 def test_events_for_symbol_is_verified_linked_and_cutoff_bounded(tmp_path) -> None:
     repository = NewsRepository(tmp_path / "news.sqlite3")
     item = article()

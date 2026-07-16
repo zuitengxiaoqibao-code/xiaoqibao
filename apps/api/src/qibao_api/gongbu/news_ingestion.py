@@ -17,7 +17,11 @@ class NewsIngestionService:
         inserted = self.repository.append_articles(tuple(articles))
         for cluster in clusters:
             self.repository.append_cluster(cluster)
-        article_by_id = {article.article_id: article for article in articles}
+        article_ids = tuple(article.article_id for article in articles)
+        article_by_id = {
+            article.article_id: article
+            for article in self.repository.articles_by_ids(article_ids)
+        }
         event_count = 0
         interpretation_count = 0
         for cluster in clusters:

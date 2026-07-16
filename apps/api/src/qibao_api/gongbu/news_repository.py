@@ -156,6 +156,21 @@ class NewsRepository:
         rows = self.connection.execute(
             "SELECT * FROM news_articles ORDER BY sequence"
         ).fetchall()
+        return self._articles_from_rows(rows)
+
+    def articles_by_ids(self, article_ids: tuple[str, ...]) -> list[NewsArticle]:
+        if not article_ids:
+            return []
+        placeholders = ",".join("?" for _ in article_ids)
+        rows = self.connection.execute(
+            f"SELECT * FROM news_articles WHERE article_id IN ({placeholders}) "
+            "ORDER BY sequence",
+            article_ids,
+        ).fetchall()
+        return self._articles_from_rows(rows)
+
+    @staticmethod
+    def _articles_from_rows(rows) -> list[NewsArticle]:
         articles: list[NewsArticle] = []
         for row in rows:
             canonical_hash = _record_hash(row["metadata"], row["raw_snapshot"])

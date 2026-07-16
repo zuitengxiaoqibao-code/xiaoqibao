@@ -131,12 +131,29 @@ class EastmoneyGlobalNewsSource:
             row_raw = json.dumps(
                 row, ensure_ascii=False, sort_keys=True, separators=(",", ":")
             ).encode("utf-8")
-            content_hash = hashlib.sha256(row_raw).hexdigest()
-            article_id = str(row.get("code") or content_hash[:24])
-            url = str(row.get("url") or f"{EASTMONEY_GLOBAL_NEWS_URL}#{article_id}")
             title = str(row.get("title") or row.get("summary") or "").strip()
             summary = str(row.get("summary") or "").strip() or None
             published_at = _parse_eastmoney_time(row.get("showTime"))
+            source_url = str(row.get("url") or "").strip()
+            semantic_payload = json.dumps(
+                {
+                    "published_at": published_at.isoformat(),
+                    "summary": summary,
+                    "title": title,
+                    "url": source_url,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            content_hash = hashlib.sha256(semantic_payload).hexdigest()
+            provider_code = str(row.get("code") or "").strip()
+            article_id = (
+                f"{provider_code}-{content_hash[:16]}"
+                if provider_code
+                else content_hash[:24]
+            )
+            url = source_url or f"{EASTMONEY_GLOBAL_NEWS_URL}#{article_id}"
             articles.append(
                 NewsArticle(
                     article_id=article_id,

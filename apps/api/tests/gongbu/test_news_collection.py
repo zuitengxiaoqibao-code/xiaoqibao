@@ -47,6 +47,122 @@ async def test_eastmoney_global_news_preserves_article_evidence() -> None:
 
 
 @pytest.mark.asyncio
+async def test_eastmoney_transient_counters_do_not_create_a_new_article_version() -> None:
+    rows = [
+        {
+            "code": "202607163809246888",
+            "title": "美国首次申请失业救济人数修正",
+            "summary": "申请人数修正至21.6万。",
+            "showTime": "2026-07-14 08:55:00",
+            "realSort": "1784205269046888",
+            "pinglun_Num": 1,
+            "share": 1,
+        },
+        {
+            "code": "202607163809246888",
+            "title": "美国首次申请失业救济人数修正",
+            "summary": "申请人数修正至21.6万。",
+            "showTime": "2026-07-14 08:55:00",
+            "realSort": "1784205269046888",
+            "pinglun_Num": 12,
+            "share": 3,
+        },
+    ]
+
+    async def transport(_url, _params, _headers):
+        return NewsHttpResponse(200, payload([rows.pop(0)]))
+
+    source = EastmoneyGlobalNewsSource(
+        transport=transport,
+        clock=lambda: NOW,
+        minimum_interval=0,
+    )
+    first = (await source.fetch())[0]
+    second = (await source.fetch())[0]
+
+    assert first.article_id == second.article_id
+    assert first.content_hash == second.content_hash
+    assert first.raw_snapshot != second.raw_snapshot
+    assert first.article_id.startswith("202607163809246888-")
+    assert json.loads(first.raw_snapshot)["pinglun_Num"] == 1
+    assert json.loads(second.raw_snapshot)["pinglun_Num"] == 12
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "changed_value"),
+    [
+        ("title", "美国首次申请失业救济人数再次修正"),
+        ("summary", "申请人数再次修正至21.5万。"),
+        ("showTime", "2026-07-14 08:56:00"),
+        ("url", "https://finance.eastmoney.com/a/revised.html"),
+    ],
+)
+async def test_eastmoney_evidence_changes_create_a_new_article_version(
+    field: str,
+    changed_value: str,
+) -> None:
+    original = {
+        "code": "202607140001",
+        "title": "政策支持先进制造业发展",
+        "summary": "有关部门发布支持政策。",
+        "showTime": "2026-07-14 08:55:00",
+        "url": "https://finance.eastmoney.com/a/202607140001.html",
+    }
+    changed = {**original, field: changed_value}
+    rows = [original, changed]
+
+    async def transport(_url, _params, _headers):
+        return NewsHttpResponse(200, payload([rows.pop(0)]))
+
+    source = EastmoneyGlobalNewsSource(
+        transport=transport,
+        clock=lambda: NOW,
+        minimum_interval=0,
+    )
+    first = (await source.fetch())[0]
+    second = (await source.fetch())[0]
+
+    assert first.article_id != second.article_id
+    assert first.content_hash != second.content_hash
+    assert first.article_id.startswith("202607140001-")
+    assert second.article_id.startswith("202607140001-")
+
+
+@pytest.mark.asyncio
+async def test_eastmoney_article_without_provider_code_uses_semantic_hash_id() -> None:
+    rows = [
+        {
+            "title": "政策支持先进制造业发展",
+            "summary": "有关部门发布支持政策。",
+            "showTime": "2026-07-14 08:55:00",
+            "pinglun_Num": 1,
+        },
+        {
+            "title": "政策支持先进制造业发展",
+            "summary": "有关部门发布支持政策。",
+            "showTime": "2026-07-14 08:55:00",
+            "pinglun_Num": 9,
+        },
+    ]
+
+    async def transport(_url, _params, _headers):
+        return NewsHttpResponse(200, payload([rows.pop(0)]))
+
+    source = EastmoneyGlobalNewsSource(
+        transport=transport,
+        clock=lambda: NOW,
+        minimum_interval=0,
+    )
+    first = (await source.fetch())[0]
+    second = (await source.fetch())[0]
+
+    assert first.article_id == second.article_id == first.content_hash[:24]
+    assert first.content_hash == second.content_hash
+    assert first.raw_snapshot != second.raw_snapshot
+
+
+@pytest.mark.asyncio
 async def test_eastmoney_source_serializes_requests_and_retries_once() -> None:
     responses = [
         NewsHttpResponse(429, b"rate limited"),
