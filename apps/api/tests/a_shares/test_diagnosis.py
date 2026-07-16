@@ -4,6 +4,8 @@ from decimal import Decimal
 import pytest
 
 from qibao_api.a_shares.diagnosis import AShareDiagnosisService
+from qibao_api.a_shares.cockpit import StockDecisionCockpitService
+from qibao_api.a_shares.instrument_directory import AShareInstrument
 from qibao_api.contracts.bars import DailyBar
 from qibao_api.contracts.market import AssetKind
 from qibao_api.contracts.news import EvidenceCitation, NormalizedNewsEvent
@@ -96,6 +98,12 @@ class NewsWithOtherAsset:
         ]
 
 
+class AdverseNews(NewsWithOtherAsset):
+    def events(self):
+        event = super().events()[0]
+        return [event.model_copy(update={"event_type": "credit_risk"})]
+
+
 class FutureNews:
     def events(self):
         citation = EvidenceCitation(
@@ -141,6 +149,46 @@ async def test_diagnosis_keeps_local_analysis_when_fundamentals_fail() -> None:
     assert "fundamentals" in result.missing_data
     assert result.action == "observe"
 
+
+@pytest.mark.asyncio
+async def test_diagnosis_exposes_verified_adverse_event_metric() -> None:
+    service = AShareDiagnosisService(
+        bar_repository=FakeBars({"600000": bars()}), market_source=FakeMarket(),
+        finance_source=FailingFinance(), news_repository=AdverseNews(),
+    )
+
+    result = await service.diagnose("600000", AS_OF, persist=False)
+
+    assert result.sections["events"].metrics["adverse_event_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_verified_adverse_news_reaches_cockpit_assessment_as_avoid() -> None:
+    cutoff = datetime(2026, 7, 14, 12, tzinfo=UTC)
+    diagnosis = AShareDiagnosisService(
+        bar_repository=FakeBars({"600000": bars()}), market_source=FakeMarket(),
+        finance_source=FailingFinance(), news_repository=AdverseNews(),
+    )
+
+    class Directory:
+        def resolve_at(self, symbol, requested_cutoff):
+            return AShareInstrument(
+                symbol=symbol, name="浦发银行", exchange="sh",
+                observed_at=cutoff, quote_quality="ready",
+            )
+
+    class Decisions:
+        def cycles(self, as_of, phase):
+            return ()
+
+    cockpit = StockDecisionCockpitService(
+        Directory(), diagnosis, Decisions(), clock=lambda: cutoff,
+    )
+
+    result = await cockpit.get("600000", AS_OF, cutoff)
+
+    assert result.sections["news"].payload["metrics"]["adverse_event_count"] == 1
+    assert result.assessment.action == "avoid"
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(

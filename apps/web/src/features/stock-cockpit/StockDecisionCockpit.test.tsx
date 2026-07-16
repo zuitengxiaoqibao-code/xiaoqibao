@@ -188,6 +188,23 @@ describe("StockDecisionCockpit", () => {
     expect(screen.queryByText("模拟操作计划")).not.toBeInTheDocument();
   });
 
+  it.each([
+    { simulation_eligible: false, gate: { quote_state: "ready", compliance_state: "ready", evidence_state: "ready", risk_state: "approve" } },
+    { simulation_eligible: true, gate: { quote_state: "blocked", compliance_state: "ready", evidence_state: "ready", risk_state: "approve" } },
+    { simulation_eligible: true, gate: { quote_state: "ready", compliance_state: "blocked", evidence_state: "ready", risk_state: "approve" } },
+    { simulation_eligible: true, gate: { quote_state: "ready", compliance_state: "ready", evidence_state: "blocked", risk_state: "approve" } },
+    { simulation_eligible: true, gate: { quote_state: "ready", compliance_state: "ready", evidence_state: "ready", risk_state: "reject" } },
+  ] as const)("hides numeric plan for inconsistent authority DTO %#", async ({ simulation_eligible, gate }) => {
+    const gated = advice({ simulation_gate: { ...gate, risk_decision_id: "missing-gate", compliance_snapshot_id: "compliance-1" } });
+    renderCockpit(() => Promise.resolve(snapshot({
+      assessment: { ...snapshot().assessment, simulation_eligible, authorized_simulation_advice_id: "advice-intraday", authorized_simulation_plan_id: "missing-plan" },
+      current_advice: [gated], authoritative_simulation_plan: plan(),
+    })));
+    expect(await screen.findByText("后端未返回权威模拟方案引用")).toBeInTheDocument();
+    expect(screen.queryByText("观察区间")).not.toBeInTheDocument();
+    expect(screen.queryByText("10.00 - 10.20")).not.toBeInTheDocument();
+  });
+
   it("shows only the advice named by the authoritative simulation reference", async () => {
     const intraday = advice({ advice_id: "intraday-unverified", conclusion: "伪造盘中方案", simulation_plan_id: "forged-plan" });
     const swing = advice({ advice_id: "swing-authorized", horizon: "swing", conclusion: "波段权威方案", simulation_plan_id: "swing-plan", simulation_gate: { quote_state: "ready", compliance_state: "ready", evidence_state: "ready", risk_state: "approve", risk_decision_id: "missing-gate", compliance_snapshot_id: "compliance-1" } });

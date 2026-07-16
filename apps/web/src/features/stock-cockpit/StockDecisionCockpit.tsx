@@ -121,10 +121,15 @@ export function StockDecisionCockpit({ load, asOf, refreshToken = 0, onRefreshRe
   const displayedAdvice = authorizedAdvice ?? advice;
   const plan = data.authoritative_simulation_plan;
   const authorizedPlan = authorizedAdvice && plan
+    && data.assessment.simulation_eligible
     && plan.plan_id === data.assessment.authorized_simulation_plan_id
     && plan.advice_id === authorizedAdvice.advice_id
     && plan.risk_decision_id === authorizedAdvice.risk_decision_id
     && plan.compliance_snapshot_id === authorizedAdvice.simulation_gate?.compliance_snapshot_id
+    && authorizedAdvice.simulation_gate?.quote_state === "ready"
+    && authorizedAdvice.simulation_gate?.compliance_state === "ready"
+    && authorizedAdvice.simulation_gate?.evidence_state === "ready"
+    && authorizedAdvice.simulation_gate?.risk_state === "approve"
     ? plan : null;
   return <main className="stock-cockpit">
     <header className="cockpit-identity"><div><p className="eyebrow">A 股单股决策驾驶舱 / {data.instrument.exchange.toUpperCase()}</p><h1>{data.instrument.name} <span>{data.symbol}</span></h1><div className="cockpit-quote"><strong>{displayNumber(metric(data, "latest_price"))}</strong><span className={positive ? "positive" : "negative"}>{Number.isFinite(change) ? positive ? <TrendingUp size={15} /> : <TrendingDown size={15} /> : null}{displayNumber(metric(data, "change_percent"), "%")}</span></div><CandidateMembership memberships={data.candidate_membership} /></div>

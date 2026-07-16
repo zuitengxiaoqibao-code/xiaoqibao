@@ -45,6 +45,20 @@ def test_export_parquet_contains_symbol_rows(tmp_path) -> None:
     assert count == 1
 
 
+def test_export_parquet_contains_only_latest_same_day_revision(tmp_path) -> None:
+    repository = BarRepository(tmp_path / "market.duckdb", tmp_path / "parquet")
+    repository.upsert([make_bar("9.50")])
+    repository.upsert([make_bar("9.80")])
+
+    path = repository.export_parquet("600000")
+
+    with duckdb.connect() as connection:
+        rows = connection.execute(
+            "SELECT trade_date, close FROM read_parquet(?)", [str(path)]
+        ).fetchall()
+    assert rows == [(date(2026, 7, 13), Decimal("9.8000"))]
+
+
 def test_trade_dates_are_distinct_and_descending(tmp_path) -> None:
     repository = BarRepository(tmp_path / "market.duckdb", tmp_path / "parquet")
     repository.upsert([make_bar()])

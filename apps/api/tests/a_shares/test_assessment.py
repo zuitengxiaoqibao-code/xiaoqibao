@@ -133,3 +133,14 @@ def test_production_risk_metrics_and_adverse_evidence_trigger_avoid() -> None:
     assert result.action == "avoid"
     assert result.confidence != Decimal("0.75")
     assert any("回撤" in risk or "波动" in risk or "缺失" in risk for risk in result.risks)
+
+
+def test_missing_market_remains_wait_even_when_many_sections_are_missing() -> None:
+    values = sections(no_market=True, no_bars=True)
+    values["risk"] = section("risk", metrics={"missing_section_count": 6})
+
+    result = DeterministicStockAssessor().assess("600519", values, (), CUTOFF)
+
+    assert result.action == "wait"
+    assert result.confidence == Decimal("0.40")
+    assert "行情" in result.conclusion

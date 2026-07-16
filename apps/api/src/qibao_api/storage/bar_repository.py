@@ -209,7 +209,12 @@ class BarRepository:
                 f"""
                 COPY (
                     SELECT * FROM daily_bars
-                    WHERE symbol = '{symbol}' ORDER BY trade_date
+                    WHERE symbol = '{symbol}'
+                    QUALIFY row_number() OVER (
+                        PARTITION BY symbol, trade_date
+                        ORDER BY ingested_at DESC, observation_id DESC
+                    ) = 1
+                    ORDER BY trade_date
                 ) TO '{escaped_path}' (FORMAT PARQUET, COMPRESSION ZSTD)
                 """
             )

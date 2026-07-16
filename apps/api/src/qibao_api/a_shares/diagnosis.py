@@ -434,11 +434,18 @@ class AShareDiagnosisService:
             unavailable = _unavailable("news-repository", f"事件数据不可用：{error}")
             return {"events": unavailable, "industry": unavailable}
         event_ids = tuple(event.event_id for event in events)
+        adverse_event_count = sum(
+            1 for event in events
+            if "risk" in event.event_type or "风险事件" in event.themes
+        )
         industries = sorted({industry for event in events for industry in event.industries})
         observed_at = max((event.normalized_at for event in events), default=None)
         events_section = DiagnosisSection(
             status="ready", observed_at=observed_at, source="frozen-news-events",
-            metrics={"event_count": len(events)}, evidence_ids=event_ids,
+            metrics={
+                "event_count": len(events),
+                "adverse_event_count": adverse_event_count,
+            }, evidence_ids=event_ids,
             explanation="只展示冻结事件中明确关联该股票的记录。",
         )
         industry_section = DiagnosisSection(

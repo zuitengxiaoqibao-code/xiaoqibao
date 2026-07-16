@@ -44,3 +44,35 @@ included in the full suite.
   and backup capacity monitoring; no destructive compaction was introduced.
 - AI instruction filtering is deliberately conservative and may reject benign
   prose containing a price or percentage, degrading to deterministic output.
+
+## Final Re-review Corrections
+
+### Files changed
+
+- `apps/api/src/qibao_api/a_shares/diagnosis.py`
+- `apps/api/src/qibao_api/a_shares/assessment.py`
+- `apps/api/src/qibao_api/storage/bar_repository.py`
+- `apps/web/src/features/stock-cockpit/StockDecisionCockpit.tsx`
+- `apps/api/tests/a_shares/test_diagnosis.py`
+- `apps/api/tests/a_shares/test_assessment.py`
+- `apps/api/tests/storage/test_bar_repository.py`
+- `apps/web/src/features/stock-cockpit/StockDecisionCockpit.test.tsx`
+
+### Tests added
+
+- Verified risk news now flows through production diagnosis and cockpit contracts
+  to an `avoid` assessment.
+- Missing market and trend data remain a low-confidence `wait` even when several
+  other sections are missing.
+- Numeric plans stay hidden for false eligibility and each individually blocked
+  or rejected authoritative gate.
+- Parquet export contains only the repository-latest same-day bar revision.
+
+### Commands and outputs
+
+- Focused Python: `34 passed in 4.50s`.
+- Web tests: `121 passed` across 16 files.
+- Touched Python Ruff: `All checks passed!`.
+- Web TypeScript/Vite production build: passed, 1606 modules transformed.
+- Mojibake scan of every touched source and test file: no matches.
+- `git diff --check`: passed.

@@ -87,10 +87,10 @@ class DeterministicStockAssessor:
             or volatility >= Decimal("0.08") or drawdown <= Decimal("-0.20")
         )
 
-        if (risk is not None and risk.status == "blocked") or material_risk:
+        if risk is not None and risk.status == "blocked":
             action: Literal["observe", "wait", "avoid"] = "avoid"
-            conclusion = "重大风险指标或反方证据成立，当前应回避。"
-            confidence = Decimal("0.85")
+            conclusion = "权威风险分区已阻断，当前应回避。"
+            confidence = Decimal("0.90")
         elif market is None or market.status != "ready":
             action = "wait"
             conclusion = "实时行情不可验证，等待行情恢复后再研判。"
@@ -99,6 +99,10 @@ class DeterministicStockAssessor:
             action = "wait"
             conclusion = "日线趋势样本不足，等待有效日线数据。"
             confidence = Decimal("0.40")
+        elif material_risk:
+            action = "avoid"
+            conclusion = "重大风险指标或反方证据成立，当前应回避。"
+            confidence = Decimal("0.85")
         else:
             action = "observe"
             conclusion = "行情与日线数据可用且无风险阻断，保持观察。"
