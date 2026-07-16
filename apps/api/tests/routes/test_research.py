@@ -1,6 +1,8 @@
 import asyncio
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+import hashlib
+import json
 import sqlite3
 
 import pytest
@@ -12,12 +14,14 @@ from qibao_api.contracts.market import AssetKind, DataQuality
 from qibao_api.contracts.research import Evidence, ResearchCard
 from qibao_api.a_shares.diagnosis import (
     AShareDiagnosis,
+    AShareDiagnosisService,
     DiagnosisSection,
     DiagnosisUnavailableError,
 )
 from qibao_api.a_shares.models import CandidateBoard
-from qibao_api.a_shares.instrument_directory import AShareInstrument
-from qibao_api.a_shares.repository import AShareResearchStoreError
+from qibao_api.a_shares.fundamentals import FundamentalSnapshot
+from qibao_api.a_shares.instrument_directory import AShareInstrument, AShareInstrumentDirectory
+from qibao_api.a_shares.repository import AShareResearchRepository, AShareResearchStoreError
 from qibao_api.dependencies import (
     get_a_share_cockpit_service,
     get_a_share_diagnosis_service,
@@ -28,7 +32,8 @@ from qibao_api.dependencies import (
     get_server_time,
 )
 from qibao_api.a_shares.cockpit import StockDecisionCockpitService, UnknownAShareError
-from qibao_api.a_shares.preparation import PreparationSource, StockPreparation
+from qibao_api.a_shares.preparation import AStockPreparationService, PreparationSource, StockPreparation
+from qibao_api.contracts.bars import DailyBar
 from qibao_api.contracts.decision import (
     AdviceCard,
     DecisionCycleAggregate,
@@ -37,7 +42,12 @@ from qibao_api.contracts.decision import (
 )
 from qibao_api.shangshu.decision_repository import DecisionIntegrityError
 from qibao_api.main import app, serialize_runtime_access
-from qibao_api.gongbu.tencent_quotes import parse_tencent_quote
+from qibao_api.gongbu.data_service import MarketDataService
+from qibao_api.gongbu.news_repository import NewsRepository
+from qibao_api.storage.bar_repository import BarRepository
+from qibao_api.shangshu.decision_repository import DecisionRepository
+from qibao_api.contracts.news import EvidenceCitation, NewsArticle, NormalizedNewsEvent
+from qibao_api.gongbu.tencent_quotes import TencentMarketSnapshot, parse_tencent_quote
 from qibao_api.routes.research import router as research_router
 from qibao_api.libu_compliance.repository import SourceAuthorizationError
 
@@ -627,19 +637,115 @@ class AcceptanceCockpitDecisions:
         ]
 
 
-def test_prepare_then_cockpit_covers_observe_wait_and_avoid_without_legacy_products() -> None:
-    preparation = PreparationService()
+class IntegrationHistorySource:
+    def fetch_daily(self, symbol, limit):
+        count = 20 if symbol == "600519" else 80
+        start = date(2026, 7, 14) - timedelta(days=count - 1)
+        return [DailyBar(
+            symbol=symbol, trade_date=start + timedelta(days=index),
+            open=Decimal("10"), high=Decimal("10.2"), low=Decimal("9.8"),
+            close=Decimal("10.1"), volume=1_000_000 + index,
+            amount=Decimal("10100000"), source="fixture-history",
+        ) for index in range(count)]
+
+
+class IntegrationMarketSource:
+    async def fetch_snapshot(self, symbol):
+        return TencentMarketSnapshot(
+            symbol=symbol, name="测试股票", observed_at=COCKPIT_CUTOFF,
+            price=Decimal("10.1"), previous_close=Decimal("10"),
+            turnover_rate=Decimal("1"), pe_ttm=Decimal("10"),
+            market_cap_yi=Decimal("100"), pb=Decimal("1"),
+            source="fixture-quote",
+        )
+
+
+class IntegrationFinanceSource:
+    def fetch(self, symbol):
+        return FundamentalSnapshot(
+            symbol=symbol, observed_at=COCKPIT_CUTOFF,
+            report_period=COCKPIT_DATE, industry="银行", eps=Decimal("1"),
+            source="fixture-finance",
+        )
+
+
+class IntegrationNewsCollector:
+    def __init__(self, repository):
+        self.repository = repository
+
+    async def sync(self):
+        raw = b"verified adverse event"
+        content_hash = hashlib.sha256(raw).hexdigest()
+        article = NewsArticle(
+            article_id="article-adverse-000001",
+            canonical_url="https://news.example/adverse-000001",
+            publisher="测试来源", title="已核验风险事件",
+            published_at=COCKPIT_CUTOFF, fetched_at=COCKPIT_CUTOFF,
+            content_hash=content_hash, raw_snapshot=raw, source_verified=True,
+        )
+        self.repository.append_articles((article,))
+        self.repository.append_event(NormalizedNewsEvent(
+            event_id="verified-adverse-000001", event_type="credit_risk",
+            headline="已核验风险事件", occurred_at=COCKPIT_CUTOFF,
+            normalized_at=COCKPIT_CUTOFF,
+            affected_instruments=((AssetKind.A_SHARE, "000001"),),
+            industries=("银行",), themes=("风险事件",), citations=(EvidenceCitation(
+                citation_id="citation-adverse-000001", article_id=article.article_id,
+                canonical_url=article.canonical_url, publisher=article.publisher,
+                published_at=article.published_at, quoted_text=article.title,
+                content_hash=article.content_hash,
+            ),),
+            association_confidence=Decimal("1"), review_state="verified",
+        ))
+
+
+class IntegrationCalendar:
+    def is_trading_day(self, value):
+        return True
+
+    def previous_trading_day(self, value):
+        return value - timedelta(days=1)
+
+
+def test_prepare_then_cockpit_covers_observe_wait_and_avoid_without_legacy_products(tmp_path) -> None:
+    bars = BarRepository(tmp_path / "market.duckdb", tmp_path / "parquet")
+    news = NewsRepository(tmp_path / "news.sqlite3")
+    research = AShareResearchRepository(tmp_path / "research.sqlite3")
+    directory = AShareInstrumentDirectory(tmp_path / "instruments.sqlite3")
+    for symbol, name in (("600000", "浦发银行"), ("600519", "贵州茅台"), ("000001", "平安银行")):
+        directory.observe(AShareInstrument(
+            symbol=symbol, name=name, exchange="sz" if symbol.startswith("0") else "sh",
+            observed_at=COCKPIT_CUTOFF, quote_quality="ready",
+        ))
+    diagnosis = AShareDiagnosisService(
+        bars, IntegrationMarketSource(), IntegrationFinanceSource(), news,
+        research_repository=research, clock=lambda: COCKPIT_CUTOFF,
+    )
+    preparation = AStockPreparationService(
+        bars, MarketDataService(IntegrationHistorySource(), bars), diagnosis,
+        IntegrationNewsCollector(news), news, IntegrationCalendar(),
+        lock_dir=tmp_path / "locks", clock=lambda: COCKPIT_CUTOFF,
+    )
     service = StockDecisionCockpitService(
-        AcceptanceCockpitDirectory(), AcceptanceCockpitDiagnosis(),
-        AcceptanceCockpitDecisions(), preparation,
+        directory, diagnosis, DecisionRepository(tmp_path / "decisions.sqlite3"), preparation,
         clock=lambda: COCKPIT_CUTOFF,
     )
-    client = cockpit_client(service, preparation)
+    application = FastAPI()
+    application.include_router(research_router)
+    application.dependency_overrides[get_a_share_cockpit_service] = lambda: service
+    application.dependency_overrides[get_a_share_preparation_service] = lambda: preparation
+    application.dependency_overrides[get_a_share_instrument_directory] = lambda: directory
+    application.dependency_overrides[get_server_time] = lambda: COCKPIT_CUTOFF
+    client = TestClient(application)
 
     payloads = {}
     for symbol in ("600000", "600519", "000001"):
         prepared = client.post(f"/api/v1/a-shares/{symbol}/prepare")
         assert prepared.status_code == 200
+        assert prepared.json()["refreshed"] is True, prepared.json()
+        assert {item["name"]: item["status"] for item in prepared.json()["sources"]}["history"] == (
+            "partial" if symbol == "600519" else "ready"
+        )
         response = client.get(f"/api/v1/a-shares/{symbol}/cockpit")
         assert response.status_code == 200
         payloads[symbol] = response.json()
@@ -650,8 +756,10 @@ def test_prepare_then_cockpit_covers_observe_wait_and_avoid_without_legacy_produ
     assert payloads["600000"]["assessment"]["action"] == "observe"
     assert payloads["600519"]["assessment"]["action"] == "wait"
     assert payloads["000001"]["assessment"]["action"] == "avoid"
-    assert payloads["600000"]["current_advice"][0]["action"] == "observe"
-    serialized = str(payloads).casefold()
+    assert all(payload["current_advice"] == [] for payload in payloads.values())
+    assert len(bars.latest_many(["600000"], 120, COCKPIT_DATE)["600000"]) == 80
+    assert news.events_for_symbol("000001")
+    serialized = json.dumps(payloads, ensure_ascii=False).casefold()
     assert all(term not in serialized for term in (
         "paper_account", "paper_order", "simulation_plan", "api_key",
     ))
@@ -659,7 +767,12 @@ def test_prepare_then_cockpit_covers_observe_wait_and_avoid_without_legacy_produ
         payload = payloads[symbol]
         assert payload["current_advice"] == []
 
-    openapi_paths = " ".join(app.openapi()["paths"]).casefold()
+    openapi = app.openapi()
+    openapi_paths = " ".join(openapi["paths"]).casefold()
+    openapi_schemas = json.dumps(openapi["components"]["schemas"], ensure_ascii=False).casefold()
     assert all(term not in openapi_paths for term in (
         "paper", "order", "simulation", "api-key", "api_key",
+    ))
+    assert all(term not in openapi_schemas for term in (
+        "paper_account", "paper_order", "simulation_plan", "api_secret", "secret_key",
     ))

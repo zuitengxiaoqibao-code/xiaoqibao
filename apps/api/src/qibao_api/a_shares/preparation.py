@@ -52,6 +52,9 @@ class _FileLock:
                 created.write(b"0")
         except FileExistsError:
             pass
+        except PermissionError:
+            if not self.path.exists():
+                raise
         self.handle = self.path.open("r+b")
         self.handle.seek(0)
         deadline = monotonic_time.monotonic() + self.timeout_seconds
