@@ -49,6 +49,17 @@ export type StockAssessment = {
   generated_at: string;
 };
 
+export type AssessmentAIStatus = "ready" | "unconfigured" | "timeout" | "http_error" | "invalid";
+
+export type AssessmentAIExplanation = {
+  plain_language: string;
+  news_impact: string;
+  hotspot_attribution: string;
+  uncertainty: string;
+  contrary_view: string;
+  evidence_ids: string[];
+};
+
 export type StockCockpitSnapshot = {
   symbol: string;
   as_of: string;
@@ -57,6 +68,8 @@ export type StockCockpitSnapshot = {
   instrument: AShareInstrument;
   candidate_membership: Array<"short_term" | "swing">;
   assessment: StockAssessment;
+  ai_status: AssessmentAIStatus;
+  ai_explanation: AssessmentAIExplanation | null;
   current_advice: Advice[];
   sections: Record<string, CockpitSection>;
   phases: Record<DecisionPhase, StockPhaseHistory>;

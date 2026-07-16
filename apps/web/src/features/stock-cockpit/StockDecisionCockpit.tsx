@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useSelectedInstrument } from "../instrument-selection/SelectedInstrumentProvider";
 import type { Advice } from "../decision-workbench/types";
-import type { StockAssessment, StockCockpitSnapshot } from "./types";
+import type { AssessmentAIExplanation, AssessmentAIStatus, StockAssessment, StockCockpitSnapshot } from "./types";
 import { CockpitSections } from "./CockpitSections";
 import { PhaseTimeline } from "./PhaseTimeline";
 
@@ -38,7 +38,13 @@ function AuthoritativePlan({ advice, planId }: { advice: Advice; planId: string 
   return <section className="authoritative-plan"><header><Target size={15} /><h3>模拟操作计划</h3></header><p>后端已返回同一账本聚合内验证通过的权威方案引用，不展示未返回的价格或仓位。</p><dl><div><dt>方案引用</dt><dd>{planId}</dd></div><div><dt>风控决策</dt><dd>{advice.risk_decision_id}</dd></div><div><dt>合规快照</dt><dd>{advice.simulation_gate?.compliance_snapshot_id}</dd></div></dl></section>;
 }
 
-function AssessmentConclusion({ assessment, isCandidate }: { assessment: StockAssessment; isCandidate: boolean }) {
+function AssessmentAI({ status, explanation }: { status: AssessmentAIStatus; explanation: AssessmentAIExplanation | null }) {
+  if (status === "unconfigured") return <section className="assessment-ai"><h3>AI 未配置</h3><p>确定性研判仍然有效。</p></section>;
+  if (status !== "ready" || !explanation) return <section className="assessment-ai"><h3>AI 解释暂不可用</h3><p>确定性研判未受影响。</p></section>;
+  return <section className="assessment-ai"><h3>AI 补充解释</h3><p>{explanation.plain_language}</p><dl><div><dt>新闻影响</dt><dd>{explanation.news_impact}</dd></div><div><dt>热点归因</dt><dd>{explanation.hotspot_attribution}</dd></div><div><dt>不确定性</dt><dd>{explanation.uncertainty}</dd></div><div><dt>反方观点</dt><dd>{explanation.contrary_view}</dd></div></dl><small>仅解释冻结证据，不改变确定性动作、置信度或方案资格。</small></section>;
+}
+
+function AssessmentConclusion({ assessment, isCandidate, aiStatus, aiExplanation }: { assessment: StockAssessment; isCandidate: boolean; aiStatus: AssessmentAIStatus; aiExplanation: AssessmentAIExplanation | null }) {
   const actionName = { observe: "保持观察", wait: "等待补足", avoid: "风险回避" }[assessment.action];
   const hasAuthorizedPlan = Boolean(
     assessment.authorized_simulation_advice_id
@@ -46,6 +52,7 @@ function AssessmentConclusion({ assessment, isCandidate }: { assessment: StockAs
   );
   return <section className="cockpit-conclusion assessment-conclusion"><header><div><p className="eyebrow">即时研判 / 确定性规则</p><h2>当前判断</h2></div><div className="advice-confidence"><span>研判置信度</span><strong>{Math.round(Number(assessment.confidence) * 100)}%</strong></div></header>
     <div className="advice-verdict"><div><span>{actionName}</span><h3>{assessment.conclusion}</h3><p>基于当前截止时间内可验证的数据形成，不包含 AI 补充解释。</p></div><div className={hasAuthorizedPlan ? "observe-seal gate-ready" : "observe-seal"}>{hasAuthorizedPlan ? <CheckCircle2 size={18} /> : <ShieldAlert size={18} />}<b>{hasAuthorizedPlan ? "具备方案资格" : "仅观察"}</b><small>{isCandidate ? "候选资格以服务端权威引用为准" : "非当前候选，不生成模拟买卖方案"}</small></div></div>
+    <AssessmentAI status={aiStatus} explanation={aiExplanation} />
     <div className="advice-evidence-grid">
       <section><h3><CheckCircle2 size={15} />支持证据</h3>{assessment.supporting_evidence.length ? assessment.supporting_evidence.map((item) => <p key={item.evidence_id}>{item.summary}<small>{item.source} · {new Date(item.observed_at).toLocaleString("zh-CN", { hour12: false })}</small></p>) : <p>暂无已验证支持证据</p>}</section>
       <section className="contrary"><h3><AlertTriangle size={15} />反方证据</h3>{assessment.contrary_evidence.length ? assessment.contrary_evidence.map((item) => <p key={item.evidence_id}>{item.summary}<small>{item.source} · {new Date(item.observed_at).toLocaleString("zh-CN", { hour12: false })}</small></p>) : <p>暂无已验证反方证据</p>}</section>
@@ -120,7 +127,7 @@ export function StockDecisionCockpit({ load, asOf, refreshToken = 0, onRefreshRe
       <div className="cockpit-quality"><div><Clock3 size={15} /><span>行情时间</span><b>{data.sections.market?.observed_at ? new Date(data.sections.market.observed_at).toLocaleString("zh-CN", { hour12: false }) : "未提供"}</b></div><div><span>快照质量</span><b>{qualityNames[data.overall_quality]}</b><small>{data.sections.market ? sectionQualityNames[data.sections.market.status] : "行情不可用"}</small></div><button type="button" aria-label="刷新驾驶舱" onClick={() => onRefreshRequest ? onRefreshRequest() : void refresh()} disabled={loading}><RefreshCw size={15} className={loading ? "spin" : ""} /></button></div>
     </header>
     {error && <div className="cockpit-error" role="alert"><AlertTriangle size={16} /><span>{error}</span>{stale && <b>当前内容已陈旧</b>}</div>}
-    <AssessmentConclusion assessment={data.assessment} isCandidate={data.candidate_membership.length > 0} />
+    <AssessmentConclusion assessment={data.assessment} isCandidate={data.candidate_membership.length > 0} aiStatus={data.ai_status} aiExplanation={data.ai_explanation} />
     <CandidateAdvice advice={displayedAdvice} authorizedPlanId={authorizedPlanId} />
     <CockpitSections sections={data.sections} />
     <PhaseTimeline phases={data.phases} symbol={data.symbol} />

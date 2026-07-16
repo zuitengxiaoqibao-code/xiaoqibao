@@ -34,6 +34,8 @@ const snapshot = (overrides: Partial<StockCockpitSnapshot> = {}): StockCockpitSn
     simulation_eligible: false, authorized_simulation_advice_id: null,
     authorized_simulation_plan_id: null, generated_at: "2026-07-15T10:30:00+08:00",
   },
+  ai_status: "unconfigured",
+  ai_explanation: null,
   sections: {
     market: section(), price_volume: section(), trend: section(), valuation: section(), fundamentals: section(),
     funds: section("unavailable", "fund_data_not_connected"), news: section(), industry: section(), risk: section(),
@@ -52,6 +54,38 @@ function renderCockpit(load: (symbol: string, asOf?: string, signal?: AbortSigna
 }
 
 describe("StockDecisionCockpit", () => {
+  it("shows that assessment AI is unconfigured without weakening the conclusion", async () => {
+    renderCockpit();
+    expect(await screen.findByText("AI 未配置")).toBeInTheDocument();
+    expect(screen.getByText("行情与日线数据可用且无风险阻断，保持观察。")).toBeInTheDocument();
+  });
+
+  it("shows a ready assessment AI explanation and its bounded evidence", async () => {
+    renderCockpit(() => Promise.resolve(snapshot({
+      ai_status: "ready",
+      ai_explanation: {
+        plain_language: "确定性结论的通俗解释。",
+        news_impact: "暂无已核验增量新闻影响。",
+        hotspot_attribution: "暂无已核验热点归因。",
+        uncertainty: "截止时间后条件可能变化。",
+        contrary_view: "仍需关注反方证据。",
+        evidence_ids: ["assessment-e1"],
+      },
+    })));
+    expect(await screen.findByText("AI 补充解释")).toBeInTheDocument();
+    expect(screen.getByText("确定性结论的通俗解释。")).toBeInTheDocument();
+    expect(screen.getByText("截止时间后条件可能变化。")).toBeInTheDocument();
+  });
+
+  it.each(["timeout", "http_error", "invalid"] as const)(
+    "keeps deterministic assessment visible when AI status is %s",
+    async (ai_status) => {
+      renderCockpit(() => Promise.resolve(snapshot({ ai_status, ai_explanation: null })));
+      expect(await screen.findByText("AI 解释暂不可用")).toBeInTheDocument();
+      expect(screen.getByText("行情与日线数据可用且无风险阻断，保持观察。")).toBeInTheDocument();
+    },
+  );
+
   it("shows an immediate assessment for a non-candidate stock", async () => {
     const nonCandidateCockpit = snapshot({
       candidate_membership: [], current_advice: [],

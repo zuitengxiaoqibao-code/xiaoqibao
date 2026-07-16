@@ -72,11 +72,45 @@ def gateway(handler=None, **updates):
 
 @pytest.mark.asyncio
 async def test_unconfigured_ai_preserves_deterministic_assessment() -> None:
-    result = await gateway(api_key=None).explain(assessment(), (evidence(),))
+    created = 0
+
+    def client_factory():
+        nonlocal created
+        created += 1
+        return httpx.AsyncClient()
+
+    result = await gateway(api_key=None, client_factory=client_factory).explain(
+        assessment(), (evidence(),)
+    )
 
     assert result.status == "unconfigured"
     assert result.explanation is None
     assert result.assessment == assessment()
+    assert created == 0
+
+
+@pytest.mark.asyncio
+async def test_lazily_created_client_is_closed_by_gateway() -> None:
+    created: list[httpx.AsyncClient] = []
+
+    def client_factory() -> httpx.AsyncClient:
+        client = httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(200, json=response_payload())
+            )
+        )
+        created.append(client)
+        return client
+
+    ai = gateway(client_factory=client_factory)
+    assert created == []
+
+    result = await ai.explain(assessment(), (evidence(),))
+    assert result.status == "ready"
+    assert created[0].is_closed is False
+
+    await ai.aclose()
+    assert created[0].is_closed is True
 
 
 @pytest.mark.asyncio
@@ -92,9 +126,12 @@ async def test_sends_strict_json_request_and_accepts_frozen_evidence() -> None:
         assert prompt["allowed_evidence_ids"] == ["evidence-1"]
         assert prompt["evidence"][0]["summary"] == "frozen evidence"
         assert SECRET not in request.content.decode()
+        assert request.extensions["timeout"] == {
+            "connect": 2.5, "read": 2.5, "write": 2.5, "pool": 2.5
+        }
         return httpx.Response(200, json=response_payload())
 
-    ai = gateway(handler)
+    ai = gateway(handler, timeout=2.5)
     result = await ai.explain(assessment(), (evidence(),))
     await ai.aclose()
 

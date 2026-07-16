@@ -47,3 +47,30 @@ Result: all checks passed.
 ## Concerns
 
 None within Task 4 scope. UI rendering and browser acceptance remain outside this task.
+
+## Review Fixes
+
+- Applied the gateway timeout explicitly to every HTTPX request, including when the caller injects
+  a shared client. MockTransport verifies all four timeout extensions use the gateway value.
+- Made owned HTTPX client creation lazy. An unconfigured gateway creates no client; a configured
+  gateway closes only the client it created, while an injected lifespan client remains externally
+  owned.
+- Added frontend-only `AssessmentAIStatus` and `AssessmentAIExplanation` DTOs, separate from the
+  decision workflow's AI status semantics.
+- Added an assessment AI block directly inside the immediate-assessment section. It renders ready
+  explanations, an explicit unconfigured state, and a common degraded state while keeping the
+  deterministic conclusion visible.
+
+Review RED evidence: backend tests failed because `client_factory` was unsupported and an injected
+client retained its 5-second default instead of the configured 2.5 seconds. Five new frontend
+assertions failed because no assessment AI status or explanation was rendered.
+
+Review verification:
+
+```powershell
+apps/api/.venv/Scripts/python.exe -m pytest apps/api/tests/a_shares/test_assessment_ai.py apps/api/tests/a_shares/test_cockpit.py apps/api/tests/routes/test_research.py -q
+pnpm --filter @qibao/web test -- StockDecisionCockpit.test.tsx
+pnpm --filter @qibao/web build
+```
+
+Result: 54 backend tests passed; 16 frontend files and 116 tests passed; production build passed.

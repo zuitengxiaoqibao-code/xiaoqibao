@@ -1,4 +1,5 @@
 import json
+from collections.abc import Callable
 from typing import Literal
 
 import httpx
@@ -38,13 +39,18 @@ class OpenAICompatibleAssessmentGateway:
         api_key: str | None,
         model: str | None,
         client: httpx.AsyncClient | None = None,
+        client_factory: Callable[[], httpx.AsyncClient] | None = None,
         timeout: float = 10,
     ) -> None:
         self.base_url = base_url.rstrip("/") if base_url else None
         self.model = model
         self._api_key = api_key
+        self.timeout = timeout
+        self._client = client
+        self._client_factory = client_factory or (
+            lambda: httpx.AsyncClient(timeout=self.timeout)
+        )
         self._owns_client = client is None
-        self._client = client or httpx.AsyncClient(timeout=timeout)
 
     def __repr__(self) -> str:
         return (
@@ -53,8 +59,13 @@ class OpenAICompatibleAssessmentGateway:
         )
 
     async def aclose(self) -> None:
-        if self._owns_client:
+        if self._owns_client and self._client is not None:
             await self._client.aclose()
+
+    def _client_or_create(self) -> httpx.AsyncClient:
+        if self._client is None:
+            self._client = self._client_factory()
+        return self._client
 
     async def explain(
         self,
@@ -65,10 +76,11 @@ class OpenAICompatibleAssessmentGateway:
             return self._result("unconfigured", assessment)
         allowed = {item.evidence_id for item in evidence}
         try:
-            response = await self._client.post(
+            response = await self._client_or_create().post(
                 f"{self.base_url}/chat/completions",
                 headers={"Authorization": f"Bearer {self._api_key}"},
                 json=self._request(assessment, evidence),
+                timeout=self.timeout,
             )
             response.raise_for_status()
         except httpx.TimeoutException:
