@@ -21,11 +21,13 @@ from qibao_api.dependencies import (
     get_a_share_cockpit_service,
     get_a_share_diagnosis_service,
     get_a_share_instrument_directory,
+    get_a_share_preparation_service,
     get_a_share_quote_source,
     get_pipeline,
     get_server_time,
 )
 from qibao_api.a_shares.cockpit import StockDecisionCockpitService, UnknownAShareError
+from qibao_api.a_shares.preparation import PreparationSource, StockPreparation
 from qibao_api.contracts.decision import (
     AdviceCard,
     DecisionCycleAggregate,
@@ -226,6 +228,55 @@ def test_future_research_cutoff_is_rejected() -> None:
 
     assert response.status_code == 422
     assert response.json()["detail"]["code"] == "future_as_of_not_allowed"
+
+
+class PreparationDirectory:
+    def resolve_at(self, symbol, cutoff):
+        return object() if symbol == "600519" else None
+
+
+class PreparationService:
+    def __init__(self) -> None:
+        self.calls = []
+
+    async def prepare(self, symbol, *, as_of, cutoff=None):
+        self.calls.append((symbol, as_of, cutoff))
+        return StockPreparation(
+            symbol=symbol, status="ready", refreshed=False,
+            started_at=SEARCH_NOW, completed_at=SEARCH_NOW,
+            sources=tuple(
+                PreparationSource(name=name, status="ready")
+                for name in ("quote", "history", "finance", "news")
+            ),
+        )
+
+
+def preparation_client(service):
+    application = FastAPI()
+    application.include_router(research_router)
+    application.dependency_overrides[get_a_share_preparation_service] = lambda: service
+    application.dependency_overrides[get_a_share_instrument_directory] = lambda: PreparationDirectory()
+    application.dependency_overrides[get_server_time] = lambda: SEARCH_NOW
+    return TestClient(application)
+
+
+def test_prepare_returns_typed_result_for_verified_symbol() -> None:
+    service = PreparationService()
+    response = preparation_client(service).post(
+        "/api/v1/a-shares/600519/prepare?as_of=2026-07-15"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ready"
+    assert service.calls == [("600519", date(2026, 7, 15), None)]
+
+
+def test_prepare_returns_404_without_calling_sources_for_unknown_symbol() -> None:
+    service = PreparationService()
+    response = preparation_client(service).post("/api/v1/a-shares/600999/prepare")
+
+    assert response.status_code == 404
+    assert service.calls == []
 
 
 SEARCH_NOW = datetime(2026, 7, 15, 2, 0, tzinfo=timezone.utc)

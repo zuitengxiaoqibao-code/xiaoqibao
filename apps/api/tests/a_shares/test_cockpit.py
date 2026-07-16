@@ -241,10 +241,10 @@ async def test_live_cockpit_rejects_observation_after_completion() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cockpit_never_guesses_funds_or_backtest() -> None:
+async def test_cockpit_omits_removed_funds_and_backtest_sections() -> None:
     result = await service().get("600000", TRADE_DATE, CUTOFF)
-    assert result.sections["funds"].reason == "fund_data_not_connected"
-    assert result.sections["backtest"].reason == "backtest_not_run"
+    assert "funds" not in result.sections
+    assert "backtest" not in result.sections
 
 
 @pytest.mark.asyncio

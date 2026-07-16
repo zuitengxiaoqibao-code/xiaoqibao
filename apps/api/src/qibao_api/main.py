@@ -13,6 +13,7 @@ from qibao_api.a_shares.assessment_ai import OpenAICompatibleAssessmentGateway
 from qibao_api.a_shares.fundamentals import TdxFinanceSource
 from qibao_api.a_shares.instrument_directory import AShareInstrument, AShareInstrumentDirectory
 from qibao_api.a_shares.repository import AShareResearchRepository
+from qibao_api.a_shares.preparation import AStockPreparationService
 from qibao_api.gongbu.baidu_history import BaiduHistorySource
 from qibao_api.gongbu.data_service import FallbackHistorySource, MarketDataService
 from qibao_api.gongbu.tdx_client import create_tdx_client
@@ -233,6 +234,13 @@ async def lifespan(application: FastAPI):
                     prompt_version="news-v1",
                 ),
             )
+            application.state.a_share_preparation_service = AStockPreparationService(
+                bar_repository,
+                application.state.market_data_service,
+                application.state.a_share_diagnosis_service,
+                application.state.news_service,
+                news_repository,
+            )
             application.state.briefing_workflow = DailyBriefingWorkflow(
                 news_repository,
                 briefing_repository,
@@ -331,6 +339,7 @@ async def lifespan(application: FastAPI):
                     a_share_instrument_directory,
                     application.state.a_share_diagnosis_service,
                     decision_repository,
+                    preparation_service=application.state.a_share_preparation_service,
                     assessor_ai=OpenAICompatibleAssessmentGateway(
                         base_url=getattr(settings, "ai_base_url", None),
                         api_key=(

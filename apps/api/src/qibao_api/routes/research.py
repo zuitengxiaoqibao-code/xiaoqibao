@@ -11,6 +11,7 @@ from qibao_api.a_shares.diagnosis import AShareDiagnosis, DiagnosisUnavailableEr
 from qibao_api.a_shares.cockpit import StockCockpitSnapshot, UnknownAShareError
 from qibao_api.a_shares.instrument_directory import AShareInstrument, AShareInstrumentDirectory
 from qibao_api.a_shares.models import CandidateBoard
+from qibao_api.a_shares.preparation import StockPreparation
 from qibao_api.a_shares.repository import AShareResearchStoreError
 from qibao_api.contracts.instruments import AShareCode, validate_a_share_code
 from qibao_api.contracts.market import DataQuality
@@ -19,6 +20,7 @@ from qibao_api.dependencies import (
     get_a_share_diagnosis_service,
     get_a_share_cockpit_service,
     get_a_share_instrument_directory,
+    get_a_share_preparation_service,
     get_a_share_quote_source,
     get_pipeline,
     get_server_time,
@@ -185,6 +187,26 @@ async def diagnosis(
         ) from error
     except AShareResearchStoreError as error:
         raise _store_error() from error
+
+
+@router.post("/{symbol}/prepare", response_model=StockPreparation)
+async def prepare(
+    symbol: Annotated[AShareCode, Path()],
+    service: Annotated[object, Depends(get_a_share_preparation_service)],
+    directory: Annotated[AShareInstrumentDirectory, Depends(get_a_share_instrument_directory)],
+    server_time: Annotated[datetime, Depends(get_server_time)],
+    as_of: date | None = None,
+) -> StockPreparation:
+    research_date = _research_date_at(as_of, server_time)
+    if directory.resolve_at(symbol, server_time) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "a_share_not_found", "message": "未找到该 A 股"},
+        )
+    live = research_date == server_time.astimezone(ZoneInfo("Asia/Shanghai")).date()
+    return await service.prepare(
+        symbol, as_of=research_date, cutoff=None if live else server_time
+    )
 
 
 @router.get("/{symbol}/cockpit", response_model=StockCockpitSnapshot)

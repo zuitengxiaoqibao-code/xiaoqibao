@@ -9,6 +9,7 @@ from qibao_api.a_shares.assessment import DeterministicStockAssessor, StockAsses
 from qibao_api.a_shares.assessment_ai import AIStatus, AssessmentAIExplanation
 from qibao_api.a_shares.diagnosis import DiagnosisUnavailableError
 from qibao_api.a_shares.instrument_directory import AShareInstrument
+from qibao_api.a_shares.preparation import PreparationSource, StockPreparation
 from qibao_api.contracts.decision import AdviceCard, DecisionPhase, EvidenceReference
 from qibao_api.contracts.instruments import AShareCode
 from qibao_api.contracts.market import AssetKind
@@ -17,7 +18,7 @@ from qibao_api.libu_compliance.repository import SourceAuthorizationError
 
 SECTION_NAMES = (
     "market", "price_volume", "trend", "valuation", "fundamentals",
-    "funds", "news", "industry", "risk", "backtest",
+    "news", "industry", "risk",
 )
 PHASES: tuple[DecisionPhase, ...] = ("premarket", "intraday", "postclose")
 
@@ -61,6 +62,7 @@ class StockCockpitSnapshot(BaseModel):
     cutoff: AwareDatetime
     overall_quality: Literal["ready", "partial", "blocked"]
     instrument: AShareInstrument
+    preparation: StockPreparation
     candidate_membership: tuple[Literal["short_term", "swing"], ...]
     assessment: StockAssessment
     ai_status: AIStatus
@@ -103,6 +105,7 @@ class StockDecisionCockpitService:
         assessor=None,
         assessor_ai=None,
         clock: Callable[[], datetime] | None = None,
+        preparation_service=None,
     ) -> None:
         self.instrument_directory = instrument_directory
         self.diagnosis_service = diagnosis_service
@@ -110,6 +113,7 @@ class StockDecisionCockpitService:
         self.assessor = assessor or DeterministicStockAssessor()
         self.assessor_ai = assessor_ai
         self.clock = clock or (lambda: datetime.now(timezone.utc))
+        self.preparation_service = preparation_service
 
     async def get(
         self, symbol: AShareCode, as_of: date, cutoff: datetime
@@ -119,13 +123,14 @@ class StockDecisionCockpitService:
             raise UnknownAShareError(symbol)
 
         live_request = as_of == cutoff.astimezone(ZoneInfo("Asia/Shanghai")).date()
+        preparation = await self._prepare(
+            symbol, as_of, None if live_request else cutoff
+        )
         sections = await self._diagnosis_sections(
             symbol, as_of, None if live_request else cutoff
         )
         effective_cutoff = self.clock() if live_request else cutoff
         sections = self._enforce_cutoff(sections, effective_cutoff)
-        sections["funds"] = _unavailable("not-connected", "fund_data_not_connected")
-        sections["backtest"] = _unavailable("not-run", "backtest_not_run")
         phases = self._phases(symbol, as_of, effective_cutoff)
         current = self._current_advice(phases)
         membership = self._candidate_membership(current)
@@ -146,9 +151,28 @@ class StockDecisionCockpitService:
         )
         return StockCockpitSnapshot(
             symbol=symbol, as_of=as_of, cutoff=effective_cutoff, overall_quality=overall,
-            instrument=instrument, candidate_membership=membership,
+            instrument=instrument, preparation=preparation, candidate_membership=membership,
             assessment=assessment, ai_status=ai_status, ai_explanation=ai_explanation,
             current_advice=current, sections=sections, phases=phases,
+        )
+
+    async def _prepare(self, symbol, as_of, cutoff):
+        if self.preparation_service is not None:
+            return await self.preparation_service.prepare(
+                symbol, as_of=as_of, cutoff=cutoff
+            )
+        now = self.clock()
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        return StockPreparation(
+            symbol=symbol, status="partial", refreshed=False,
+            sources=tuple(
+                PreparationSource(
+                    name=name, status="partial", reason="preparation_not_configured"
+                )
+                for name in ("quote", "history", "finance", "news")
+            ),
+            started_at=now, completed_at=now,
         )
 
     @staticmethod
@@ -176,18 +200,16 @@ class StockDecisionCockpitService:
         except SourceAuthorizationError as exc:
             return {
                 name: _unavailable("diagnosis", "source_authorization_required", str(exc))
-                for name in SECTION_NAMES if name not in {"funds", "backtest"}
+                for name in SECTION_NAMES
             }
         except DiagnosisUnavailableError as exc:
             return {
                 name: _unavailable("diagnosis", "diagnosis_unavailable", str(exc))
-                for name in SECTION_NAMES if name not in {"funds", "backtest"}
+                for name in SECTION_NAMES
             }
 
         mapped = {}
         for target in SECTION_NAMES:
-            if target in {"funds", "backtest"}:
-                continue
             source_name = "events" if target == "news" else target
             item = diagnosis.sections[source_name]
             observed_at = _aware(item.observed_at)
