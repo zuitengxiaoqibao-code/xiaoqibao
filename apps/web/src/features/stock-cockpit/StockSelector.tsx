@@ -57,6 +57,7 @@ export function StockSelector({ loadCandidates, search, pollIntervalMs = 30_000 
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<AShareInstrument[]>([]);
   const [searchState, setSearchState] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [searchSourceStatus, setSearchSourceStatus] = useState<"ready" | "unavailable">("ready");
   const [searchError, setSearchError] = useState("");
   const [candidateError, setCandidateError] = useState("");
   const [watchlist, setWatchlist] = useState(readWatchlist);
@@ -109,13 +110,13 @@ export function StockSelector({ loadCandidates, search, pollIntervalMs = 30_000 
 
   const executeSearch = useCallback((value: string, request = ++searchRequest.current) => {
     setSearchState("loading"); setSearchError("");
-    void search(value).then((response) => { if (request === searchRequest.current) { setResults(response.items); setSearchState("ready"); } }).catch((reason) => { if (request === searchRequest.current) { setSearchError(reason instanceof Error ? reason.message : "搜索失败"); setSearchState("error"); } });
+    void search(value).then((response) => { if (request === searchRequest.current) { setResults(response.items); setSearchSourceStatus(response.source_status); setSearchState("ready"); } }).catch((reason) => { if (request === searchRequest.current) { setSearchError(reason instanceof Error ? reason.message : "搜索失败"); setSearchState("error"); } });
   }, [search]);
 
   useEffect(() => {
     const request = ++searchRequest.current;
     const normalized = query.trim();
-    if (!normalized) { setResults([]); setSearchState("idle"); return; }
+    if (!normalized) { setResults([]); setSearchSourceStatus("ready"); setSearchState("idle"); return; }
     setSearchState("loading"); setSearchError("");
     const timer = window.setTimeout(() => executeSearch(normalized, request), /^\d{6}$/.test(normalized) ? 0 : 250);
     return () => window.clearTimeout(timer);
@@ -133,7 +134,7 @@ export function StockSelector({ loadCandidates, search, pollIntervalMs = 30_000 
     <label className="stock-search"><Search size={16} /><span className="visually-hidden">搜索 A 股</span><input role="searchbox" aria-label="搜索 A 股" placeholder="输入六位代码或中文名称" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
     {searchState === "loading" && <p className="selector-message" role="status"><LoaderCircle size={15} />正在搜索...</p>}
     {query.trim() && searchState === "error" && <div className="selector-message error" role="alert"><ShieldAlert size={15} /><span>{searchError}</span><button type="button" onClick={() => executeSearch(query.trim())}>重试搜索</button></div>}
-    {query.trim() && searchState === "ready" && <div className="stock-search-results" role="listbox" aria-label="A 股搜索结果">{results.length ? results.map((item) => <article key={item.symbol}><button role="option" aria-selected={selection.symbol === item.symbol} type="button" onClick={() => { selection.select(item.symbol, "search"); setQuery(""); }}><b>{item.symbol}</b><span>{item.name}</span><small>{item.exchange.toUpperCase()} · {item.quote_quality}</small></button><WatchButton symbol={item.symbol} watched={watchlist.includes(item.symbol)} onToggle={() => toggleWatch(item.symbol)} /></article>) : <p>没有找到已验证的 A 股</p>}</div>}
+    {query.trim() && searchState === "ready" && <div className="stock-search-results" role="listbox" aria-label="A 股搜索结果">{results.length ? results.map((item) => <article key={item.symbol}><button role="option" aria-selected={selection.symbol === item.symbol} type="button" onClick={() => { selection.select(item.symbol, "search"); setQuery(""); }}><b>{item.symbol}</b><span>{item.name}</span><small>{item.exchange.toUpperCase()} · {item.quote_quality}</small></button><WatchButton symbol={item.symbol} watched={watchlist.includes(item.symbol)} onToggle={() => toggleWatch(item.symbol)} /></article>) : searchSourceStatus === "unavailable" ? <div className="selector-message error" role="alert"><ShieldAlert size={15} /><span>行情验证源暂不可用，请稍后重试</span><button type="button" onClick={() => executeSearch(query.trim())}>重试搜索</button></div> : <p>没有找到已验证的 A 股</p>}</div>}
     <div className="selector-tabs" role="tablist" aria-label="A 股候选分类">{tabs.map(([key, name]) => <button ref={(node) => { tabRefs.current[key] = node; }} id={`stock-selector-tab-${key === "short_term" ? "short" : key}`} key={key} role="tab" aria-controls="stock-selector-panel" aria-selected={tab === key} tabIndex={tab === key ? 0 : -1} type="button" onKeyDown={onTabKey} onClick={() => selectTab(key)}>{name}</button>)}</div>
     <div id="stock-selector-panel" role="tabpanel" aria-labelledby={`stock-selector-tab-${tab === "short_term" ? "short" : tab}`} className="stock-options">
       {candidateState === "loading" && <p className="selector-message"><LoaderCircle size={15} />正在读取候选池...</p>}

@@ -68,6 +68,16 @@ class UnavailableValuation(Diagnosis):
         return result.model_copy(update={"sections": sections, "overall_status": "partial"})
 
 
+class QuoteObservedDuringRequest(Diagnosis):
+    async def diagnose(self, symbol, as_of, *, persist=True):
+        result = await super().diagnose(symbol, as_of, persist=persist)
+        sections = dict(result.sections)
+        sections["market"] = sections["market"].model_copy(
+            update={"observed_at": CUTOFF.replace(second=2)}
+        )
+        return result.model_copy(update={"sections": sections})
+
+
 def advice(symbol, created_at=CUTOFF, action="observe"):
     evidence = EvidenceReference(
         evidence_id=f"e-{symbol}", source="fixture", snapshot_id="source-1",
@@ -132,6 +142,17 @@ async def test_cockpit_degrades_only_failed_section() -> None:
     assert result.sections["valuation"].status == "unavailable"
     assert result.sections["market"].status == "ready"
     assert result.overall_quality == "partial"
+
+
+@pytest.mark.asyncio
+async def test_live_cockpit_extends_cutoff_to_quote_observed_during_request() -> None:
+    result = await service(diagnosis=QuoteObservedDuringRequest()).get(
+        "600000", TRADE_DATE, CUTOFF
+    )
+
+    assert result.sections["market"].status == "ready"
+    assert result.sections["market"].observed_at == CUTOFF.replace(second=2)
+    assert result.cutoff == CUTOFF.replace(second=2)
 
 
 @pytest.mark.asyncio

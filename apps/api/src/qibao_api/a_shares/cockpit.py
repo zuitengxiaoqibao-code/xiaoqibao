@@ -1,5 +1,6 @@
 from datetime import date, datetime, time, timezone
 from typing import Any, Literal
+from zoneinfo import ZoneInfo
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
@@ -100,10 +101,18 @@ class StockDecisionCockpitService:
         if instrument is None:
             raise UnknownAShareError(symbol)
 
-        sections = await self._diagnosis_sections(symbol, as_of, cutoff)
+        live_request = as_of == cutoff.astimezone(ZoneInfo("Asia/Shanghai")).date()
+        sections = await self._diagnosis_sections(
+            symbol, as_of, None if live_request else cutoff
+        )
+        effective_cutoff = max(
+            (section.observed_at for section in sections.values() if section.observed_at),
+            default=cutoff,
+        )
+        effective_cutoff = max(cutoff, effective_cutoff)
         sections["funds"] = _unavailable("not-connected", "fund_data_not_connected")
         sections["backtest"] = _unavailable("not-run", "backtest_not_run")
-        phases = self._phases(symbol, as_of, cutoff)
+        phases = self._phases(symbol, as_of, effective_cutoff)
         current = self._current_advice(phases)
         membership = self._candidate_membership(current)
         qualities = {section.status for section in sections.values()}
@@ -112,7 +121,7 @@ class StockDecisionCockpitService:
             "partial" if qualities - {"ready"} else "ready"
         )
         return StockCockpitSnapshot(
-            symbol=symbol, as_of=as_of, cutoff=cutoff, overall_quality=overall,
+            symbol=symbol, as_of=as_of, cutoff=effective_cutoff, overall_quality=overall,
             instrument=instrument, candidate_membership=membership,
             current_advice=current, sections=sections, phases=phases,
         )
@@ -140,7 +149,7 @@ class StockDecisionCockpitService:
             source_name = "events" if target == "news" else target
             item = diagnosis.sections[source_name]
             observed_at = _aware(item.observed_at)
-            if observed_at is not None and observed_at > cutoff:
+            if cutoff is not None and observed_at is not None and observed_at > cutoff:
                 mapped[target] = _unavailable(item.source, "observed_after_cutoff")
                 continue
             mapped[target] = CockpitSection(

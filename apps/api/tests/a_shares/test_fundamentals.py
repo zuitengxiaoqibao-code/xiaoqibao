@@ -1,7 +1,21 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 
-from qibao_api.a_shares.fundamentals import parse_tdx_finance
+from qibao_api.a_shares.fundamentals import TdxFinanceSource, parse_tdx_finance
+
+
+class FinanceClient:
+    def finance(self, symbol):
+        return {"jinglirun": "1", "zongguben": "1", "updated_date": 20260331}
+
+    def close(self):
+        pass
+
+
+def test_tdx_finance_source_default_clock_is_utc_aware() -> None:
+    snapshot = TdxFinanceSource(client_factory=FinanceClient).fetch("600000")
+
+    assert snapshot.observed_at.tzinfo == timezone.utc
 
 
 def test_tdx_finance_preserves_real_values_and_missing_fields() -> None:

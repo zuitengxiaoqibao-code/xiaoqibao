@@ -1,5 +1,5 @@
 from collections.abc import Callable, Mapping
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 from math import isfinite
 from typing import Any
@@ -97,11 +97,15 @@ def _as_mapping(value: Any) -> Mapping[str, Any]:
     raise ValueError("unsupported mootdx finance response")
 
 
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 class TdxFinanceSource:
     def __init__(
         self,
         client_factory: Callable[[], Any] = create_tdx_client,
-        clock: Callable[[], datetime] = datetime.now,
+        clock: Callable[[], datetime] = _utc_now,
     ) -> None:
         self.client_factory = client_factory
         self.clock = clock

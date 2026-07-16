@@ -1,5 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 import httpx
 import pytest
@@ -24,7 +25,9 @@ def test_parse_tencent_a_share_quote() -> None:
 
     assert quote.symbol == "600000"
     assert quote.price == Decimal("10.25")
-    assert quote.observed_at == datetime(2026, 7, 13, 10, 30)
+    assert quote.observed_at == datetime(
+        2026, 7, 13, 10, 30, tzinfo=ZoneInfo("Asia/Shanghai")
+    )
 
 
 def test_parse_rejects_incomplete_payload() -> None:
@@ -60,6 +63,32 @@ async def test_source_decodes_gbk_response_and_requests_exchange_symbol() -> Non
     assert quote.name == "浦发银行"
 
 
+@pytest.mark.asyncio
+async def test_source_retries_transport_failure_with_fresh_client() -> None:
+    fields = [""] * 50
+    fields[1:5] = ["平安银行", "000001", "10.82", "10.84"]
+    fields[30] = "20260716095112"
+    body = f'v_sz000001="{"~".join(fields)}";'.encode("gbk")
+
+    def failed_handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("stale pooled connection", request=request)
+
+    def recovered_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=body)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(failed_handler)) as client:
+        source = TencentQuoteSource(
+            client,
+            fallback_client_factory=lambda: httpx.AsyncClient(
+                transport=httpx.MockTransport(recovered_handler)
+            ),
+        )
+        quote = await source.fetch("000001")
+
+    assert quote.symbol == "000001"
+    assert quote.name == "平安银行"
+
+
 def test_tencent_snapshot_parses_valuation_without_field_guessing() -> None:
     fields = [""] * 50
     fields[1] = "浦发银行"
@@ -78,7 +107,9 @@ def test_tencent_snapshot_parses_valuation_without_field_guessing() -> None:
     assert snapshot.pb == Decimal("0.58")
     assert snapshot.turnover_rate == Decimal("0.42")
     assert snapshot.market_cap_yi == Decimal("3120.50")
-    assert snapshot.observed_at == datetime(2026, 7, 13, 10, 30)
+    assert snapshot.observed_at == datetime(
+        2026, 7, 13, 10, 30, tzinfo=ZoneInfo("Asia/Shanghai")
+    )
 
 
 def test_tencent_snapshot_preserves_missing_valuation_fields() -> None:

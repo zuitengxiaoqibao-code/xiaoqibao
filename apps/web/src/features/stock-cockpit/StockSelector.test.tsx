@@ -102,6 +102,25 @@ describe("StockSelector", () => {
     expect(search.mock.calls.filter(([query]) => query === "平安")).toHaveLength(2);
   });
 
+  it("distinguishes an unavailable verification source from an unknown stock", async () => {
+    renderSelector({
+      loadCandidates: () => Promise.resolve(empty),
+      search: (query) => Promise.resolve({
+        query,
+        items: [],
+        source_status: "unavailable",
+        server_time: "2026-07-16T09:30:00+08:00",
+      }),
+    });
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "搜索 A 股" }), {
+      target: { value: "600519" },
+    });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("行情验证源暂不可用");
+    expect(screen.queryByText("没有找到已验证的 A 股")).not.toBeInTheDocument();
+  });
+
   it("adds a search result to watchlist", async () => {
     renderSelector();
     fireEvent.change(screen.getByRole("searchbox", { name: "搜索 A 股" }), { target: { value: "平安" } });
