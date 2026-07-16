@@ -74,9 +74,19 @@ describe("StockDecisionCockpit", () => {
   });
 
   it("keeps the action card available when an older API snapshot has no preparation report", async () => {
-    renderCockpit(() => Promise.resolve(snapshot({ preparation: undefined as never })));
+    renderCockpit(() => Promise.resolve(snapshot({ preparation: undefined })));
     expect((await screen.findAllByText("加入观察")).length).toBeGreaterThan(0);
     expect(screen.getByText("已根据当前数据分区检查可用性")).toBeInTheDocument();
+  });
+
+  it("never exposes hostile raw keys, JSON, reason codes, or source identifiers", async () => {
+    const hostile = snapshot();
+    hostile.sections.market = { status: "partial", source: "internal_secret_feed", observed_at: observedAt, snapshot_id: "hidden", reason: "SECRET_REASON_CODE", payload: { metrics: { latest_price: "10", secret_alpha: "LEAK", nested: { token: "LEAK_JSON" } } } };
+    renderCockpit(() => Promise.resolve(hostile));
+    await screen.findByText("数据详情");
+    fireEvent.click(screen.getByText("数据详情"));
+    expect(screen.getByText("未提供可展示说明")).toBeInTheDocument();
+    expect(screen.queryByText(/SECRET|internal_secret|secret_alpha|LEAK|\{"token"/)).not.toBeInTheDocument();
   });
 
   it("does not retain live data when a historical request fails", async () => {

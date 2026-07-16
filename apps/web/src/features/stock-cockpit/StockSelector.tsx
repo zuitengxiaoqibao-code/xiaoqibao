@@ -21,7 +21,7 @@ function readWatchlist(): string[] {
 function mainFactor(entry: CandidateEntry): string {
   const factor = Object.entries(entry.score_breakdown).sort((left, right) => Number(right[1]) - Number(left[1]))[0];
   const names: Record<string, string> = { momentum: "动量", volume: "量能", trend: "趋势", liquidity: "流动性", risk_penalty: "风险扣分" };
-  return factor ? `${names[factor[0]] ?? factor[0]} ${Number(factor[1]).toFixed(1)}` : "暂无因子归因";
+  return factor ? `${names[factor[0]] ?? "综合因素"} ${Number(factor[1]).toFixed(1)}` : "暂无主要依据";
 }
 
 function WatchButton({ symbol, watched, onToggle }: { symbol: string; watched: boolean; onToggle: () => void }) {
@@ -42,8 +42,9 @@ function CandidateRow({ entry, identity, selected, watched, onSelect, onWatch }:
 }
 
 function WatchlistRow({ symbol, item, error, selected, onSelect, onWatch, onRetry }: { symbol: string; item?: AShareInstrument; error?: string; selected: boolean; onSelect: () => void; onWatch: () => void; onRetry: () => void }) {
+  const quality = item ? { ready: "行情可用", stale: "行情已陈旧", unavailable: "行情不可用" }[item.quote_quality] : "";
   return <article className={selected ? "stock-option selected" : "stock-option"}>
-    <button type="button" aria-pressed={selected} onClick={onSelect}><span><b>{symbol}</b><small>{item?.name ?? "身份数据暂不可用"}</small></span><span><small>最新价不可用</small><small>当前涨跌不可用</small></span><span>{error ? <small role="alert">{error}</small> : <small>{item ? `${item.exchange.toUpperCase()} · ${item.quote_quality}` : "正在恢复身份"}</small>}{item && <time>{new Date(item.observed_at).toLocaleString("zh-CN")}</time>}</span></button>
+    <button type="button" aria-pressed={selected} onClick={onSelect}><span><b>{symbol}</b><small>{item?.name ?? "身份数据暂不可用"}</small></span><span><small>最新价不可用</small><small>当前涨跌不可用</small></span><span>{error ? <small role="alert">{error}</small> : <small>{item ? `${item.exchange.toUpperCase()} · ${quality}` : "正在恢复身份"}</small>}{item && <time>{new Date(item.observed_at).toLocaleString("zh-CN")}</time>}</span></button>
     {error && <button className="identity-retry" type="button" aria-label={`重试 ${symbol} 身份`} onClick={onRetry}><RefreshCw size={14} /></button>}
     <WatchButton symbol={symbol} watched onToggle={onWatch} />
   </article>;
@@ -129,12 +130,13 @@ export function StockSelector({ loadCandidates, search, pollIntervalMs = 30_000 
   function onTabKey(event: React.KeyboardEvent<HTMLButtonElement>) { if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return; event.preventDefault(); const order: CandidateTab[] = ["short_term", "swing", "watchlist"]; const offset = event.key === "ArrowLeft" ? -1 : 1; selectTab(order[(order.indexOf(tab) + offset + order.length) % order.length]); }
   const tabs = [["short_term", "短线候选"], ["swing", "波段候选"], ["watchlist", "自选股"]] as const;
 
+  const qualityNames = { ready: "行情可用", stale: "行情已陈旧", unavailable: "行情不可用" } as const;
   return <section className="stock-selector" aria-label="A 股选择器">
-    <header><div><p className="eyebrow">A SHARE / SELECTOR</p><h2>选择观察股票</h2></div><span>{selection.symbol ?? "尚未选择 A 股"}</span><button type="button" className="selector-refresh" aria-label="刷新候选" onClick={() => { void refreshCandidates(); watchlist.forEach(retryIdentity); }}><RefreshCw size={14} /></button></header>
+    <header><div><p className="eyebrow">股票选择</p><h2>选择观察股票</h2></div><span>{selection.symbol ?? "尚未选择 A 股"}</span><button type="button" className="selector-refresh" aria-label="刷新候选" onClick={() => { void refreshCandidates(); watchlist.forEach(retryIdentity); }}><RefreshCw size={14} /></button></header>
     <label className="stock-search"><Search size={16} /><span className="visually-hidden">搜索 A 股</span><input role="searchbox" aria-label="搜索 A 股" placeholder="输入六位代码或中文名称" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
     {searchState === "loading" && <p className="selector-message" role="status"><LoaderCircle size={15} />正在搜索...</p>}
     {query.trim() && searchState === "error" && <div className="selector-message error" role="alert"><ShieldAlert size={15} /><span>{searchError}</span><button type="button" onClick={() => executeSearch(query.trim())}>重试搜索</button></div>}
-    {query.trim() && searchState === "ready" && <div className="stock-search-results" role="listbox" aria-label="A 股搜索结果">{results.length ? results.map((item) => <article key={item.symbol}><button role="option" aria-selected={selection.symbol === item.symbol} type="button" onClick={() => { selection.select(item.symbol, "search"); setQuery(""); }}><b>{item.symbol}</b><span>{item.name}</span><small>{item.exchange.toUpperCase()} · {item.quote_quality}</small></button><WatchButton symbol={item.symbol} watched={watchlist.includes(item.symbol)} onToggle={() => toggleWatch(item.symbol)} /></article>) : searchSourceStatus === "unavailable" ? <div className="selector-message error" role="alert"><ShieldAlert size={15} /><span>行情验证源暂不可用，请稍后重试</span><button type="button" onClick={() => executeSearch(query.trim())}>重试搜索</button></div> : <p>没有找到已验证的 A 股</p>}</div>}
+    {query.trim() && searchState === "ready" && <div className="stock-search-results" role="listbox" aria-label="A 股搜索结果">{results.length ? results.map((item) => <article key={item.symbol}><button role="option" aria-selected={selection.symbol === item.symbol} type="button" onClick={() => { selection.select(item.symbol, "search"); setQuery(""); }}><b>{item.symbol}</b><span>{item.name}</span><small>{item.exchange.toUpperCase()} · {qualityNames[item.quote_quality]}</small></button><WatchButton symbol={item.symbol} watched={watchlist.includes(item.symbol)} onToggle={() => toggleWatch(item.symbol)} /></article>) : searchSourceStatus === "unavailable" ? <div className="selector-message error" role="alert"><ShieldAlert size={15} /><span>行情验证源暂不可用，请稍后重试</span><button type="button" onClick={() => executeSearch(query.trim())}>重试搜索</button></div> : <p>没有找到已验证的 A 股</p>}</div>}
     <div className="selector-tabs" role="tablist" aria-label="A 股候选分类">{tabs.map(([key, name]) => <button ref={(node) => { tabRefs.current[key] = node; }} id={`stock-selector-tab-${key === "short_term" ? "short" : key}`} key={key} role="tab" aria-controls="stock-selector-panel" aria-selected={tab === key} tabIndex={tab === key ? 0 : -1} type="button" onKeyDown={onTabKey} onClick={() => selectTab(key)}>{name}</button>)}</div>
     <div id="stock-selector-panel" role="tabpanel" aria-labelledby={`stock-selector-tab-${tab === "short_term" ? "short" : tab}`} className="stock-options">
       {candidateState === "loading" && <p className="selector-message"><LoaderCircle size={15} />正在读取候选池...</p>}

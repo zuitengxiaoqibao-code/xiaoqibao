@@ -58,7 +58,8 @@ function PreparationStatus({ data }: { data: StockCockpitSnapshot }) {
   };
   const ready = preparation.sources.filter((source) => source.status === "ready").length;
   const names = { quote: "实时行情", history: "历史走势", finance: "基本面", news: "新闻" } as const;
-  return <section className={`preparation-status ${preparation.status}`} aria-label="数据准备状态"><div><Database size={17} /><span><b>{preparation.status === "ready" ? "数据已准备" : "部分数据待补齐"}</b><small>{preparation.refreshed ? "已自动检查并更新" : data.preparation ? "已检查本地可用数据" : "已根据当前数据分区检查可用性"}</small></span></div><div className="preparation-sources">{preparation.sources.map((source) => <span className={source.status} key={source.name}>{names[source.name]}<b>{source.status === "ready" ? "可用" : "待补齐"}</b></span>)}</div><small>{ready}/{preparation.sources.length} 类核心数据可用</small></section>;
+  const title = !data.preparation ? "根据现有数据估算" : preparation.status === "ready" ? "数据已准备" : "部分数据待补齐";
+  return <section className={`preparation-status ${preparation.status}`} aria-label="数据准备状态"><div><Database size={17} /><span><b>{title}</b><small>{preparation.refreshed ? "已自动检查并更新" : data.preparation ? "尚未执行自动补齐" : "已根据当前数据分区检查可用性"}</small></span></div><div className="preparation-sources">{preparation.sources.map((source) => <span className={source.status} key={source.name}>{names[source.name]}<b>{source.status === "ready" ? "可用" : "待补齐"}</b></span>)}</div><small>{ready}/{preparation.sources.length} 类核心数据可用</small></section>;
 }
 
 export function StockDecisionCockpit({ load, asOf, refreshToken = 0, onRefreshRequest }: Props) {

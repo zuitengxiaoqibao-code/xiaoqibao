@@ -79,7 +79,7 @@ export type StockCockpitSnapshot = {
   cutoff: string;
   overall_quality: "ready" | "partial" | "blocked";
   instrument: AShareInstrument;
-  preparation: StockPreparation;
+  preparation?: StockPreparation;
   candidate_membership: Array<"short_term" | "swing">;
   assessment: StockAssessment;
   ai_status: AssessmentAIStatus;

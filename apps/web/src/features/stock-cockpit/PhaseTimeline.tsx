@@ -5,7 +5,7 @@ import type { StockCockpitSnapshot } from "./types";
 
 const phases: Array<[DecisionPhase, string, string]> = [
   ["premarket", "盘前研判", "开盘前的初始判断"],
-  ["intraday", "盘中变化", "行情变化后的版本轨迹"],
+  ["intraday", "盘中观察", "行情变化后的最新判断"],
   ["postclose", "盘后验证", "收盘后的验证与归因"],
 ];
 const actions: Record<Advice["action"], string> = { observe: "加入观察", wait: "暂不参与", avoid: "回避", invalidated: "已失效" };

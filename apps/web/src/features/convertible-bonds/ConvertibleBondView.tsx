@@ -40,7 +40,7 @@ export function ConvertibleBondView({ loadDashboard, loadDiagnosis, loadCandidat
       <button role="tab" aria-selected={tab === "diagnosis"} onClick={() => setTab("diagnosis")}>诊断</button>
       <button role="tab" aria-selected={tab === "candidates"} onClick={() => void showCandidates()}>候选池</button>
     </div>
-    {error && <div className="bond-alert" role="alert"><ShieldAlert size={18} />{error.includes("条款") ? `条款数据为空：${error}` : error}{error.includes("授权") && openBondCompliance && <button onClick={openBondCompliance}>前往礼部授权</button>}</div>}
+    {error && <div className="bond-alert" role="alert"><ShieldAlert size={18} />{error.includes("条款") ? `条款数据为空：${error}` : error}{error.includes("授权") && openBondCompliance && <button onClick={openBondCompliance}>检查数据授权</button>}</div>}
     {loading && <div className="bond-loading" aria-busy="true"><LoaderCircle size={18} />正在核验数据源...</div>}
     {tab === "overview" && !loading && <section className="bond-overview"><div><span>已存档转债</span><strong>{dashboard?.bond_count ?? "—"}</strong></div><div><span>条款状态</span><strong>{dashboard?.status === "empty" ? "暂无条款快照" : "快照可用"}</strong></div><p>这里仅汇总转债仓储，不读取 A 股候选排名。</p></section>}
     {tab === "diagnosis" && <section className="bond-diagnosis">

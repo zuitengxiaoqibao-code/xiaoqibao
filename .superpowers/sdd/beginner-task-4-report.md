@@ -26,3 +26,13 @@ The interface keeps the existing dark technical identity but uses a restrained r
 
 - Risk and settings are intentionally lightweight placeholders; Task 5 owns functional data and AI settings.
 - Some legacy governance and operations components remain in source for backend compatibility but are no longer reachable from the user navigation.
+
+## Review Fix Pass
+
+- Replaced the legacy `/a-shares` research screen with the shared beginner stock selector and action-card flow.
+- Added a plain-language risk screen backed by `loadRisk`, including request isolation, error handling, and retry.
+- Replaced the internal decision workbench on `/history` with a date-based three-phase review showing only conclusions, evidence, risks, and time.
+- Preserved the last A-share selection across a symbol-free convertible-bond round trip.
+- Made preparation optional in the frontend contract and labels derived fallback state as an estimate rather than a completed refresh.
+- Restricted data details to translated source names, known reason descriptions, and whitelisted metrics. Unknown or hostile values are not rendered.
+- Removed remaining department copy from reachable bond error handling and hid provider/model/hash implementation details from beginner news views.

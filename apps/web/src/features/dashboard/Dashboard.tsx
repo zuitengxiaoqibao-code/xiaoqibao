@@ -27,6 +27,8 @@ import type { InstrumentSearchResponse, StockCockpitSnapshot } from "../stock-co
 import { commitLocation } from "../instrument-selection/location";
 import { useOptionalSelectedInstrument, useSelectedInstrument } from "../instrument-selection/SelectedInstrumentProvider";
 import { BeginnerNavigation, type BeginnerView } from "../beginner-shell/BeginnerNavigation";
+import { BeginnerRiskView } from "../beginner-shell/BeginnerRiskView";
+import { HistoryReview } from "../beginner-shell/HistoryReview";
 
 type ViewState =
   | { kind: "idle" }
@@ -174,7 +176,7 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, lo
   function navigate(view: ActiveView) {
     const paths: Record<ActiveView, string> = { dashboard: "/", a_shares: "/a-shares", risk: "/risk", history: "/history", settings: "/settings", bonds: "/convertible-bonds", news: "/news-intelligence" };
     const next = new URL(paths[view], window.location.origin);
-    const selectedSymbol = new URL(window.location.href).searchParams.get("symbol");
+    const selectedSymbol = new URL(window.location.href).searchParams.get("symbol") ?? selectedInstrument?.lastSymbol;
     if (view !== "bonds" && selectedSymbol) next.searchParams.set("symbol", selectedSymbol);
     commitLocation(`${next.pathname}${next.search}`);
     setActiveView(view);
@@ -210,17 +212,20 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, lo
     <div className="app-shell">
       <BeginnerNavigation active={activeView} onNavigate={navigate} />
 
-      {activeView === "risk" && <main className="beginner-page"><header><p className="eyebrow">风险提醒</p><h1>需要优先留意的风险</h1><p>按严重程度汇总市场、个股和数据风险。规则能力仍在后台运行。</p></header><section className="beginner-empty"><ShieldAlert size={24} /><h2>暂无需要立即处理的风险</h2><p>选择股票后，相关风险会直接显示在行动卡中。</p></section></main>}
+      {activeView === "risk" && <BeginnerRiskView load={loadRisk} />}
 
-      {activeView === "a_shares" && loadAShareCandidates && loadAShareDiagnosis && <AShareResearchView loadCandidates={loadAShareCandidates} loadDiagnosis={loadAShareDiagnosis} />}
+      {activeView === "a_shares" && <div className="stock-workbench-layout observation-workspace">
+        {loadAShareCandidates && searchAShareInstruments && <StockSelector loadCandidates={loadAShareCandidates} search={searchAShareInstruments} />}
+        {loadStockCockpit ? <StockDecisionCockpit load={loadStockCockpit} /> : <main className="stock-cockpit empty-cockpit"><Radar size={24} /><h1>选择股票后查看行动卡</h1><p>可从候选、自选或搜索结果中选择任意已验证 A 股。</p></main>}
+      </div>}
 
       {activeView === "bonds" && loadBondDashboard && loadBondDiagnosis && loadBondCandidates && <ConvertibleBondView loadDashboard={loadBondDashboard} loadDiagnosis={loadBondDiagnosis} loadCandidates={loadBondCandidates} openBondCompliance={() => undefined} />}
 
       {activeView === "news" && loadNewsIntelligence && syncNews && createNewsCorrection && <SelectedNewsWorkspace loadBundle={loadNewsIntelligence} syncNews={syncNews} createCorrection={createNewsCorrection} openNewsCompliance={() => undefined} />}
 
-      {activeView === "history" && loadDecisionCurrent && <main className="beginner-page history-page"><DecisionWorkbench loadCurrent={loadDecisionCurrent} loadDate={loadDecisionDate} selectedSymbol={selectedInstrument?.symbol ?? null} /></main>}
+      {activeView === "history" && loadDecisionCurrent && <HistoryReview loadCurrent={loadDecisionCurrent} loadDate={loadDecisionDate} symbol={selectedInstrument?.symbol ?? selectedInstrument?.lastSymbol ?? null} />}
 
-      {activeView === "settings" && <main className="beginner-page"><header><p className="eyebrow">数据设置</p><h1>数据源与 AI</h1><p>查看连接状态、同步时间，并配置本机 AI 分析服务。</p></header><section className="beginner-empty"><Database size={24} /><h2>设置功能正在接入</h2><p>当前研判仍使用已验证的确定性数据，不受 AI 配置影响。</p></section></main>}
+      {activeView === "settings" && <main className="beginner-page"><header><p className="eyebrow">数据设置</p><h1>数据源与 AI</h1><p>在数据设置中管理来源与 AI，功能正在接入。</p></header></main>}
 
       {activeView === "dashboard" && loadDecisionCurrent && <div className="stock-workbench-layout">
         {loadAShareCandidates && searchAShareInstruments && <StockSelector loadCandidates={loadAShareCandidates} search={searchAShareInstruments} />}

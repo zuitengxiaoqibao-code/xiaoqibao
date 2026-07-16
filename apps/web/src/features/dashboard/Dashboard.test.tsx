@@ -21,14 +21,23 @@ describe("Dashboard beginner shell", () => {
     expect(screen.queryByText(/中书省|吏部|户部|东厂|礼部|兵部|尚书省|刑部|工部/)).not.toBeInTheDocument();
   });
 
-  it("opens beginner risk and settings pages with stable routes", () => {
-    render(<Dashboard loadSnapshot={() => Promise.resolve(card)} />);
+  it("opens beginner risk and settings pages with stable routes", async () => {
+    render(<Dashboard loadSnapshot={() => Promise.resolve(card)} loadRisk={() => Promise.resolve({ rule_version: "v1", limits: {} })} />);
     fireEvent.click(screen.getByRole("button", { name: "风险提醒" }));
-    expect(screen.getByRole("heading", { name: "需要优先留意的风险" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "当前风险状态" })).toBeInTheDocument();
     expect(window.location.pathname).toBe("/risk");
     fireEvent.click(screen.getByRole("button", { name: "数据设置" }));
     expect(screen.getByRole("heading", { name: "数据源与 AI" })).toBeInTheDocument();
     expect(window.location.pathname).toBe("/settings");
+  });
+
+  it("opens A-share observation without legacy research internals", async () => {
+    render(<SelectedInstrumentProvider><Dashboard loadSnapshot={() => Promise.resolve(card)}
+      loadAShareCandidates={() => Promise.resolve({ asset: "a_share", snapshot_id: null, input_snapshot_hash: null, universe_status: "empty", as_of: "2026-07-15", factor_version: "secret-factor", short_term: [], swing: [], exclusions: [] })}
+      searchAShareInstruments={() => Promise.resolve({ query: "", items: [], server_time: "2026-07-15T09:30:00+08:00", source_status: "ready" })} /></SelectedInstrumentProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "A 股观察" }));
+    expect(await screen.findByRole("heading", { name: "选择观察股票" })).toBeInTheDocument();
+    expect(screen.queryByText(/secret-factor|snapshot|中书省|工部|候选生成|诊断/)).not.toBeInTheDocument();
   });
 
   it("keeps the selected A share while opening news", async () => {
@@ -52,6 +61,17 @@ describe("Dashboard beginner shell", () => {
     expect(await screen.findByRole("heading", { name: "可转债专区" })).toBeInTheDocument();
     expect(window.location.pathname).toBe("/convertible-bonds");
     expect(new URL(window.location.href).searchParams.has("symbol")).toBe(false);
+  });
+
+  it("restores the last A-share selection after a bond round trip", async () => {
+    window.history.replaceState({}, "", "/?symbol=600000");
+    render(<SelectedInstrumentProvider><Dashboard loadSnapshot={() => Promise.resolve(card)}
+      loadBondDashboard={() => Promise.resolve({ status: "empty", bond_count: 0, bond_codes: [] })}
+      loadBondDiagnosis={() => Promise.reject(new Error("unused"))} loadBondCandidates={() => Promise.resolve({ status: "empty", items: [] })} /></SelectedInstrumentProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "可转债" }));
+    expect(new URL(window.location.href).searchParams.has("symbol")).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "今日研判" }));
+    expect(new URL(window.location.href).searchParams.get("symbol")).toBe("600000");
   });
 
   it("restores a settings deep link", () => {

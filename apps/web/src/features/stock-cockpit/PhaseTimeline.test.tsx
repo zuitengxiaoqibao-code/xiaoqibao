@@ -14,7 +14,7 @@ describe("PhaseTimeline", () => {
     };
     render(<PhaseTimeline phases={phases} symbol="600000" />);
     expect(screen.getByText("盘前研判")).toBeInTheDocument();
-    expect(screen.getByText("盘中变化")).toBeInTheDocument();
+    expect(screen.getByText("盘中观察")).toBeInTheDocument();
     expect(screen.getByText("盘后验证")).toBeInTheDocument();
     expect(screen.queryByText("000001")).not.toBeInTheDocument();
     expect(screen.getByText("暂不参与")).toBeInTheDocument();

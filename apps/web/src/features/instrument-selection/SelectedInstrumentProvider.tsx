@@ -8,6 +8,7 @@ type SelectedInstrument = {
   asset: "a_share";
   source: SelectionSource | null;
   selectedAt: string | null;
+  lastSymbol: string | null;
   select: (symbol: string, source: Exclude<SelectionSource, "url">) => void;
   clear: () => void;
 };
@@ -24,6 +25,7 @@ function symbolFromLocation(): string | null {
 
 export function SelectedInstrumentProvider({ children }: { children: ReactNode }) {
   const initialSymbol = symbolFromLocation();
+  const [lastSymbol, setLastSymbol] = useState(initialSymbol);
   const [state, setState] = useState<Pick<SelectedInstrument, "symbol" | "source" | "selectedAt">>({
     symbol: initialSymbol,
     source: initialSymbol ? "url" : null,
@@ -34,6 +36,7 @@ export function SelectedInstrumentProvider({ children }: { children: ReactNode }
     const restore = (event?: Event) => {
       const symbol = symbolFromLocation();
       const requestedSource = event instanceof CustomEvent ? event.detail?.source as SelectionSource | undefined : undefined;
+      if (symbol) setLastSymbol(symbol);
       setState({ symbol, source: symbol ? requestedSource ?? "url" : null, selectedAt: symbol ? new Date().toISOString() : null });
     };
     window.addEventListener("popstate", restore);
@@ -43,6 +46,7 @@ export function SelectedInstrumentProvider({ children }: { children: ReactNode }
 
   const value = useMemo<SelectedInstrument>(() => ({
     ...state,
+    lastSymbol,
     asset: "a_share",
     select(symbol, source) {
       if (!isAShareSymbol(symbol) || window.location.pathname === "/convertible-bonds") return;
@@ -55,7 +59,7 @@ export function SelectedInstrumentProvider({ children }: { children: ReactNode }
       url.searchParams.delete("symbol");
       commitLocation(`${url.pathname}${url.search}${url.hash}`);
     },
-  }), [state]);
+  }), [lastSymbol, state]);
 
   return <SelectedInstrumentContext.Provider value={value}>{children}</SelectedInstrumentContext.Provider>;
 }
