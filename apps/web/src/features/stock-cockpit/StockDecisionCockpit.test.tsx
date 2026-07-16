@@ -86,6 +86,23 @@ describe("StockDecisionCockpit", () => {
     expect(screen.queryByText(/模拟操作|候选账本|策略：|研判编号|中书省|工部/)).not.toBeInTheDocument();
   });
 
+  it("translates internal assessment codes into deduplicated beginner language", async () => {
+    const hostile = snapshot();
+    hostile.assessment.risks = ["source_snapshot_unavailable:market", "source_snapshot_unavailable:market", "缺失或晚于截止时间的分区：industry、news。", "SECRET_INTERNAL_CODE"];
+    hostile.assessment.invalidation_conditions = ["source_snapshot_unavailable:trend", "source_snapshot_unavailable:fundamentals", "source_snapshot_unavailable:risk", "unknown_internal_token"];
+    renderCockpit(() => Promise.resolve(hostile));
+    expect(await screen.findByText("实时行情发生变化需重评")).toBeInTheDocument();
+    expect(screen.getByText("新闻或行业信息晚于研判截止时间或暂缺")).toBeInTheDocument();
+    expect(screen.getByText("走势数据发生变化需重评")).toBeInTheDocument();
+    expect(screen.queryByText(/source_snapshot|industry|news|SECRET|unknown_internal|fundamentals/)).not.toBeInTheDocument();
+  });
+
+  it("describes an already-ready snapshot without claiming preparation never ran", async () => {
+    renderCockpit(() => Promise.resolve(snapshot({ preparation: { ...snapshot().preparation!, status: "ready", refreshed: false } })));
+    expect(await screen.findByText("数据无需再次补齐")).toBeInTheDocument();
+    expect(screen.queryByText("尚未执行自动补齐")).not.toBeInTheDocument();
+  });
+
   it("keeps the last snapshot visible and marks it stale after refresh failure", async () => {
     const load = vi.fn().mockResolvedValueOnce(snapshot()).mockRejectedValueOnce(new Error("offline"));
     renderCockpit(load);
@@ -100,7 +117,7 @@ describe("StockDecisionCockpit", () => {
   it("keeps the action card available when an older API snapshot has no preparation report", async () => {
     renderCockpit(() => Promise.resolve(snapshot({ preparation: undefined })));
     expect((await screen.findAllByText("加入观察")).length).toBeGreaterThan(0);
-    expect(screen.getByText("已根据当前数据分区检查可用性")).toBeInTheDocument();
+    expect(screen.getByText("尚未执行自动补齐")).toBeInTheDocument();
   });
 
   it("never exposes hostile raw keys, JSON, reason codes, or source identifiers", async () => {

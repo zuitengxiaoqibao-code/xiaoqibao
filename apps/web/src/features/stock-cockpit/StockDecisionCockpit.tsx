@@ -23,6 +23,30 @@ function metric(data: StockCockpitSnapshot, key: string): unknown {
 function displayNumber(value: unknown, suffix = ""): string {
   return value === null || value === undefined || value === "" ? "--" : `${String(value)}${suffix}`;
 }
+const sectionChanges: Record<string, string> = {
+  market: "实时行情发生变化需重评", quote: "实时行情发生变化需重评",
+  trend: "走势数据发生变化需重评", price_volume: "走势数据发生变化需重评",
+  fundamentals: "基本面或估值发生变化需重评", valuation: "基本面或估值发生变化需重评",
+  risk: "风险状态发生变化需重评", news: "新闻或行业信息发生变化需重评", industry: "新闻或行业信息发生变化需重评",
+};
+function beginnerAssessmentText(value: string): string {
+  const code = value.match(/^source_snapshot_unavailable:([a-z_]+)$/)?.[1];
+  if (code) return sectionChanges[code] ?? "数据状态发生变化需重新判断";
+  if (/缺失或晚于截止时间的分区/.test(value)) {
+    if (/industry|news/.test(value)) return "新闻或行业信息晚于研判截止时间或暂缺";
+    if (/market|quote/.test(value)) return "实时行情晚于研判截止时间或暂缺";
+    if (/trend|price_volume/.test(value)) return "走势数据晚于研判截止时间或暂缺";
+    if (/fundamentals|valuation/.test(value)) return "基本面或估值晚于研判截止时间或暂缺";
+    return "部分数据晚于研判截止时间或暂缺";
+  }
+  if (/[a-z]+_[a-z_]+|[A-Z]{3,}(?:_[A-Z]+)*|[a-z_]+:[a-z_]+/.test(value)) return "数据状态发生变化需重新判断";
+  return value
+    .replace(/price_volume|trend/g, "走势数据").replace(/fundamentals|valuation/g, "基本面或估值")
+    .replace(/industry|news/g, "新闻或行业信息").replace(/market|quote/g, "实时行情");
+}
+function beginnerAssessmentList(values: string[]): string[] {
+  return [...new Set(values.map(beginnerAssessmentText))].slice(0, 3);
+}
 function AssessmentAI({ status, explanation }: { status: AssessmentAIStatus; explanation: AssessmentAIExplanation | null }) {
   if (status === "unconfigured") return <section className="assessment-ai"><h3>AI 补充分析未启用</h3><p>当前行动结论仍由可验证数据生成，可在“数据设置”中配置 AI。</p></section>;
   if (status !== "ready" || !explanation) return <section className="assessment-ai"><h3>AI 解释暂不可用</h3><p>确定性研判未受影响。</p></section>;
@@ -32,7 +56,8 @@ function AssessmentAI({ status, explanation }: { status: AssessmentAIStatus; exp
 function AssessmentConclusion({ assessment, aiStatus, aiExplanation }: { assessment: StockAssessment; aiStatus: AssessmentAIStatus; aiExplanation: AssessmentAIExplanation | null }) {
   const actionName = { observe: "加入观察", wait: "暂不参与", avoid: "回避" }[assessment.action];
   const evidence = assessment.supporting_evidence.slice(0, 3);
-  const risks = [...assessment.contrary_evidence.map((item) => item.summary), ...assessment.risks].slice(0, 3);
+  const risks = beginnerAssessmentList([...assessment.contrary_evidence.map((item) => item.summary), ...assessment.risks]);
+  const invalidationConditions = beginnerAssessmentList(assessment.invalidation_conditions);
   return <section className={`cockpit-conclusion assessment-conclusion action-${assessment.action}`}><header><div><p className="eyebrow">新手行动卡</p><h2>现在怎么做</h2></div><div className="advice-confidence"><span>置信度</span><strong>{Math.round(Number(assessment.confidence) * 100)}%</strong></div></header>
     <div className="advice-verdict"><div><span>{actionName}</span><h3>{assessment.conclusion}</h3><p>只根据截止时间前可验证的数据判断，不包含价格、仓位或买卖指令。</p></div><div className="observe-seal"><ShieldAlert size={18} /><b>观察提示</b><small>不构成投资建议</small></div></div>
     <AssessmentAI status={aiStatus} explanation={aiExplanation} />
@@ -40,7 +65,7 @@ function AssessmentConclusion({ assessment, aiStatus, aiExplanation }: { assessm
       <section><h3><CheckCircle2 size={15} />主要依据</h3>{evidence.length ? evidence.map((item) => <p key={item.evidence_id}>{item.summary}</p>) : <p>暂缺足够的已验证依据</p>}</section>
       <section className="risk"><h3><ShieldAlert size={15} />主要风险</h3>{risks.length ? risks.map((item) => <p key={item}>{item}</p>) : <p>未发现明确风险，但仍需持续观察</p>}</section>
       <section><h3><Clock3 size={15} />需要等待的信号</h3><p>{assessment.action === "observe" ? "观察量价、趋势和新闻是否继续相互印证" : "等待缺失数据补齐，或风险信号减弱"}</p></section>
-      <section><h3><Target size={15} />重新判断条件</h3>{assessment.invalidation_conditions.length ? assessment.invalidation_conditions.slice(0, 3).map((item) => <p key={item}>{item}</p>) : <p>出现新的行情、公告或风险证据时重新判断</p>}</section>
+      <section><h3><Target size={15} />重新判断条件</h3>{invalidationConditions.length ? invalidationConditions.map((item) => <p key={item}>{item}</p>) : <p>出现新的行情、公告或风险证据时重新判断</p>}</section>
     </div>
     <footer><span>研判时间：{new Date(assessment.generated_at).toLocaleString("zh-CN", { hour12: false })}</span></footer>
   </section>;
@@ -62,7 +87,8 @@ function PreparationStatus({ data, preparing = false }: { data: StockCockpitSnap
   const ready = preparation.sources.filter((source) => source.status === "ready").length;
   const names = { quote: "实时行情", history: "历史走势", finance: "基本面", news: "新闻" } as const;
   const title = preparing ? "正在补齐数据" : !data.preparation ? "根据现有数据估算" : preparation.status === "ready" ? "数据已准备" : "部分数据待补齐";
-  return <section className={`preparation-status ${preparation.status}`} aria-label="数据准备状态"><div><Database size={17} /><span><b>{title}</b><small>{preparation.refreshed ? "已自动检查并更新" : data.preparation ? "尚未执行自动补齐" : "已根据当前数据分区检查可用性"}</small></span></div><div className="preparation-sources">{preparation.sources.map((source) => <span className={source.status} key={source.name}>{names[source.name]}<b>{source.status === "ready" ? "可用" : "待补齐"}</b></span>)}</div><small>{ready}/{preparation.sources.length} 类核心数据可用</small></section>;
+  const detail = preparation.refreshed ? "已自动检查并更新" : !data.preparation ? "尚未执行自动补齐" : preparation.status === "ready" ? "数据无需再次补齐" : "仍有数据等待补齐";
+  return <section className={`preparation-status ${preparation.status}`} aria-label="数据准备状态"><div><Database size={17} /><span><b>{title}</b><small>{detail}</small></span></div><div className="preparation-sources">{preparation.sources.map((source) => <span className={source.status} key={source.name}>{names[source.name]}<b>{source.status === "ready" ? "可用" : "待补齐"}</b></span>)}</div><small>{ready}/{preparation.sources.length} 类核心数据可用</small></section>;
 }
 
 export function StockDecisionCockpit({ load, prepare, asOf, refreshToken = 0, onRefreshRequest, onSnapshot }: Props) {
