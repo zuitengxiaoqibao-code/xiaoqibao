@@ -100,3 +100,23 @@
 - Multiple nonblocking retries followed by acquisition after the holder releases.
 - Event-loop responsiveness with a deliberately blocking calendar.
 - Atomic marker publication while inspecting the destination immediately before replacement.
+
+## Controller Concurrency Regression
+
+### RED And Root Cause
+
+- A failed history/news refresh returned `refreshed=true` because the flag represented an attempted mutation rather than a successful evidence write.
+- Independent history and global-news locks allowed two same-symbol workers to split the work: one could write history while the waiter wrote the news marker, causing both results to claim refresh ownership.
+
+### Fix
+
+- Live preparation now uses an outer cross-process per-symbol preparation lock around the complete history-plus-news unit. Waiters acquire it later and reassess history and the global news marker inside their respective locks.
+- History refresh becomes true only after a ready sync report and either positive written rows or a changed bar payload version.
+- News refresh becomes true only after collection succeeds and the atomic success marker is published.
+- Any history/news mutation failure or lock timeout forces the partial result's `refreshed` field to false.
+
+### Evidence
+
+- Failure/retry coverage now asserts the failed call is not refreshed and the successful retry is refreshed.
+- Lock-timeout coverage asserts partial plus `refreshed=false`.
+- The two-instance shared-history/global-news concurrency test passed 20 consecutive isolated runs after the fix.

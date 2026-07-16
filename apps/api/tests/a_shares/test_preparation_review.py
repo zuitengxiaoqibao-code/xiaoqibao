@@ -172,7 +172,9 @@ async def test_partial_refresh_is_not_cached_and_retries(tmp_path):
     second = await service.prepare("600519", as_of=FRIDAY)
 
     assert first.status == "partial"
+    assert first.refreshed is False
     assert second.status == "ready"
+    assert second.refreshed is True
     assert history.calls == ["600519", "600519"]
     assert news.calls == 2
 
@@ -236,6 +238,7 @@ async def test_lock_contention_timeout_degrades_to_partial(tmp_path):
 
     history = next(item for item in result.sources if item.name == "history")
     assert result.status == "partial"
+    assert result.refreshed is False
     assert history.reason == "preparation lock timed out: history-600519.lock"
 
 

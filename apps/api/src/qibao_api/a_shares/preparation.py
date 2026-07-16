@@ -136,14 +136,30 @@ class AStockPreparationService:
         if cutoff is not None:
             return await self.inspect(symbol, as_of=as_of, cutoff=cutoff)
         started_at = self._now()
+        try:
+            async with self._file_lock(f"prepare-{symbol}.lock"):
+                return await self._prepare_locked(symbol, as_of, started_at)
+        except PreparationLockTimeout as error:
+            reason = str(error)
+            return await self._inspect(
+                symbol,
+                as_of,
+                None,
+                started_at=started_at,
+                refreshed=False,
+                history_error=reason,
+                news_error=reason,
+            )
+
+    async def _prepare_locked(self, symbol, as_of, started_at):
         refreshed = False
         history_error = None
         try:
             async with self._file_lock(f"history-{symbol}.lock"):
                 bars = self._bars(symbol, as_of, None)
+                before = self._bar_version(bars)
                 expected = await self._expected_trading_day(as_of)
                 if not self._history_ready(bars, expected):
-                    refreshed = True
                     try:
                         report = await asyncio.to_thread(
                             self.market_data_service.sync_symbol, symbol
@@ -154,13 +170,22 @@ class AStockPreparationService:
                                 getattr(report, "message", None)
                                 or "history sync failed"
                             )
+                        else:
+                            after = self._bars(symbol, as_of, None)
+                            refreshed = self._history_write_succeeded(
+                                report, before, self._bar_version(after)
+                            )
                     except Exception as error:
                         history_error = str(error)
         except PreparationLockTimeout as error:
             history_error = str(error)
 
         news_refreshed, news_error = await self._refresh_news()
-        refreshed = refreshed or news_refreshed
+        refreshed = (
+            (refreshed or news_refreshed)
+            and history_error is None
+            and news_error is None
+        )
         return await self._inspect(
             symbol,
             as_of,
@@ -170,6 +195,22 @@ class AStockPreparationService:
             history_error=history_error,
             news_error=news_error,
         )
+
+    @staticmethod
+    def _bar_version(bars):
+        return tuple(
+            (
+                bar.model_dump_json()
+                if hasattr(bar, "model_dump_json")
+                else tuple(sorted(vars(bar).items()))
+            )
+            for bar in bars
+        )
+
+    @staticmethod
+    def _history_write_succeeded(report, before, after):
+        written_rows = getattr(report, "written_rows", None)
+        return (written_rows is not None and written_rows > 0) or after != before
 
     async def _inspect(
         self,
@@ -209,10 +250,10 @@ class AStockPreparationService:
         try:
             async with self._file_lock("news-global.lock"):
                 if not self._news_is_fresh():
-                    refreshed = True
                     try:
                         await self.news_service.sync()
                         self._write_news_marker(self._now())
+                        refreshed = True
                     except Exception as error_value:
                         error = str(error_value)
         except PreparationLockTimeout as error_value:
