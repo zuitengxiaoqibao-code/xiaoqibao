@@ -241,6 +241,53 @@ async def test_simulation_eligibility_accepts_complete_persisted_plan_chain() ->
 
     assert result.assessment.action == "observe"
     assert result.assessment.simulation_eligible is True
+    assert result.assessment.authorized_simulation_advice_id == "a-600000"
+    assert result.assessment.authorized_simulation_plan_id == "plan-1"
+
+
+class MixedHorizonSimulationDecisions:
+    def __init__(self, plan):
+        self.plan = plan
+
+    def cycles(self, trading_date=None, phase=None):
+        if phase != "intraday":
+            return []
+        intraday = simulated_advice().model_copy(update={
+            "advice_id": "intraday-unverified", "simulation_plan_id": "forged-plan",
+            "created_at": CUTOFF.replace(minute=1),
+        })
+        swing = simulated_advice().model_copy(update={
+            "advice_id": "swing-authorized", "horizon": "swing",
+            "simulation_plan_id": "swing-plan",
+        })
+        return [aggregate((intraday, swing), plans=(self.plan,))]
+
+
+@pytest.mark.asyncio
+async def test_authorized_simulation_reference_keeps_advice_and_plan_together() -> None:
+    plan = simulation_plan(plan_id="swing-plan", advice_id="swing-authorized")
+    result = await service(decisions=MixedHorizonSimulationDecisions(plan)).get(
+        "600000", TRADE_DATE, CUTOFF
+    )
+
+    assert result.assessment.authorized_simulation_advice_id == "swing-authorized"
+    assert result.assessment.authorized_simulation_plan_id == "swing-plan"
+
+
+@pytest.mark.asyncio
+async def test_expired_simulation_plan_does_not_return_an_authorized_reference() -> None:
+    expired = simulation_plan(
+        plan_id="swing-plan", advice_id="swing-authorized",
+        valid_until=CUTOFF.replace(minute=0, second=0, microsecond=0),
+    )
+    result = await service(
+        decisions=MixedHorizonSimulationDecisions(expired),
+        clock=lambda: CUTOFF.replace(minute=1),
+    ).get("600000", TRADE_DATE, CUTOFF)
+
+    assert result.assessment.simulation_eligible is False
+    assert result.assessment.authorized_simulation_advice_id is None
+    assert result.assessment.authorized_simulation_plan_id is None
 
 
 def test_avoid_assessment_cannot_reuse_old_ready_plan() -> None:

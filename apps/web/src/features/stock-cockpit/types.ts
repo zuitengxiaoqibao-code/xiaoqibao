@@ -44,6 +44,8 @@ export type StockAssessment = {
   risks: string[];
   invalidation_conditions: string[];
   simulation_eligible: boolean;
+  authorized_simulation_advice_id: string | null;
+  authorized_simulation_plan_id: string | null;
   generated_at: string;
 };
 

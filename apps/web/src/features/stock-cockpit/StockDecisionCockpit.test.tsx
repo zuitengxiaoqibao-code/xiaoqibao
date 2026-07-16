@@ -31,7 +31,8 @@ const snapshot = (overrides: Partial<StockCockpitSnapshot> = {}): StockCockpitSn
     assessment_id: "assessment-1", symbol: "600000", action: "observe", conclusion: "行情与日线数据可用且无风险阻断，保持观察。", confidence: "0.75",
     supporting_evidence: [{ evidence_id: "assessment-e1", source: "tencent", snapshot_id: "quote-1", summary: "行情快照有效", observed_at: "2026-07-15T10:29:00+08:00" }],
     contrary_evidence: [], risks: ["市场与基本面条件可能在截止时间后变化。"], invalidation_conditions: ["任一核心分区状态或指标发生变化。"],
-    simulation_eligible: false, generated_at: "2026-07-15T10:30:00+08:00",
+    simulation_eligible: false, authorized_simulation_advice_id: null,
+    authorized_simulation_plan_id: null, generated_at: "2026-07-15T10:30:00+08:00",
   },
   sections: {
     market: section(), price_volume: section(), trend: section(), valuation: section(), fundamentals: section(),
@@ -124,7 +125,7 @@ describe("StockDecisionCockpit", () => {
     const gated = advice({
       simulation_gate: { quote_state: "ready", compliance_state: "ready", evidence_state: "ready", risk_state: "approve", risk_decision_id: "missing-gate", compliance_snapshot_id: "compliance-1" },
     });
-    renderCockpit(() => Promise.resolve(snapshot({ candidate_membership: ["short_term", "swing"], assessment: { ...snapshot().assessment, simulation_eligible: true }, current_advice: [gated] })));
+    renderCockpit(() => Promise.resolve(snapshot({ candidate_membership: ["short_term", "swing"], assessment: { ...snapshot().assessment, simulation_eligible: true, authorized_simulation_advice_id: "advice-intraday", authorized_simulation_plan_id: "missing-plan" }, current_advice: [gated] })));
     expect(await screen.findByText("短线候选")).toBeInTheDocument();
     expect(screen.getByText("波段候选")).toBeInTheDocument();
     expect(screen.getByText("模拟操作计划")).toBeInTheDocument();
@@ -137,8 +138,21 @@ describe("StockDecisionCockpit", () => {
       simulation_gate: { quote_state: "ready", compliance_state: "ready", evidence_state: "ready", risk_state: "approve", risk_decision_id: "missing-gate", compliance_snapshot_id: "compliance-1" },
     });
     renderCockpit(() => Promise.resolve(snapshot({ assessment: { ...snapshot().assessment, simulation_eligible: false }, current_advice: [gated] })));
-    expect(await screen.findByText("后端判定暂不具备模拟方案资格")).toBeInTheDocument();
+    expect(await screen.findByText("后端未返回权威模拟方案引用")).toBeInTheDocument();
     expect(screen.queryByText("模拟操作计划")).not.toBeInTheDocument();
+  });
+
+  it("shows only the advice named by the authoritative simulation reference", async () => {
+    const intraday = advice({ advice_id: "intraday-unverified", conclusion: "伪造盘中方案", simulation_plan_id: "forged-plan" });
+    const swing = advice({ advice_id: "swing-authorized", horizon: "swing", conclusion: "波段权威方案", simulation_plan_id: "swing-plan" });
+    renderCockpit(() => Promise.resolve(snapshot({
+      candidate_membership: ["short_term", "swing"], current_advice: [intraday, swing],
+      assessment: { ...snapshot().assessment, simulation_eligible: true, authorized_simulation_advice_id: "swing-authorized", authorized_simulation_plan_id: "swing-plan" },
+    })));
+    expect(await screen.findByRole("heading", { name: "波段权威方案" })).toBeInTheDocument();
+    expect(screen.getByText("swing-plan")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "伪造盘中方案" })).not.toBeInTheDocument();
+    expect(screen.queryByText("forged-plan")).not.toBeInTheDocument();
   });
 
   it("keeps the last successful snapshot and marks it stale after refresh failure", async () => {

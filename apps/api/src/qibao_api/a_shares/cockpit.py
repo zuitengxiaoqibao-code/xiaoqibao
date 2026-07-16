@@ -121,14 +121,17 @@ class StockDecisionCockpitService:
         sections = self._enforce_cutoff(sections, effective_cutoff)
         sections["funds"] = _unavailable("not-connected", "fund_data_not_connected")
         sections["backtest"] = _unavailable("not-run", "backtest_not_run")
-        phases, authorized_advice_ids = self._phases(symbol, as_of, effective_cutoff)
+        phases, authorized_simulation_plans = self._phases(symbol, as_of, effective_cutoff)
         current = self._current_advice(phases)
         membership = self._candidate_membership(current)
         assessment = self.assessor.assess(symbol, sections, membership, effective_cutoff)
+        authorized_advice_id, authorized_plan_id = self._authorized_simulation_reference(
+            assessment.action, current, authorized_simulation_plans
+        )
         assessment = assessment.model_copy(update={
-            "simulation_eligible": self._simulation_eligible(
-                assessment.action, current, authorized_advice_ids
-            )
+            "simulation_eligible": authorized_advice_id is not None,
+            "authorized_simulation_advice_id": authorized_advice_id,
+            "authorized_simulation_plan_id": authorized_plan_id,
         })
         qualities = {section.status for section in sections.values()}
         overall: Literal["ready", "partial", "blocked"] = (
@@ -154,12 +157,26 @@ class StockDecisionCockpitService:
 
     @staticmethod
     def _simulation_eligible(action, current_advice, authorized_advice_ids) -> bool:
+        advice_id, _ = StockDecisionCockpitService._authorized_simulation_reference(
+            action, current_advice, {item: "authorized" for item in authorized_advice_ids}
+        )
+        return advice_id is not None
+
+    @staticmethod
+    def _authorized_simulation_reference(action, current_advice, authorized_plans):
         if action != "observe":
-            return False
-        for item in current_advice:
-            if item.advice_id in authorized_advice_ids:
-                return True
-        return False
+            return None, None
+        priority = {"intraday": 0, "swing": 1}
+        ordered = sorted(
+            current_advice,
+            key=lambda item: (
+                priority[item.horizon], -item.created_at.timestamp(), item.advice_id
+            ),
+        )
+        for item in ordered:
+            if plan_id := authorized_plans.get(item.advice_id):
+                return item.advice_id, plan_id
+        return None, None
 
     async def _diagnosis_sections(self, symbol, as_of, cutoff):
         try:
@@ -211,7 +228,7 @@ class StockDecisionCockpitService:
 
     def _phases(self, symbol, as_of, cutoff):
         result = {}
-        authorized_advice_ids = set()
+        authorized_simulation_plans = {}
         for phase in PHASES:
             advice = []
             versions = []
@@ -249,7 +266,7 @@ class StockDecisionCockpitService:
                             and gate.risk_state == "approve"
                             and plan.valid_from <= cutoff <= plan.valid_until
                         ):
-                            authorized_advice_ids.add(item.advice_id)
+                            authorized_simulation_plans[item.advice_id] = plan.plan_id
                 advice.extend(selected)
                 versions.append(DecisionVersion(
                     snapshot_id=snapshot.snapshot_id, sequence=snapshot.sequence,
@@ -258,7 +275,7 @@ class StockDecisionCockpitService:
             result[phase] = StockPhaseHistory(
                 advice=tuple(advice), change_stream=tuple(versions)
             )
-        return result, authorized_advice_ids
+        return result, authorized_simulation_plans
 
     @staticmethod
     def _current_advice(phases):
