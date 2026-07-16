@@ -1,6 +1,7 @@
 import json
 import os
 from pathlib import Path
+from urllib.parse import quote
 
 import pytest
 
@@ -158,3 +159,69 @@ def test_settings_returns_nfkc_normalized_safe_values() -> None:
 
     assert result.model == "model"
     assert result.api_key == "secret"
+
+
+def nested_encode(value: str, rounds: int) -> str:
+    for _ in range(rounds):
+        value = quote(value, safe="")
+    return value
+
+
+def nested_encode_secret(rounds: int) -> str:
+    value = "%73ecret-value"
+    return nested_encode(value, rounds - 1)
+
+
+def test_settings_rejects_quadruple_encoded_secret() -> None:
+    secret = "secret-value"
+    url = f"https://api.example/v1/{nested_encode_secret(4)}"
+
+    with pytest.raises(ValueError) as error:
+        AISettings(base_url=url, model="model-a", api_key=secret)
+
+    assert secret not in str(error.value)
+
+
+def test_settings_rejects_secret_encoded_beyond_decode_limit() -> None:
+    secret = "secret-value"
+    url = f"https://api.example/v1/{nested_encode_secret(10)}"
+
+    with pytest.raises(ValueError) as error:
+        AISettings(base_url=url, model="model-a", api_key=secret)
+
+    assert secret not in str(error.value)
+
+
+def test_settings_rejects_outer_encoded_malformed_escape() -> None:
+    with pytest.raises(ValueError) as error:
+        AISettings(
+            base_url="https://api.example/v1/bad%252",
+            model="model-a",
+            api_key="secret-value",
+        )
+
+    assert "bad" not in str(error.value)
+    assert "secret-value" not in str(error.value)
+
+
+def test_settings_rejects_excessive_benign_nested_encoding() -> None:
+    encoded = nested_encode("benign path", 10)
+
+    with pytest.raises(ValueError) as error:
+        AISettings(
+            base_url=f"https://api.example/v1/{encoded}",
+            model="model-a",
+            api_key="secret-value",
+        )
+
+    assert encoded not in str(error.value)
+
+
+def test_settings_accepts_stable_single_encoded_benign_path() -> None:
+    settings = AISettings(
+        base_url="https://api.example/v1/benign%20path",
+        model="model-a",
+        api_key="secret-value",
+    )
+
+    assert settings.base_url.endswith("/benign%20path")

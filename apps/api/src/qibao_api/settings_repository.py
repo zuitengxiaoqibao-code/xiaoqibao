@@ -10,19 +10,24 @@ from urllib.parse import unquote, urlsplit
 
 
 _MALFORMED_PERCENT_ESCAPE = re.compile(r"%(?![0-9A-Fa-f]{2})")
+_MAX_URL_DECODE_PASSES = 8
 
 
 def _decoded_url_forms(value: str) -> tuple[str, ...]:
-    if _MALFORMED_PERCENT_ESCAPE.search(value):
-        raise ValueError("base_url contains an invalid percent escape")
     forms = [value]
     current = value
-    for _ in range(3):
+    for _ in range(_MAX_URL_DECODE_PASSES):
+        if _MALFORMED_PERCENT_ESCAPE.search(current):
+            raise ValueError("base_url contains an invalid percent escape")
         decoded = unquote(current, errors="strict")
+        if _MALFORMED_PERCENT_ESCAPE.search(decoded):
+            raise ValueError("base_url contains an invalid percent escape")
         forms.append(decoded)
         if decoded == current:
-            break
+            return tuple(forms)
         current = decoded
+    if unquote(current, errors="strict") != current:
+        raise ValueError("base_url contains excessive nested encoding")
     return tuple(forms)
 
 
