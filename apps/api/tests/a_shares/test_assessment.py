@@ -156,6 +156,78 @@ def test_assessment_identity_changes_with_frozen_source_evidence() -> None:
     assert first.assessment_id != second.assessment_id
 
 
+def test_structured_classification_adds_evidence_without_changing_action() -> None:
+    without_classification = sections()
+    without_classification["industry"] = section(
+        "industry",
+        status="unavailable",
+        observed_at=None,
+        metrics={},
+    )
+    without_classification["risk"] = section(
+        "risk", metrics={"missing_section_count": 2}
+    )
+    with_classification = sections()
+    with_classification["industry"] = section(
+        "industry",
+        metrics={
+            "industry": "白酒Ⅱ",
+            "board_tags": "食品饮料、白酒Ⅲ、白酒Ⅱ",
+        },
+    ).model_copy(update={"snapshot_id": "classification-snapshot"})
+    with_classification["risk"] = section(
+        "risk", metrics={"missing_section_count": 2}
+    )
+    assessor = DeterministicStockAssessor()
+
+    before = assessor.assess("600519", without_classification, (), CUTOFF)
+    after = assessor.assess("600519", with_classification, (), CUTOFF)
+
+    assert after.action == before.action == "observe"
+    assert after.confidence == before.confidence == Decimal("0.75")
+    assert after.assessment_id != before.assessment_id
+    assert any(
+        "所属行业 白酒Ⅱ" in evidence.summary
+        for evidence in after.supporting_evidence
+    )
+
+
+def test_news_industry_labels_keep_news_source_and_timestamp() -> None:
+    values = sections()
+    news_observed_at = CUTOFF.replace(minute=1)
+    values["news"] = section(
+        "news",
+        observed_at=news_observed_at,
+        metrics={
+            "event_count": 1,
+            "adverse_event_count": 0,
+            "event_industries": "白酒",
+        },
+    ).model_copy(update={"source": "frozen-news-events"})
+    values["industry"] = section(
+        "industry",
+        observed_at=CUTOFF,
+        metrics={"industry": "白酒Ⅱ", "board_tags": "食品饮料"},
+    ).model_copy(update={"source": "eastmoney-stock-classification"})
+
+    result = DeterministicStockAssessor().assess(
+        "600519", values, (), news_observed_at
+    )
+
+    news = next(
+        item for item in result.supporting_evidence
+        if item.source == "frozen-news-events"
+    )
+    industry = next(
+        item for item in result.supporting_evidence
+        if item.source == "eastmoney-stock-classification"
+    )
+    assert news.observed_at == news_observed_at
+    assert "新闻事件行业标签 白酒" in news.summary
+    assert industry.observed_at == CUTOFF
+    assert "新闻事件行业标签" not in industry.summary
+
+
 def test_fundamental_summary_distinguishes_data_update_date_from_report_period() -> None:
     values = sections()
     values["fundamentals"] = section("fundamentals", metrics={

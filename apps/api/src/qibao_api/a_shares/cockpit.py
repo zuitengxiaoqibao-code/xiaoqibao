@@ -87,7 +87,7 @@ def _aware(value: datetime | date | None) -> datetime | None:
         return None
     if isinstance(value, datetime):
         return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
-    return datetime.combine(value, time.min, tzinfo=timezone.utc)
+    return datetime.combine(value, time.min, tzinfo=ZoneInfo("Asia/Shanghai"))
 
 
 def _unavailable(source: str, reason: str, explanation: str | None = None) -> CockpitSection:

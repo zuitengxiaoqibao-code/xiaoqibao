@@ -1,5 +1,6 @@
 from datetime import date, datetime, timezone
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 import pytest
 
 from qibao_api.a_shares.cockpit import StockDecisionCockpitService
@@ -91,6 +92,18 @@ class QuoteObservedDuringRequest(Diagnosis):
         sections["market"] = sections["market"].model_copy(
             update={"observed_at": CUTOFF.replace(second=2)}
         )
+        return result.model_copy(update={"sections": sections})
+
+
+class DateObservedDiagnosis(Diagnosis):
+    async def diagnose(self, symbol, as_of, *, persist=True, cutoff=None):
+        result = await super().diagnose(
+            symbol, as_of, persist=persist, cutoff=cutoff
+        )
+        sections = {
+            name: section.model_copy(update={"observed_at": as_of})
+            for name, section in result.sections.items()
+        }
         return result.model_copy(update={"sections": sections})
 
 
@@ -312,6 +325,39 @@ async def test_live_cockpit_extends_cutoff_to_quote_observed_during_request() ->
 
 
 @pytest.mark.asyncio
+async def test_live_cockpit_treats_date_evidence_as_beijing_day_start() -> None:
+    as_of = date(2026, 7, 17)
+    cutoff = datetime(2026, 7, 16, 16, 8, tzinfo=timezone.utc)
+
+    class MidnightDirectory:
+        def resolve_at(self, symbol, requested_cutoff):
+            assert requested_cutoff == cutoff
+            return AShareInstrument(
+                symbol=symbol,
+                name="贵州茅台",
+                exchange="sh",
+                observed_at=cutoff,
+                quote_quality="ready",
+            )
+
+    cockpit = StockDecisionCockpitService(
+        MidnightDirectory(),
+        DateObservedDiagnosis(),
+        Decisions(),
+        ReadOnlyPreparation(),
+        clock=lambda: cutoff,
+    )
+
+    result = await cockpit.get("600519", as_of, cutoff)
+
+    assert result.sections["trend"].status == "ready"
+    assert result.sections["risk"].status == "ready"
+    assert result.sections["trend"].observed_at == datetime(
+        2026, 7, 17, tzinfo=ZoneInfo("Asia/Shanghai")
+    )
+
+
+@pytest.mark.asyncio
 async def test_historical_cockpit_keeps_strict_requested_cutoff() -> None:
     historical_date = TRADE_DATE.replace(day=14)
     result = await service(clock=lambda: CUTOFF.replace(hour=8)).get(
@@ -458,4 +504,4 @@ async def test_cockpit_keeps_finance_and_news_when_market_and_bars_are_unavailab
     assert result.sections["price_volume"].status == "unavailable"
     assert result.sections["fundamentals"].status == "ready"
     assert result.sections["news"].status == "ready"
-    assert result.sections["industry"].status == "ready"
+    assert result.sections["industry"].status == "unavailable"

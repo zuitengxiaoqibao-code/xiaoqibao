@@ -77,3 +77,21 @@ class AuthorizedFinanceSource:
     def fetch(self, symbol: str):
         self._compliance.require_feature_sources(self._feature, self._asset)
         return self._source.fetch(symbol)
+
+
+class AuthorizedClassificationSource:
+    def __init__(
+        self,
+        source,
+        compliance: ComplianceRepository,
+        feature: str,
+        asset: AssetKind | str,
+    ) -> None:
+        self._source = source
+        self._compliance = compliance
+        self._feature = feature
+        self._asset = AssetKind(asset)
+
+    async def fetch(self, symbol: str):
+        self._compliance.require_feature_sources(self._feature, self._asset)
+        return await self._source.fetch(symbol)

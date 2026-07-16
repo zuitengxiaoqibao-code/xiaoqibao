@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { AShareResearchView } from "./AShareResearchView";
@@ -46,8 +46,8 @@ const partialDiagnosis = {
     trend: { ...readySection(), metrics: { distance_ma20: "0.03", return_20d: "0.12" } },
     valuation: { ...readySection("tencent"), metrics: { pe_ttm: "6.32", pb: "0.58" } },
     fundamentals: { status: "unavailable" as const, observed_at: null, source: "mootdx-finance", metrics: {}, evidence_ids: [], explanation: "基本面数据不可用：未授权" },
-    events: { ...readySection("frozen-news-events"), metrics: { event_count: 0 } },
-    industry: { ...readySection("frozen-news-events"), metrics: { industries: "银行" } },
+    events: { ...readySection("frozen-news-events"), metrics: { event_count: 0, adverse_event_count: 0, event_industries: "" }, evidence_ids: ["event-verified-news-1"] },
+    industry: { ...readySection("eastmoney-stock-classification"), metrics: { industry: "银行", board_tags: "银行" }, evidence_ids: ["stock-classification-1234567890abcdef12345678"] },
     risk: { ...readySection("qibao-risk-v1"), metrics: { missing_section_count: 1 } },
   },
 };
@@ -88,6 +88,26 @@ describe("AShareResearchView", () => {
     expect(screen.getByText("MA20 趋势偏离")).toBeInTheDocument();
     expect(screen.getAllByText(/数据截至/).length).toBeGreaterThan(0);
     expect(loadDiagnosis).toHaveBeenCalledWith("600000", "2026-07-14");
+  });
+
+  it("shows the exact immutable evidence ids under their own sources", async () => {
+    render(<AShareResearchView
+      loadCandidates={() => Promise.resolve(boards)}
+      loadDiagnosis={() => Promise.resolve(partialDiagnosis)}
+    />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /600000/ }));
+    const industrySection = (await screen.findByText("行业归属")).closest("section");
+    const newsSection = screen.getByText("关联事件").closest("section");
+    expect(industrySection).not.toBeNull();
+    expect(newsSection).not.toBeNull();
+    fireEvent.click(within(industrySection!).getByText("1 条冻结证据"));
+    fireEvent.click(within(newsSection!).getByText("1 条冻结证据"));
+    expect(within(industrySection!).getByText(
+      "stock-classification-1234567890abcdef12345678",
+    )).toBeInTheDocument();
+    expect(within(newsSection!).getByText("event-verified-news-1")).toBeInTheDocument();
+    expect(within(industrySection!).queryByText("event-verified-news-1")).not.toBeInTheDocument();
   });
 
   it("explains an empty local universe without inventing candidates", async () => {

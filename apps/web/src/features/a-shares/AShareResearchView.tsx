@@ -26,7 +26,8 @@ const metricNames: Record<string, string> = {
   pb: "市净率", market_cap_yi: "总市值（亿元）", report_period: "财报期",
   industry: "财务行业", eps: "每股收益", roe: "净资产收益率", net_profit: "净利润",
   revenue: "主营收入", book_value_per_share: "每股净资产", total_shares: "总股本",
-  event_count: "关联事件数", industries: "行业标签", missing_section_count: "缺失分区数",
+  event_count: "关联事件数", board_tags: "板块标签",
+  event_industries: "新闻事件行业标签", missing_section_count: "缺失分区数",
   symbol: "股票代码",
   momentum: "动量贡献", volume: "量能贡献", trend: "趋势贡献",
   liquidity: "流动性贡献", risk_penalty: "波动风险扣分",
@@ -35,6 +36,7 @@ const metricNames: Record<string, string> = {
 const sourceNames: Record<string, string> = {
   tencent: "腾讯行情", mootdx: "通达信日线", "mootdx-finance": "通达信财务",
   "frozen-news-events": "冻结新闻事件", "qibao-risk-v1": "刑部规则 v1",
+  "eastmoney-stock-classification": "东方财富行业与板块",
   "local-daily-bars": "本地日线仓",
 };
 const percentMetrics = new Set(["change_percent", "turnover_rate", "return_5d", "distance_ma20", "return_20d", "volatility_20d", "drawdown_60d", "roe"]);
@@ -87,7 +89,7 @@ function Section({ name, section }: { name: string; section: DiagnosisSection })
           <p className="section-explanation">{section.explanation}</p>
         </>
       )}
-      <footer><span>数据截至 {observedAt(section.observed_at)}</span>{section.evidence_ids.length > 0 && <code>{section.evidence_ids.length} 条冻结证据</code>}</footer>
+      <footer><span>数据截至 {observedAt(section.observed_at)}</span>{section.evidence_ids.length > 0 && <details className="diagnosis-evidence"><summary>{section.evidence_ids.length} 条冻结证据</summary><ul>{section.evidence_ids.map((id) => <li key={id}><code>{id}</code></li>)}</ul></details>}</footer>
     </section>
   );
 }

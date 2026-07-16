@@ -64,10 +64,22 @@ async def test_lifespan_injects_guarded_production_sources_and_closes_compliance
         assert compliance.list_feature_source_history("paper_orders", "a_share") == []
         assert len(compliance.list_feature_source_history("history_sync.baidu", "a_share")) == 1
         assert len(compliance.list_feature_source_history("market_news", "a_share")) == 1
+        assert len(
+            compliance.list_feature_source_history("stock_classification", "a_share")
+        ) == 1
         news_repository = application.state.news_repository
         assert application.state.news_service.repository is news_repository
         assert application.state.news_service.stock_source is not None
         assert application.state.news_service.linker.industry_keywords == {}
+        classification_repository = application.state.stock_classification_repository
+        assert (
+            application.state.a_share_diagnosis_service.classification_repository
+            is classification_repository
+        )
+        assert (
+            application.state.a_share_preparation_service.classification_service.repository
+            is classification_repository
+        )
         briefing_repository = application.state.briefing_repository
         assert application.state.briefing_workflow.briefing_repository is briefing_repository
         decision_repository = application.state.decision_repository
@@ -88,6 +100,8 @@ async def test_lifespan_injects_guarded_production_sources_and_closes_compliance
         compliance.list_feature_source_history("realtime_quotes", "a_share")
     with pytest.raises(sqlite3.ProgrammingError, match="closed"):
         news_repository.events()
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        classification_repository.count()
     with pytest.raises(sqlite3.ProgrammingError, match="closed"):
         briefing_repository.reports()
     with pytest.raises(sqlite3.ProgrammingError, match="closed"):

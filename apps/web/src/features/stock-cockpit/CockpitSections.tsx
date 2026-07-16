@@ -20,6 +20,8 @@ const reasonNames: Record<string, string> = {
 const sourceNames: Record<string, string> = {
   tencent: "腾讯行情", mootdx: "通达信数据", eastmoney: "东方财富公开数据", baidu: "百度行情",
   "mootdx-finance": "通达信财务快照",
+  "eastmoney-stock-classification": "东方财富行业与板块",
+  "frozen-news-events": "已核验新闻事件",
   cockpit: "本地研判数据", assessment: "本地研判数据",
 };
 const metricNames: Record<string, string> = {
@@ -33,7 +35,8 @@ const metricNames: Record<string, string> = {
   eps: "每股收益", roe: "净资产收益率", net_profit: "净利润", revenue: "营业收入",
   book_value_per_share: "每股净资产", total_shares: "总股本",
   event_count: "关联事件", adverse_event_count: "重大反方事件",
-  industries: "已核验行业标签", missing_section_count: "缺失分区", symbol: "股票代码",
+  board_tags: "板块标签", event_industries: "新闻事件行业标签",
+  missing_section_count: "缺失分区", symbol: "股票代码",
 };
 
 const percentMetrics = new Set(["change_percent", "turnover_rate", "roe"]);
@@ -49,7 +52,7 @@ function renderValue(value: unknown): string {
   if (value === null || value === undefined || value === "") return "未提供";
   if (Array.isArray(value)) return value.length && value.every((item) => ["string", "number", "boolean"].includes(typeof item)) ? value.map(String).join("、") : "未提供可展示说明";
   if (!["string", "number", "boolean"].includes(typeof value)) return "未提供可展示说明";
-  return String(value).slice(0, 120);
+  return String(value);
 }
 
 function formatMetric(key: string, value: unknown): string {
@@ -72,6 +75,9 @@ function formatMetric(key: string, value: unknown): string {
 function SectionBand({ sectionKey, title, section }: { sectionKey: string; title: string; section: CockpitSection }) {
   const rawMetrics = section.payload.metrics && typeof section.payload.metrics === "object" ? section.payload.metrics as Record<string, unknown> : {};
   const metrics = Object.keys(metricNames).filter((key) => key in rawMetrics).map((key) => [key, rawMetrics[key]] as const);
+  const evidenceIds = Array.isArray(section.payload.evidence_ids)
+    ? section.payload.evidence_ids.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    : [];
   const reason = section.reason ? reasonNames[section.reason] ?? "未提供可展示说明" : null;
   const source = sourceNames[section.source] ?? "公开数据来源";
   return <section className={`cockpit-section status-${section.status}`} aria-labelledby={`cockpit-${sectionKey}`}>
@@ -79,6 +85,7 @@ function SectionBand({ sectionKey, title, section }: { sectionKey: string; title
     {reason && <p className="section-reason">{reason}</p>}
     {section.status === "unavailable" || section.status === "blocked" ? !reason && <p className="section-degraded">当前没有可验证数据</p> : <>
       {metrics.length > 0 ? <details><summary><ChevronDown size={14} />查看详细指标</summary><dl>{metrics.map(([key, value]) => <div key={key}><dt>{metricNames[key] ?? key}</dt><dd>{formatMetric(key, value)}</dd></div>)}</dl></details> : <p className="section-summary">当前快照没有可展开的指标。</p>}
+      {evidenceIds.length > 0 && <details className="section-evidence"><summary><ChevronDown size={14} />{evidenceIds.length} 条证据编号</summary><ul>{evidenceIds.map((id) => <li key={id}><code>{id}</code></li>)}</ul></details>}
     </>}
     <footer><span>来源：{source}</span><span>时间：{formatTime(section.observed_at)}</span>{section.status === "stale" && <span>当前数据已陈旧</span>}</footer>
   </section>;

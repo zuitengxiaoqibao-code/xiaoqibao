@@ -3,7 +3,11 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from qibao_api.contracts.risk import ComplianceRecord
-from qibao_api.libu_compliance.guard import AuthorizedHistorySource, AuthorizedQuoteSource
+from qibao_api.libu_compliance.guard import (
+    AuthorizedClassificationSource,
+    AuthorizedHistorySource,
+    AuthorizedQuoteSource,
+)
 from qibao_api.libu_compliance.repository import (
     ComplianceRepository,
     SourceAuthorizationError,
@@ -234,4 +238,42 @@ async def test_authorized_quote_guard_checks_before_each_fetch(tmp_path) -> None
 
     with pytest.raises(SourceAuthorizationError, match="tencent:revoked"):
         await guarded.fetch("600000")
+    assert source.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_authorized_classification_guard_checks_before_each_fetch(tmp_path) -> None:
+    class Source:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def fetch(self, symbol: str):
+            self.calls += 1
+            return symbol
+
+    repository = ComplianceRepository(tmp_path / "compliance.db")
+    repository.set_feature_sources(
+        "stock_classification", "a_share", ("eastmoney",)
+    )
+    repository.append_record(
+        compliance_record("permission-1", source="eastmoney")
+    )
+    source = Source()
+    guarded = AuthorizedClassificationSource(
+        source, repository, "stock_classification", "a_share"
+    )
+
+    assert await guarded.fetch("600519") == "600519"
+    repository.append_record(
+        compliance_record(
+            "permission-2",
+            source="eastmoney",
+            state="revoked",
+            acknowledged_at=None,
+            recorded_at=NOW + timedelta(hours=1),
+        )
+    )
+
+    with pytest.raises(SourceAuthorizationError, match="eastmoney:revoked"):
+        await guarded.fetch("600519")
     assert source.calls == 1

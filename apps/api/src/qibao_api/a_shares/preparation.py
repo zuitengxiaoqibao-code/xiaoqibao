@@ -106,9 +106,11 @@ class AStockPreparationService:
         news_repository,
         trading_calendar,
         *,
+        classification_service=None,
         lock_dir: Path,
         clock: Callable[[], datetime] | None = None,
         news_cooldown_seconds: int = 300,
+        classification_cooldown_seconds: int = 86400,
         lock_timeout_seconds: float = 5.0,
         lock_retry_seconds: float = 0.01,
     ) -> None:
@@ -118,9 +120,11 @@ class AStockPreparationService:
         self.news_service = news_service
         self.news_repository = news_repository
         self.trading_calendar = trading_calendar
+        self.classification_service = classification_service
         self.lock_dir = Path(lock_dir)
         self.clock = clock or (lambda: datetime.now(timezone.utc))
         self.news_cooldown_seconds = news_cooldown_seconds
+        self.classification_cooldown_seconds = classification_cooldown_seconds
         self.lock_timeout_seconds = lock_timeout_seconds
         self.lock_retry_seconds = lock_retry_seconds
         self._active_locks = 0
@@ -184,7 +188,8 @@ class AStockPreparationService:
             history_error = str(error)
 
         news_refreshed, news_error = await self._refresh_news(symbol)
-        refreshed = refreshed or news_refreshed
+        classification_refreshed = await self._refresh_classification(symbol)
+        refreshed = refreshed or news_refreshed or classification_refreshed
         return await self._inspect(
             symbol,
             as_of,
@@ -272,6 +277,20 @@ class AStockPreparationService:
         except PreparationLockTimeout as error_value:
             errors.append(str(error_value))
         return refreshed, "; ".join(dict.fromkeys(errors)) or None
+
+    async def _refresh_classification(self, symbol: str) -> bool:
+        if self.classification_service is None:
+            return False
+        try:
+            async with self._file_lock(f"classification-{symbol}.lock"):
+                marker = self._classification_marker(symbol)
+                if self._classification_is_fresh(marker):
+                    return False
+                await self.classification_service.sync_symbol(symbol)
+                self._write_news_marker(marker, self._now())
+                return True
+        except (PreparationLockTimeout, Exception):
+            return False
 
     async def _diagnosis_sources(self, symbol, as_of, cutoff):
         try:
@@ -365,6 +384,10 @@ class AStockPreparationService:
         self.lock_dir.mkdir(parents=True, exist_ok=True)
         return self.lock_dir / f"news-{symbol}-success.txt"
 
+    def _classification_marker(self, symbol: str):
+        self.lock_dir.mkdir(parents=True, exist_ok=True)
+        return self.lock_dir / f"classification-{symbol}-success.txt"
+
     def _write_news_marker(self, marker: Path, refreshed_at: datetime) -> None:
         temporary = marker.with_name(f".{marker.name}.{uuid4().hex}.tmp")
         try:
@@ -382,6 +405,17 @@ class AStockPreparationService:
                 marker.read_text(encoding="utf-8")
             )
             return (self._now() - refreshed_at).total_seconds() < self.news_cooldown_seconds
+        except (OSError, ValueError):
+            return False
+
+    def _classification_is_fresh(self, marker: Path):
+        try:
+            refreshed_at = datetime.fromisoformat(
+                marker.read_text(encoding="utf-8")
+            )
+            return (
+                self._now() - refreshed_at
+            ).total_seconds() < self.classification_cooldown_seconds
         except (OSError, ValueError):
             return False
 

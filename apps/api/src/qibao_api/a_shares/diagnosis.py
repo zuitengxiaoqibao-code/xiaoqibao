@@ -18,6 +18,7 @@ from qibao_api.contracts.bars import DailyBar
 from qibao_api.contracts.market import AssetKind
 from qibao_api.contracts.news import NormalizedNewsEvent
 from qibao_api.gongbu.tencent_quotes import TencentMarketSnapshot
+from qibao_api.gongbu.stock_classification import StockClassificationSnapshot
 from qibao_api.libu_compliance.repository import SourceAuthorizationError
 
 
@@ -85,6 +86,12 @@ class NewsRepositoryPort(Protocol):
     def events(self) -> list[NormalizedNewsEvent]: ...
 
 
+class ClassificationRepositoryPort(Protocol):
+    def latest(
+        self, symbol: str, as_of: date, *, cutoff: datetime | None = None
+    ) -> StockClassificationSnapshot | None: ...
+
+
 class ResearchSnapshotRepositoryPort(Protocol):
     def append_candidate_board(
         self, board: CandidateBoard, input_payload: dict | None = None
@@ -109,6 +116,7 @@ class AShareDiagnosisService:
         news_repository: NewsRepositoryPort,
         research_repository: ResearchSnapshotRepositoryPort | None = None,
         clock: Callable[[], datetime] = datetime.now,
+        classification_repository: ClassificationRepositoryPort | None = None,
     ) -> None:
         self.bar_repository = bar_repository
         self.market_source = market_source
@@ -116,6 +124,7 @@ class AShareDiagnosisService:
         self.news_repository = news_repository
         self.research_repository = research_repository
         self.clock = clock
+        self.classification_repository = classification_repository
 
     async def inspect_sources(
         self, symbol: str, as_of: date, *, cutoff: datetime | None = None
@@ -194,9 +203,12 @@ class AShareDiagnosisService:
             symbol, as_of, cutoff=cutoff, degrade_authorization=not persist
         )
         events, news_error = self._events(symbol, as_of, cutoff=cutoff)
+        classification, classification_error = self._classification(
+            symbol, as_of, cutoff=cutoff
+        )
         sections = self._sections(
             symbol, as_of, bars, market, market_error, finance, finance_error,
-            events, news_error,
+            events, news_error, classification, classification_error,
         )
         missing = [name for name, section in sections.items() if section.status == "unavailable"]
         diagnosis = AShareDiagnosis(
@@ -219,6 +231,11 @@ class AShareDiagnosisService:
             "finance_error": finance_error,
             "events": [event.model_dump(mode="json") for event in events],
             "news_error": news_error,
+            "classification": (
+                classification.model_dump(mode="json", exclude={"raw_snapshot"})
+                if classification is not None else None
+            ),
+            "classification_error": classification_error,
             "factor_version": FACTOR_VERSION,
         }
         snapshot_id = self.research_repository.append_diagnosis(
@@ -286,6 +303,21 @@ class AShareDiagnosisService:
         except Exception as error:
             return [], str(error)
 
+    def _classification(
+        self, symbol: str, as_of: date, *, cutoff: datetime | None = None,
+    ) -> tuple[StockClassificationSnapshot | None, str | None]:
+        if self.classification_repository is None:
+            return None, None
+        try:
+            snapshot = self.classification_repository.latest(
+                symbol, as_of, cutoff=cutoff
+            )
+        except Exception as error:
+            return None, str(error)
+        if snapshot is None:
+            return None, "no verified classification snapshot at cutoff"
+        return snapshot, None
+
     def _sections(
         self,
         symbol: str,
@@ -297,14 +329,22 @@ class AShareDiagnosisService:
         finance_error: str | None,
         events: list[NormalizedNewsEvent],
         news_error: str | None,
+        classification: StockClassificationSnapshot | None,
+        classification_error: str | None,
     ) -> dict[str, DiagnosisSection]:
         sections: dict[str, DiagnosisSection] = {}
         sections["market"] = self._market_section(market, market_error)
         sections["valuation"] = self._valuation_section(market, market_error)
         sections.update(self._bar_sections(symbol, bars, as_of))
         sections["fundamentals"] = self._fundamental_section(finance, finance_error)
-        sections.update(self._event_sections(events, news_error))
-        risk_missing = [name for name, section in sections.items() if section.status == "unavailable"]
+        sections["events"] = self._event_section(events, news_error)
+        sections["industry"] = self._industry_section(
+            classification, classification_error
+        )
+        risk_missing = [
+            name for name, section in sections.items()
+            if name != "industry" and section.status == "unavailable"
+        ]
         sections["risk"] = DiagnosisSection(
             status="ready",
             observed_at=as_of,
@@ -444,37 +484,55 @@ class AShareDiagnosisService:
         )
 
     @staticmethod
-    def _event_sections(
+    def _event_section(
         events: list[NormalizedNewsEvent], error: str | None
-    ) -> dict[str, DiagnosisSection]:
+    ) -> DiagnosisSection:
         if error is not None:
-            unavailable = _unavailable("news-repository", f"事件数据不可用：{error}")
-            return {"events": unavailable, "industry": unavailable}
+            return _unavailable("news-repository", f"事件数据不可用：{error}")
         event_ids = tuple(event.event_id for event in events)
         adverse_event_count = sum(
             1 for event in events
             if "risk" in event.event_type or "风险事件" in event.themes
         )
-        industries = sorted({
+        event_industries = sorted({
             industry
             for event in events
             if len(event.affected_instruments) == 1
             for industry in event.industries
         })
         observed_at = max((event.normalized_at for event in events), default=None)
-        events_section = DiagnosisSection(
+        return DiagnosisSection(
             status="ready", observed_at=observed_at, source="frozen-news-events",
             metrics={
                 "event_count": len(events),
                 "adverse_event_count": adverse_event_count,
+                "event_industries": "、".join(event_industries),
             }, evidence_ids=event_ids,
-            explanation="只展示冻结事件中明确关联该股票的记录。",
-        )
-        industry_section = DiagnosisSection(
-            status="ready", observed_at=observed_at, source="frozen-news-events",
-            metrics={"industries": "、".join(industries)}, evidence_ids=event_ids,
             explanation=(
-                "行业标签来自已核验事件。" if industries else "当前没有已核验行业标签。"
+                "只展示冻结事件中明确关联该股票的记录；"
+                "行业标签仅取自单一股票关联事件。"
             ),
         )
-        return {"events": events_section, "industry": industry_section}
+
+    @staticmethod
+    def _industry_section(
+        classification: StockClassificationSnapshot | None,
+        classification_error: str | None,
+    ) -> DiagnosisSection:
+        if classification is None:
+            return _unavailable(
+                "eastmoney-stock-classification",
+                "行业与板块数据不可用："
+                f"{classification_error or '未配置结构化分类仓储'}",
+            )
+        return DiagnosisSection(
+            status="ready",
+            observed_at=classification.observed_at,
+            source=classification.source,
+            metrics={
+                "industry": classification.industry,
+                "board_tags": "、".join(board.name for board in classification.boards),
+            },
+            evidence_ids=(classification.classification_id,),
+            explanation="所属行业和板块标签来自结构化分类快照。",
+        )

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { SelectedInstrumentProvider } from "../instrument-selection/SelectedInstrumentProvider";
@@ -105,6 +105,50 @@ describe("StockDecisionCockpit", () => {
     expect(screen.getAllByText("0.63%")).toHaveLength(2);
     expect(screen.queryByText("0.633862484613048135%")).not.toBeInTheDocument();
     expect(screen.getByText("来源：通达信财务快照")).toBeInTheDocument();
+  });
+
+  it("separates structured classification from news event labels", async () => {
+    const detailed = snapshot();
+    const allBoardTags = Array.from(
+      { length: 29 },
+      (_, index) => `已核验板块${String(index + 1).padStart(2, "0")}`,
+    ).join("、");
+    detailed.sections.industry.source = "eastmoney-stock-classification";
+    detailed.sections.industry.payload.metrics = {
+      industry: "食品饮料",
+      board_tags: allBoardTags,
+    };
+    detailed.sections.industry.payload.evidence_ids = [
+      "stock-classification-1234567890abcdef12345678",
+    ];
+    detailed.sections.news.source = "frozen-news-events";
+    detailed.sections.news.payload.metrics = {
+      event_count: 1,
+      adverse_event_count: 0,
+      event_industries: "消费行业",
+    };
+    detailed.sections.news.payload.evidence_ids = ["event-verified-news-1"];
+
+    renderCockpit(() => Promise.resolve(detailed));
+    fireEvent.click(await screen.findByText("数据详情"));
+
+    expect(screen.getByText("所属行业")).toBeInTheDocument();
+    expect(screen.getByText("板块标签")).toBeInTheDocument();
+    expect(screen.getByText("新闻事件行业标签")).toBeInTheDocument();
+    expect(screen.getByText(allBoardTags)).toBeInTheDocument();
+    expect(screen.getByText(/已核验板块29$/)).toBeInTheDocument();
+    expect(screen.getByText("来源：东方财富行业与板块")).toBeInTheDocument();
+    expect(screen.getByText("来源：已核验新闻事件")).toBeInTheDocument();
+    const industrySection = screen.getByRole("region", { name: "行业与题材" });
+    const newsSection = screen.getByRole("region", { name: "新闻与事件" });
+    fireEvent.click(within(industrySection).getByText("1 条证据编号"));
+    fireEvent.click(within(newsSection).getByText("1 条证据编号"));
+    expect(within(industrySection).getByText(
+      "stock-classification-1234567890abcdef12345678",
+    )).toBeInTheDocument();
+    expect(within(newsSection).getByText("event-verified-news-1")).toBeInTheDocument();
+    expect(within(industrySection).queryByText("event-verified-news-1")).not.toBeInTheDocument();
+    expect(screen.queryByText("已核验行业标签")).not.toBeInTheDocument();
   });
 
   it("keeps a missing market percentage visibly unknown", async () => {

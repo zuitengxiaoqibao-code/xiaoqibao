@@ -30,7 +30,13 @@ from qibao_api.gongbu.news_collection import (
 from qibao_api.gongbu.news_ingestion import NewsIngestionService
 from qibao_api.gongbu.news_linking import DeterministicNewsLinker
 from qibao_api.gongbu.news_repository import NewsRepository
+from qibao_api.gongbu.stock_classification import (
+    EastmoneyStockClassificationSource,
+    StockClassificationRepository,
+    StockClassificationService,
+)
 from qibao_api.libu_compliance.guard import (
+    AuthorizedClassificationSource,
     AuthorizedFinanceSource,
     AuthorizedHistorySource,
     AuthorizedQuoteSource,
@@ -135,11 +141,20 @@ async def lifespan(application: FastAPI):
     compliance.set_feature_sources("bond_clauses", "convertible_bond", ("eastmoney",))
     compliance.set_feature_sources("bond_valuations", "convertible_bond", ("eastmoney",))
     compliance.set_feature_sources("market_news", "a_share", ("eastmoney",))
+    compliance.set_feature_sources(
+        "stock_classification", "a_share", ("eastmoney",)
+    )
     bond_repository = BondClauseRepository(engine)
     bond_repository.initialize()
     diagnosis_repository = BondDiagnosisRepository(settings.data_dir / "bond-diagnoses.sqlite3")
     news_repository = NewsRepository(settings.data_dir / "news.sqlite3")
     application.state.news_repository = news_repository
+    stock_classification_repository = StockClassificationRepository(
+        settings.data_dir / "stock-classifications.sqlite3"
+    )
+    application.state.stock_classification_repository = (
+        stock_classification_repository
+    )
     a_share_research_repository = AShareResearchRepository(
         settings.data_dir / "a-share-research.sqlite3"
     )
@@ -210,6 +225,7 @@ async def lifespan(application: FastAPI):
                 ),
                 news_repository,
                 a_share_research_repository,
+                classification_repository=stock_classification_repository,
             )
             application.state.bond_repository = bond_repository
             application.state.bond_service = ConvertibleBondService(
@@ -241,6 +257,17 @@ async def lifespan(application: FastAPI):
                 ),
                 stock_source=EastmoneyStockNewsSource(client=client),
             )
+            application.state.stock_classification_service = (
+                StockClassificationService(
+                    AuthorizedClassificationSource(
+                        EastmoneyStockClassificationSource(client=client),
+                        compliance,
+                        "stock_classification",
+                        "a_share",
+                    ),
+                    stock_classification_repository,
+                )
+            )
             application.state.a_share_preparation_service = AStockPreparationService(
                 bar_repository,
                 application.state.market_data_service,
@@ -248,6 +275,9 @@ async def lifespan(application: FastAPI):
                 application.state.news_service,
                 news_repository,
                 trading_calendar,
+                classification_service=(
+                    application.state.stock_classification_service
+                ),
                 lock_dir=settings.data_dir / "preparation-locks",
             )
             application.state.briefing_workflow = DailyBriefingWorkflow(
@@ -382,6 +412,7 @@ async def lifespan(application: FastAPI):
                 bond_repository.close()
                 diagnosis_repository.close()
                 news_repository.close()
+                stock_classification_repository.close()
                 briefing_repository.close()
                 compliance.close()
                 audit_repository.close()

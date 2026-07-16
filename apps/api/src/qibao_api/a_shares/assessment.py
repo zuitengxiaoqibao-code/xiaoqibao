@@ -99,14 +99,23 @@ def _summary(name: str, status: str, metrics: dict[str, Any]) -> str:
         )
         label = "基本面"
     elif name == "news":
-        values = (
+        values = [
             ("关联事件", str(metrics.get("event_count", "")) or None, " 条"),
             ("重大反方事件", str(metrics.get("adverse_event_count", "")) or None, " 条"),
-        )
+        ]
+        event_industries = str(metrics.get("event_industries") or "").strip()
+        if event_industries:
+            values.append(("新闻事件行业标签", event_industries, ""))
         label = "新闻事件"
     elif name == "industry":
-        industries = str(metrics.get("industries") or "").strip()
-        return f"行业信息：{industries or '暂无已核验行业标签'}。"
+        industry = str(metrics.get("industry") or "").strip()
+        boards = str(metrics.get("board_tags") or "").strip()
+        details = []
+        if industry:
+            details.append(f"所属行业 {industry}")
+        if boards:
+            details.append(f"板块标签 {boards}")
+        return f"行业信息：{'；'.join(details) if details else '暂无可核验行业与板块数据'}。"
     elif name == "risk":
         missing = int(metrics.get("missing_section_count", 0) or 0)
         blocked = status == "blocked" or missing >= 3
@@ -173,7 +182,7 @@ class DeterministicStockAssessor:
         trend_metrics = trend.payload.get("metrics", {}) if trend is not None else {}
         adverse_count = sum(
             int(section.payload.get("metrics", {}).get("adverse_event_count", 0) or 0)
-            for name, section in usable.items() if name in {"news", "industry"}
+            for name, section in usable.items() if name == "news"
         )
         missing_count = int(risk_metrics.get("missing_section_count", 0) or 0)
         volatility = Decimal(str(trend_metrics.get("volatility_20d", 0) or 0))

@@ -12,6 +12,10 @@ from qibao_api.contracts.bars import DailyBar
 from qibao_api.contracts.market import AssetKind
 from qibao_api.contracts.news import EvidenceCitation, NormalizedNewsEvent
 from qibao_api.gongbu.tencent_quotes import TencentMarketSnapshot
+from qibao_api.gongbu.stock_classification import (
+    StockBoard,
+    StockClassificationSnapshot,
+)
 from qibao_api.libu_compliance.repository import SourceAuthorizationError
 
 
@@ -39,7 +43,9 @@ class FakeBars:
     def symbols_with_history(self, minimum_bars: int, as_of: date) -> list[str]:
         return sorted(symbol for symbol, values in self.values.items() if len(values) >= minimum_bars)
 
-    def latest_many(self, symbols: list[str], limit: int, as_of: date):
+    def latest_many(
+        self, symbols: list[str], limit: int, as_of: date, *, cutoff=None
+    ):
         return {symbol: self.values.get(symbol, [])[-limit:] for symbol in symbols}
 
 
@@ -80,6 +86,36 @@ class UnauthorizedMarket:
 class EmptyNews:
     def events(self):
         return []
+
+
+class FailingNewsRepository:
+    def events(self):
+        raise RuntimeError("news repository unavailable")
+
+
+class Classifications:
+    def __init__(
+        self, observed_at=datetime(2026, 7, 14, 10, 30, tzinfo=UTC)
+    ):
+        self.observed_at = observed_at
+        self.queries = []
+
+    def latest(self, symbol, as_of, *, cutoff=None):
+        self.queries.append((symbol, as_of, cutoff))
+        if cutoff is not None and self.observed_at > cutoff:
+            return None
+        return StockClassificationSnapshot(
+            classification_id="stock-classification-" + "a" * 24,
+            symbol=symbol,
+            observed_at=self.observed_at,
+            industry="食品饮料",
+            boards=(
+                StockBoard(code="BK0477", name="酿酒行业"),
+                StockBoard(code="BK0896", name="白酒概念"),
+            ),
+            content_hash="b" * 64,
+            raw_snapshot=b"{}",
+        )
 
 
 class NewsWithOtherAsset:
@@ -291,16 +327,37 @@ async def test_read_only_diagnosis_does_not_persist_snapshot() -> None:
 
 @pytest.mark.asyncio
 async def test_diagnosis_only_uses_frozen_events_linked_to_symbol() -> None:
+    classifications = Classifications()
     service = AShareDiagnosisService(
         bar_repository=FakeBars({"600000": bars()}), market_source=FakeMarket(),
         finance_source=FailingFinance(), news_repository=NewsWithOtherAsset(),
+        classification_repository=classifications,
     )
 
     result = await service.diagnose("600000", AS_OF)
 
     assert result.sections["events"].evidence_ids == ("event-target",)
-    assert result.sections["events"].metrics["event_count"] == 1
-    assert result.sections["industry"].metrics["industries"] == "银行"
+    assert result.sections["events"].metrics == {
+        "event_count": 1,
+        "adverse_event_count": 0,
+        "event_industries": "银行",
+    }
+    assert result.sections["events"].source == "frozen-news-events"
+    assert result.sections["events"].observed_at == datetime(
+        2026, 7, 14, 9, tzinfo=UTC
+    )
+    assert result.sections["industry"].metrics == {
+        "industry": "食品饮料",
+        "board_tags": "酿酒行业、白酒概念",
+    }
+    assert result.sections["industry"].source == "eastmoney-stock-classification"
+    assert result.sections["industry"].observed_at == datetime(
+        2026, 7, 14, 10, 30, tzinfo=UTC
+    )
+    assert result.sections["industry"].evidence_ids == (
+        "stock-classification-" + "a" * 24,
+    )
+    assert classifications.queries == [("600000", AS_OF, None)]
 
 
 @pytest.mark.asyncio
@@ -308,13 +365,104 @@ async def test_multi_stock_news_does_not_assign_article_keywords_as_stock_indust
     service = AShareDiagnosisService(
         bar_repository=FakeBars({"600000": bars()}), market_source=FakeMarket(),
         finance_source=FailingFinance(), news_repository=MultiStockIndustryNews(),
+        classification_repository=Classifications(),
     )
 
     result = await service.diagnose("600000", AS_OF, persist=False)
 
     assert result.sections["events"].metrics["event_count"] == 1
-    assert result.sections["industry"].metrics["industries"] == ""
-    assert result.sections["industry"].explanation == "当前没有已核验行业标签。"
+    assert result.sections["industry"].metrics["industry"] == "食品饮料"
+    assert result.sections["events"].metrics["event_industries"] == ""
+    assert "医药生物" not in result.sections["events"].metrics.values()
+
+
+@pytest.mark.asyncio
+async def test_classification_respects_historical_cutoff() -> None:
+    cutoff = datetime(2026, 7, 14, 8, tzinfo=UTC)
+    classifications = Classifications(
+        observed_at=datetime(2026, 7, 14, 9, tzinfo=UTC)
+    )
+    service = AShareDiagnosisService(
+        bar_repository=FakeBars({"600000": bars()}),
+        market_source=FakeMarket(),
+        finance_source=FailingFinance(),
+        news_repository=EmptyNews(),
+        classification_repository=classifications,
+    )
+
+    result = await service.diagnose("600000", AS_OF, persist=False, cutoff=cutoff)
+
+    assert result.sections["industry"].status == "unavailable"
+    assert result.sections["industry"].metrics == {}
+    assert classifications.queries == [("600000", AS_OF, cutoff)]
+
+
+@pytest.mark.asyncio
+async def test_news_failure_does_not_hide_structured_classification() -> None:
+    service = AShareDiagnosisService(
+        bar_repository=FakeBars({"600000": bars()}),
+        market_source=FakeMarket(),
+        finance_source=FailingFinance(),
+        news_repository=FailingNewsRepository(),
+        classification_repository=Classifications(),
+    )
+
+    result = await service.diagnose("600000", AS_OF, persist=False)
+
+    assert result.sections["events"].status == "unavailable"
+    assert result.sections["industry"].status == "ready"
+    assert result.sections["industry"].metrics == {
+        "industry": "食品饮料",
+        "board_tags": "酿酒行业、白酒概念",
+    }
+
+
+@pytest.mark.asyncio
+async def test_classification_failure_keeps_news_labels_in_news_evidence() -> None:
+    class MissingClassifications:
+        def latest(self, symbol, as_of, *, cutoff=None):
+            return None
+
+    service = AShareDiagnosisService(
+        bar_repository=FakeBars({"600000": bars()}),
+        market_source=FakeMarket(),
+        finance_source=FailingFinance(),
+        news_repository=NewsWithOtherAsset(),
+        classification_repository=MissingClassifications(),
+    )
+
+    result = await service.diagnose("600000", AS_OF, persist=False)
+
+    assert result.sections["industry"].status == "unavailable"
+    assert result.sections["events"].status == "ready"
+    assert result.sections["events"].source == "frozen-news-events"
+    assert result.sections["events"].metrics["event_industries"] == "银行"
+
+
+@pytest.mark.asyncio
+async def test_optional_classification_is_excluded_from_action_risk_count() -> None:
+    class MissingClassifications:
+        def latest(self, symbol, as_of, *, cutoff=None):
+            return None
+
+    common = {
+        "bar_repository": FakeBars({"600000": bars()}),
+        "market_source": FakeMarket(),
+        "finance_source": FailingFinance(),
+        "news_repository": FailingNewsRepository(),
+    }
+    with_classification = await AShareDiagnosisService(
+        **common,
+        classification_repository=Classifications(),
+    ).diagnose("600000", AS_OF, persist=False)
+    without_classification = await AShareDiagnosisService(
+        **common,
+        classification_repository=MissingClassifications(),
+    ).diagnose("600000", AS_OF, persist=False)
+
+    assert with_classification.sections["risk"].metrics["missing_section_count"] == 2
+    assert without_classification.sections["risk"].metrics["missing_section_count"] == 2
+    assert without_classification.sections["industry"].status == "unavailable"
 
 
 def test_candidates_use_only_local_symbols_with_enough_history() -> None:

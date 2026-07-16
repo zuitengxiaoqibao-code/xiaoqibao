@@ -96,6 +96,19 @@ class NewsRepo:
         raise AssertionError("preparation must use the bounded symbol query")
 
 
+class Classification:
+    def __init__(self, *, fail_once=False):
+        self.calls = []
+        self.fail_once = fail_once
+
+    async def sync_symbol(self, symbol):
+        self.calls.append(symbol)
+        if self.fail_once:
+            self.fail_once = False
+            raise TimeoutError("classification offline")
+        return type("Snapshot", (), {"classification_id": "classification-1"})()
+
+
 class Calendar:
     def is_trading_day(self, value):
         return value.weekday() < 5
@@ -110,6 +123,7 @@ class Calendar:
 def subject(
     tmp_path, *, bars=None, history=None, news=None, clock=None,
     calendar=None, news_repository=None, lock_timeout_seconds=1.0,
+    classification=None,
 ):
     bars = bars or Bars()
     return AStockPreparationService(
@@ -119,6 +133,7 @@ def subject(
         news or News(),
         news_repository or NewsRepo(),
         calendar or Calendar(),
+        classification_service=classification,
         lock_dir=tmp_path,
         clock=clock or (lambda: datetime(2026, 7, 18, 3, tzinfo=UTC)),
         news_cooldown_seconds=300,
@@ -203,6 +218,36 @@ async def test_symbol_news_failure_is_retried_without_repeating_fresh_global_syn
     assert second.refreshed is True
     assert news.calls == 1
     assert news.symbol_calls == ["600519", "600519"]
+
+
+@pytest.mark.asyncio
+async def test_classification_uses_independent_daily_symbol_cooldown(tmp_path):
+    classification = Classification()
+    service = subject(tmp_path, classification=classification)
+
+    await service.prepare("600519", as_of=FRIDAY)
+    await service.prepare("600000", as_of=FRIDAY)
+    await service.prepare("600519", as_of=FRIDAY)
+
+    assert classification.calls == ["600519", "600000"]
+
+
+@pytest.mark.asyncio
+async def test_classification_failure_retries_without_repeating_fresh_news(tmp_path):
+    news = SymbolNews()
+    classification = Classification(fail_once=True)
+    service = subject(
+        tmp_path, news=news, classification=classification
+    )
+
+    first = await service.prepare("600519", as_of=FRIDAY)
+    second = await service.prepare("600519", as_of=FRIDAY)
+
+    assert first.refreshed is True
+    assert second.refreshed is True
+    assert news.calls == 1
+    assert news.symbol_calls == ["600519"]
+    assert classification.calls == ["600519", "600519"]
 
 
 @pytest.mark.asyncio
