@@ -10,6 +10,7 @@ from qibao_api.a_shares.diagnosis import (
 )
 from qibao_api.a_shares.fundamentals import FundamentalSnapshot
 from qibao_api.a_shares.instrument_directory import AShareInstrument
+from qibao_api.a_shares.preparation import PreparationSource, StockPreparation
 from qibao_api.contracts.decision import (
     AdviceCard,
     DecisionCycleAggregate,
@@ -155,10 +156,40 @@ class CorruptDecisions:
         raise DecisionIntegrityError("corrupt advice payload")
 
 
-def service(diagnosis=None, decisions=None, clock=lambda: CUTOFF):
+class ReadOnlyPreparation:
+    def __init__(self):
+        self.inspections = []
+
+    async def inspect(self, symbol, *, as_of, cutoff=None):
+        self.inspections.append((symbol, as_of, cutoff))
+        return StockPreparation(
+            symbol=symbol, status="ready", refreshed=False,
+            sources=tuple(
+                PreparationSource(name=name, status="ready")
+                for name in ("quote", "history", "finance", "news")
+            ),
+            started_at=CUTOFF, completed_at=CUTOFF,
+        )
+
+    async def prepare(self, *args, **kwargs):
+        raise AssertionError("cockpit GET must not mutate preparation sources")
+
+
+def service(diagnosis=None, decisions=None, clock=lambda: CUTOFF, preparation=None):
     return StockDecisionCockpitService(
-        Directory(), diagnosis or Diagnosis(), decisions or Decisions(), clock=clock
+        Directory(), diagnosis or Diagnosis(), decisions or Decisions(),
+        preparation or ReadOnlyPreparation(), clock=clock,
     )
+
+
+@pytest.mark.asyncio
+async def test_cockpit_uses_read_only_preparation_inspection() -> None:
+    preparation = ReadOnlyPreparation()
+
+    result = await service(preparation=preparation).get("600000", TRADE_DATE, CUTOFF)
+
+    assert result.preparation.refreshed is False
+    assert preparation.inspections == [("600000", TRADE_DATE, None)]
 
 
 class Explainer:
@@ -178,7 +209,8 @@ class Explainer:
 async def test_cockpit_exposes_ai_status_without_changing_assessment() -> None:
     plain = await service().get("600000", TRADE_DATE, CUTOFF)
     with_ai = StockDecisionCockpitService(
-        Directory(), Diagnosis(), Decisions(), assessor_ai=Explainer(), clock=lambda: CUTOFF
+        Directory(), Diagnosis(), Decisions(), ReadOnlyPreparation(),
+        assessor_ai=Explainer(), clock=lambda: CUTOFF
     )
 
     result = await with_ai.get("600000", TRADE_DATE, CUTOFF)

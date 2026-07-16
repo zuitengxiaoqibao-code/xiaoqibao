@@ -43,5 +43,35 @@
 
 ## Concerns
 
-- The freshness cache is process-local. It is concurrency-safe within one API process, but separate worker processes do not share refresh state.
-- Preparation deliberately reuses the diagnosis service's source-check adapters. If those adapters become public ports later, this service should switch to the public interface.
+- File locks coordinate workers sharing the configured data directory; deployments that place workers on separate hosts need a shared/distributed lock provider.
+
+## Review Remediation
+
+### Additional RED Evidence
+
+- The review regression suite initially failed all five tests because shared lock paths and read-only inspection did not exist.
+- The cockpit read-only test failed because the preparation dependency occupied the assessor slot and cockpit still used the mutation path.
+- The cross-instance Windows lock test failed with `PermissionError` while reading a byte already locked by another handle.
+- The bounded news repository test returned no rows because stored UTC timestamps use `Z` while the SQL cutoff used `+00:00`.
+- The full API suite found one legacy cockpit fixture without the now-required preparation inspector.
+
+### Architecture Changes
+
+- Cockpit GET now requires a preparation inspector and calls only `inspect`; the mutation fallback was removed.
+- POST preparation remains under the runtime write middleware and has an explicit concurrent-request serialization test.
+- History refresh uses per-symbol cross-process file locks. Global news ingestion uses one cross-process lock and a shared success-marker cooldown across symbols and service instances.
+- File-lock acquisition and release run through `asyncio.to_thread`; no event-loop-blocking lock wait remains.
+- In-memory lock/result dictionaries and the count/date result cache were removed. Every inspection recomputes quote, finance, history, and bounded news readiness; partial refreshes create no success cache and retry.
+- History freshness uses the trading calendar, the previous confirmed session on weekends/holidays, and the previous session before the current trading day's close.
+- Preparation uses the public `inspect_sources` diagnosis API and `events_for_symbol` repository query. The latter filters verified A-share links and cutoff timestamps in SQLite before model validation.
+- A successful fresh global collection with no linked stock event is ready-empty; collection failure is partial.
+
+### Added GREEN Coverage
+
+- Read-only cockpit and repeated source inspection.
+- Cross-instance history locking and lock-state eviction.
+- Cross-instance, cross-symbol global news locking/cooldown.
+- Failure retry without partial caching.
+- Weekend and pre-close history freshness.
+- Bounded symbol/cutoff news queries.
+- Concurrent POST middleware serialization.

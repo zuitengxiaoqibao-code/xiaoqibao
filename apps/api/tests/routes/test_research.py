@@ -1,3 +1,4 @@
+import asyncio
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 import sqlite3
@@ -35,7 +36,7 @@ from qibao_api.contracts.decision import (
     EvidenceReference,
 )
 from qibao_api.shangshu.decision_repository import DecisionIntegrityError
-from qibao_api.main import app
+from qibao_api.main import app, serialize_runtime_access
 from qibao_api.gongbu.tencent_quotes import parse_tencent_quote
 from qibao_api.routes.research import router as research_router
 from qibao_api.libu_compliance.repository import SourceAuthorizationError
@@ -250,6 +251,9 @@ class PreparationService:
             ),
         )
 
+    async def inspect(self, symbol, *, as_of, cutoff=None):
+        return await self.prepare(symbol, as_of=as_of, cutoff=cutoff)
+
 
 def preparation_client(service):
     application = FastAPI()
@@ -277,6 +281,43 @@ def test_prepare_returns_404_without_calling_sources_for_unknown_symbol() -> Non
 
     assert response.status_code == 404
     assert service.calls == []
+
+
+class ConcurrentPreparation(PreparationService):
+    def __init__(self):
+        super().__init__()
+        self.active = 0
+        self.maximum = 0
+
+    async def prepare(self, symbol, *, as_of, cutoff=None):
+        self.active += 1
+        self.maximum = max(self.maximum, self.active)
+        await asyncio.sleep(0.03)
+        try:
+            return await super().prepare(symbol, as_of=as_of, cutoff=cutoff)
+        finally:
+            self.active -= 1
+
+
+@pytest.mark.asyncio
+async def test_prepare_posts_are_serialized_by_runtime_middleware() -> None:
+    service = ConcurrentPreparation()
+    application = FastAPI()
+    application.middleware("http")(serialize_runtime_access)
+    application.include_router(research_router)
+    application.state.write_gate = asyncio.Lock()
+    application.dependency_overrides[get_a_share_preparation_service] = lambda: service
+    application.dependency_overrides[get_a_share_instrument_directory] = lambda: PreparationDirectory()
+    application.dependency_overrides[get_server_time] = lambda: SEARCH_NOW
+    transport = httpx.ASGITransport(app=application)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        responses = await asyncio.gather(*(
+            client.post("/api/v1/a-shares/600519/prepare") for _ in range(3)
+        ))
+
+    assert all(response.status_code == 200 for response in responses)
+    assert service.maximum == 1
 
 
 SEARCH_NOW = datetime(2026, 7, 15, 2, 0, tzinfo=timezone.utc)
@@ -570,7 +611,8 @@ class AcceptanceCockpitDecisions:
 def test_cockpit_api_serializes_assessment_for_candidate_and_two_non_candidates() -> None:
     service = StockDecisionCockpitService(
         AcceptanceCockpitDirectory(), AcceptanceCockpitDiagnosis(),
-        AcceptanceCockpitDecisions(), clock=lambda: COCKPIT_CUTOFF,
+        AcceptanceCockpitDecisions(), PreparationService(),
+        clock=lambda: COCKPIT_CUTOFF,
     )
     client = cockpit_client(service)
 

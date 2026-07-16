@@ -117,6 +117,17 @@ class AShareDiagnosisService:
         self.research_repository = research_repository
         self.clock = clock
 
+    async def inspect_sources(
+        self, symbol: str, as_of: date, *, cutoff: datetime | None = None
+    ) -> dict[str, tuple[object | None, str | None]]:
+        market = await self._market(
+            symbol, as_of, cutoff=cutoff, degrade_authorization=True
+        )
+        finance = await self._finance(
+            symbol, as_of, cutoff=cutoff, degrade_authorization=True
+        )
+        return {"quote": market, "finance": finance}
+
     def candidates(
         self, as_of: date, limit: int = 20, *, cutoff: datetime | None = None,
     ) -> CandidateBoard:

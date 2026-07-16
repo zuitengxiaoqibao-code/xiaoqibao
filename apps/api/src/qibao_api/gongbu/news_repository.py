@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import json
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 
 from qibao_api.contracts.news import (
@@ -203,6 +204,44 @@ class NewsRepository:
     def events(self) -> list[NormalizedNewsEvent]:
         rows = self.connection.execute(
             "SELECT * FROM news_events ORDER BY sequence"
+        ).fetchall()
+        events = []
+        for row in rows:
+            computed = hashlib.sha256(row["payload"].encode("utf-8")).hexdigest()
+            if not hmac.compare_digest(computed, row["canonical_hash"]):
+                raise NewsIntegrityError(
+                    f"news event {row['event_id']} failed integrity check"
+                )
+            events.append(NormalizedNewsEvent.model_validate_json(row["payload"]))
+        return events
+
+    def events_for_symbol(
+        self, symbol: str, *, cutoff: datetime | None = None
+    ) -> list[NormalizedNewsEvent]:
+        normalized_cutoff = (
+            cutoff.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+            if cutoff else None
+        )
+        rows = self.connection.execute(
+            """SELECT DISTINCT news_events.* FROM news_events,
+               json_each(json_extract(news_events.payload, '$.affected_instruments')) linked
+               WHERE json_extract(linked.value, '$[0]') = 'a_share'
+                 AND json_extract(linked.value, '$[1]') = ?
+                 AND json_extract(news_events.payload, '$.review_state') = 'verified'
+                 AND (? IS NULL OR json_extract(
+                     news_events.payload, '$.normalized_at'
+                 ) <= ?)
+                 AND (? IS NULL OR json_extract(
+                     news_events.payload, '$.occurred_at'
+                 ) <= ?)
+               ORDER BY news_events.sequence""",
+            (
+                symbol,
+                normalized_cutoff,
+                normalized_cutoff,
+                normalized_cutoff,
+                normalized_cutoff,
+            ),
         ).fetchall()
         events = []
         for row in rows:

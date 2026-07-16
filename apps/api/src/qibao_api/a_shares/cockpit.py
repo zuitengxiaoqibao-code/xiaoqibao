@@ -9,7 +9,7 @@ from qibao_api.a_shares.assessment import DeterministicStockAssessor, StockAsses
 from qibao_api.a_shares.assessment_ai import AIStatus, AssessmentAIExplanation
 from qibao_api.a_shares.diagnosis import DiagnosisUnavailableError
 from qibao_api.a_shares.instrument_directory import AShareInstrument
-from qibao_api.a_shares.preparation import PreparationSource, StockPreparation
+from qibao_api.a_shares.preparation import StockPreparation
 from qibao_api.contracts.decision import AdviceCard, DecisionPhase, EvidenceReference
 from qibao_api.contracts.instruments import AShareCode
 from qibao_api.contracts.market import AssetKind
@@ -102,10 +102,10 @@ class StockDecisionCockpitService:
         instrument_directory,
         diagnosis_service,
         decision_repository,
+        preparation_service,
         assessor=None,
         assessor_ai=None,
         clock: Callable[[], datetime] | None = None,
-        preparation_service=None,
     ) -> None:
         self.instrument_directory = instrument_directory
         self.diagnosis_service = diagnosis_service
@@ -123,8 +123,8 @@ class StockDecisionCockpitService:
             raise UnknownAShareError(symbol)
 
         live_request = as_of == cutoff.astimezone(ZoneInfo("Asia/Shanghai")).date()
-        preparation = await self._prepare(
-            symbol, as_of, None if live_request else cutoff
+        preparation = await self.preparation_service.inspect(
+            symbol, as_of=as_of, cutoff=None if live_request else cutoff
         )
         sections = await self._diagnosis_sections(
             symbol, as_of, None if live_request else cutoff
@@ -154,25 +154,6 @@ class StockDecisionCockpitService:
             instrument=instrument, preparation=preparation, candidate_membership=membership,
             assessment=assessment, ai_status=ai_status, ai_explanation=ai_explanation,
             current_advice=current, sections=sections, phases=phases,
-        )
-
-    async def _prepare(self, symbol, as_of, cutoff):
-        if self.preparation_service is not None:
-            return await self.preparation_service.prepare(
-                symbol, as_of=as_of, cutoff=cutoff
-            )
-        now = self.clock()
-        if now.tzinfo is None:
-            now = now.replace(tzinfo=timezone.utc)
-        return StockPreparation(
-            symbol=symbol, status="partial", refreshed=False,
-            sources=tuple(
-                PreparationSource(
-                    name=name, status="partial", reason="preparation_not_configured"
-                )
-                for name in ("quote", "history", "finance", "news")
-            ),
-            started_at=now, completed_at=now,
         )
 
     @staticmethod

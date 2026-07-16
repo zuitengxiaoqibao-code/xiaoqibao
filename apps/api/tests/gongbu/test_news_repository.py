@@ -1,11 +1,14 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from qibao_api.contracts.news import NewsArticle
 from qibao_api.gongbu.news_collection import NewsCluster
 from qibao_api.gongbu.news_linking import DeterministicNewsLinker
-from qibao_api.contracts.news import AIInterpretation, InterpretationStatement, NewsCorrection
+from qibao_api.contracts.market import AssetKind
+from qibao_api.contracts.news import (
+    AIInterpretation, InterpretationStatement, NewsCorrection, NormalizedNewsEvent,
+)
 from qibao_api.gongbu.news_repository import NewsIntegrityError, NewsRepository
 
 
@@ -94,4 +97,33 @@ def test_repository_rejects_provider_id_collision_and_tampering(tmp_path) -> Non
     )
     with pytest.raises(NewsIntegrityError, match="integrity"):
         repository.articles()
+    repository.close()
+
+
+def test_events_for_symbol_is_verified_linked_and_cutoff_bounded(tmp_path) -> None:
+    repository = NewsRepository(tmp_path / "news.sqlite3")
+    item = article()
+    repository.append_articles((item,))
+    base = DeterministicNewsLinker(
+        instrument_aliases={}, industry_keywords={}, theme_keywords={}
+    ).link(item)
+    verified = base.model_copy(update={
+        "event_id": "verified-600519",
+        "affected_instruments": ((AssetKind.A_SHARE, "600519"),),
+        "review_state": "verified",
+    })
+    pending = verified.model_copy(update={
+        "event_id": "pending-600519", "review_state": "pending",
+    })
+    other = verified.model_copy(update={
+        "event_id": "verified-600000",
+        "affected_instruments": ((AssetKind.A_SHARE, "600000"),),
+    })
+    for event in (verified, pending, other):
+        repository.append_event(NormalizedNewsEvent.model_validate(event))
+
+    assert repository.events_for_symbol("600519", cutoff=NOW) == [verified]
+    assert repository.events_for_symbol(
+        "600519", cutoff=NOW - timedelta(microseconds=1)
+    ) == []
     repository.close()

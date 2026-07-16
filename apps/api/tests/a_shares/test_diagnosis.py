@@ -5,6 +5,7 @@ import pytest
 
 from qibao_api.a_shares.diagnosis import AShareDiagnosisService
 from qibao_api.a_shares.cockpit import StockDecisionCockpitService
+from qibao_api.a_shares.preparation import StockPreparation
 from qibao_api.a_shares.instrument_directory import AShareInstrument
 from qibao_api.contracts.bars import DailyBar
 from qibao_api.contracts.market import AssetKind
@@ -181,8 +182,17 @@ async def test_verified_adverse_news_reaches_cockpit_assessment_as_avoid() -> No
         def cycles(self, as_of, phase):
             return ()
 
+    preparation_time = cutoff
+
+    class Preparation:
+        async def inspect(self, symbol, *, as_of, cutoff=None):
+            return StockPreparation(
+                symbol=symbol, status="ready", sources=(), refreshed=False,
+                started_at=preparation_time, completed_at=preparation_time,
+            )
+
     cockpit = StockDecisionCockpitService(
-        Directory(), diagnosis, Decisions(), clock=lambda: cutoff,
+        Directory(), diagnosis, Decisions(), Preparation(), clock=lambda: cutoff,
     )
 
     result = await cockpit.get("600000", AS_OF, cutoff)

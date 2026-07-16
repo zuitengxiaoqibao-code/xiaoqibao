@@ -240,6 +240,8 @@ async def lifespan(application: FastAPI):
                 application.state.a_share_diagnosis_service,
                 application.state.news_service,
                 news_repository,
+                trading_calendar,
+                lock_dir=settings.data_dir / "preparation-locks",
             )
             application.state.briefing_workflow = DailyBriefingWorkflow(
                 news_repository,
