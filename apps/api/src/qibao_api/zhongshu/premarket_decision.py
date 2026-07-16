@@ -75,7 +75,7 @@ class PremarketDecisionService:
             item.symbol for item in (*candidates.board.short_term, *candidates.board.swing)
         }
         events = tuple(
-            event for event in self.news_repository.events()
+            event for event in self.news_repository.effective_events(cutoff=window_end)
             if event.review_state == "verified"
             and event.occurred_at <= window_end and event.normalized_at <= window_end
             and any(

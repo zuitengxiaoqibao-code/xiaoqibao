@@ -88,9 +88,12 @@ class NewsRepo:
         self.queries = []
         self.events_by_symbol = events_by_symbol or {}
 
-    def events_for_symbol(self, symbol, *, cutoff=None):
+    def effective_events_for_symbol(self, symbol, *, cutoff=None):
         self.queries.append((symbol, cutoff))
         return self.events_by_symbol.get(symbol, [])
+
+    def events_for_symbol(self, symbol, *, cutoff=None):
+        raise AssertionError("preparation must use effective symbol events")
 
     def events(self):
         raise AssertionError("preparation must use the bounded symbol query")

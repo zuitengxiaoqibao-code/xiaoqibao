@@ -94,7 +94,12 @@ class CandidateService:
 class NewsRepository:
     def __init__(self, events=(), interpretations=()):
         self._events, self._interpretations = events, interpretations
+        self._effective_events = None
     def events(self): return list(self._events)
+    def effective_events(self, *, cutoff=None):
+        return list(
+            self._events if self._effective_events is None else self._effective_events
+        )
     def interpretations(self): return list(self._interpretations)
 
 
@@ -214,6 +219,20 @@ def test_adverse_risk_event_is_contrary_and_downgrades_observation(tmp_path) -> 
     assert advice.action == "wait"
     assert [item.evidence_id for item in advice.contrary_evidence] == ["news-news-1"]
     assert all(item.evidence_id != "news-news-1" for item in advice.supporting_evidence)
+
+
+def test_premarket_uses_effective_event_risk_taxonomy(tmp_path) -> None:
+    raw = news(event_type="market_news", themes=("风险事件",))
+    subject, _ = service(tmp_path, events=(raw,))
+    subject.news_repository._effective_events = (
+        raw.model_copy(update={"themes": ()}),
+    )
+
+    result = subject.run(TRADE_DATE, NOW)
+
+    advice = next(item for item in result.advice if item.symbol == "600000")
+    assert advice.action == "observe"
+    assert advice.contrary_evidence == ()
 
 
 def test_mixed_news_never_places_adverse_or_unknown_event_in_supporting_evidence(tmp_path) -> None:

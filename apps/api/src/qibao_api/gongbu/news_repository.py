@@ -18,6 +18,23 @@ class NewsIntegrityError(RuntimeError):
     pass
 
 
+_CORRECTABLE_EVENT_FIELDS = (
+    "affected_instruments",
+    "industries",
+    "themes",
+    "association_confidence",
+    "review_state",
+)
+_FROZEN_EVENT_FIELDS = (
+    "event_id",
+    "event_type",
+    "headline",
+    "occurred_at",
+    "normalized_at",
+    "citations",
+)
+
+
 class NewsRepository:
     def __init__(self, database: str | Path) -> None:
         self.connection = sqlite3.connect(database, check_same_thread=False)
@@ -216,10 +233,62 @@ class NewsRepository:
             )
         return True
 
+    def reconcile_event(self, event: NormalizedNewsEvent) -> tuple[bool, bool]:
+        row = self.connection.execute(
+            "SELECT * FROM news_events WHERE event_id=?", (event.event_id,)
+        ).fetchone()
+        if row is None:
+            return self.append_event(event), False
+
+        original = self._events_from_rows((row,))[0]
+        corrections = [
+            item for item in self.corrections() if item.event_id == event.event_id
+        ]
+        effective = self._apply_corrections(original, corrections)
+        if effective == event:
+            return False, False
+        if any(
+            getattr(original, field) != getattr(event, field)
+            for field in _FROZEN_EVENT_FIELDS
+        ):
+            raise NewsIntegrityError(f"news event id collision: {event.event_id}")
+        if corrections and corrections[-1].origin == "human":
+            return False, False
+
+        target = {
+            field: getattr(event, field)
+            for field in _CORRECTABLE_EVENT_FIELDS
+        }
+        semantic_payload = json.dumps(
+            {"event_id": event.event_id, **target},
+            default=str,
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        digest = hashlib.sha256(semantic_payload.encode("utf-8")).hexdigest()
+        correction = NewsCorrection(
+            correction_id=f"system-correction-{digest[:32]}",
+            event_id=event.event_id,
+            corrected_at=datetime.now(timezone.utc),
+            reason="deterministic_linker_classification_update",
+            origin="system",
+            review_state=event.review_state,
+            affected_instruments=event.affected_instruments,
+            industries=event.industries,
+            themes=event.themes,
+            association_confidence=event.association_confidence,
+        )
+        return False, self.append_correction(correction)
+
     def events(self) -> list[NormalizedNewsEvent]:
         rows = self.connection.execute(
             "SELECT * FROM news_events ORDER BY sequence"
         ).fetchall()
+        return self._events_from_rows(rows)
+
+    @staticmethod
+    def _events_from_rows(rows) -> list[NormalizedNewsEvent]:
         events = []
         for row in rows:
             computed = hashlib.sha256(row["payload"].encode("utf-8")).hexdigest()
@@ -229,6 +298,57 @@ class NewsRepository:
                 )
             events.append(NormalizedNewsEvent.model_validate_json(row["payload"]))
         return events
+
+    def effective_events(
+        self, *, cutoff: datetime | None = None
+    ) -> list[NormalizedNewsEvent]:
+        normalized_cutoff = cutoff.astimezone(timezone.utc) if cutoff else None
+        corrections_by_event: dict[str, list[NewsCorrection]] = {}
+        for correction in self.corrections():
+            if (
+                normalized_cutoff is not None
+                and correction.corrected_at > normalized_cutoff
+            ):
+                continue
+            corrections_by_event.setdefault(correction.event_id, []).append(correction)
+        return [
+            self._apply_corrections(
+                event, corrections_by_event.get(event.event_id, [])
+            )
+            for event in self.events()
+        ]
+
+    @staticmethod
+    def _apply_corrections(
+        event: NormalizedNewsEvent, corrections: list[NewsCorrection]
+    ) -> NormalizedNewsEvent:
+        effective = event
+        for correction in corrections:
+            update = {
+                "affected_instruments": correction.affected_instruments,
+                "industries": correction.industries,
+                "themes": correction.themes,
+                "review_state": correction.review_state,
+            }
+            if correction.association_confidence is not None:
+                update["association_confidence"] = correction.association_confidence
+            effective = effective.model_copy(update=update)
+        return effective
+
+    def effective_events_for_symbol(
+        self, symbol: str, *, cutoff: datetime | None = None
+    ) -> list[NormalizedNewsEvent]:
+        normalized_cutoff = cutoff.astimezone(timezone.utc) if cutoff else None
+        return [
+            event
+            for event in self.effective_events(cutoff=normalized_cutoff)
+            if ("a_share", symbol) in {
+                (asset.value, code) for asset, code in event.affected_instruments
+            }
+            and event.review_state == "verified"
+            and (normalized_cutoff is None or event.normalized_at <= normalized_cutoff)
+            and (normalized_cutoff is None or event.occurred_at <= normalized_cutoff)
+        ]
 
     def events_for_symbol(
         self, symbol: str, *, cutoff: datetime | None = None

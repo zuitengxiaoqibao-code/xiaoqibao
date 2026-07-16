@@ -150,6 +150,48 @@ async def test_ingestion_reuses_the_first_snapshot_for_a_refetched_article(tmp_p
 
 
 @pytest.mark.asyncio
+async def test_ingestion_records_taxonomy_rule_changes_as_an_idempotent_correction(
+    tmp_path,
+) -> None:
+    compliance = ComplianceRepository(tmp_path / "compliance.sqlite3")
+    compliance.set_feature_sources("market_news", AssetKind.A_SHARE, ("eastmoney",))
+    authorize(compliance)
+    repository = NewsRepository(tmp_path / "news.sqlite3")
+    source = Source()
+    legacy = NewsIngestionService(
+        source,
+        repository,
+        DeterministicNewsLinker(
+            instrument_aliases={},
+            industry_keywords={"legacy-industry": ("先进制造",)},
+            theme_keywords={},
+        ),
+        compliance,
+    )
+    current = NewsIngestionService(
+        source,
+        repository,
+        DeterministicNewsLinker(
+            instrument_aliases={}, industry_keywords={}, theme_keywords={}
+        ),
+        compliance,
+    )
+
+    await legacy.sync()
+    second = await current.sync()
+    third = await current.sync()
+
+    assert second["events"] == 0
+    assert third["events"] == 0
+    assert repository.events()[0].industries == ("legacy-industry",)
+    assert repository.effective_events()[0].industries == ()
+    assert len(repository.corrections()) == 1
+    assert repository.corrections()[0].origin == "system"
+    repository.close()
+    compliance.close()
+
+
+@pytest.mark.asyncio
 async def test_symbol_ingestion_requires_explicit_article_link_before_verification(tmp_path) -> None:
     compliance = ComplianceRepository(tmp_path / "compliance.sqlite3")
     compliance.set_feature_sources("market_news", AssetKind.A_SHARE, ("eastmoney",))

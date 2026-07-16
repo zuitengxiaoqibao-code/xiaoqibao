@@ -490,6 +490,9 @@ class EmptyNews:
     def events(self):
         return []
 
+    def effective_events(self, *, cutoff=None):
+        return []
+
 
 @pytest.mark.asyncio
 async def test_cockpit_keeps_finance_and_news_when_market_and_bars_are_unavailable() -> None:

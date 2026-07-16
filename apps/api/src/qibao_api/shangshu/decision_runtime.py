@@ -141,7 +141,7 @@ class RepositoryEvidenceSource:
 
     def snapshot(self, *, now: datetime, cutoff: datetime):
         return tuple(
-            item for item in self.news_repository.events()
+            item for item in self.news_repository.effective_events(cutoff=cutoff)
             if item.review_state == "verified"
             and item.occurred_at <= cutoff and item.normalized_at <= cutoff
         )

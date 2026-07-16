@@ -40,13 +40,22 @@ class Calendar:
 class News:
     def __init__(self, events):
         self.items = list(events)
+        self.effective_items = None
         self.fail_once = False
 
     def events(self):
+        return self._read(self.items)
+
+    def effective_events(self, *, cutoff=None):
+        return self._read(
+            self.items if self.effective_items is None else self.effective_items
+        )
+
+    def _read(self, items):
         if self.fail_once:
             self.fail_once = False
             raise RuntimeError("temporary read failure")
-        return list(self.items)
+        return list(items)
 
     def interpretations(self):
         return []
@@ -85,6 +94,23 @@ def test_intraday_suppresses_events_already_emitted_by_prior_run(tmp_path) -> No
 
     assert first.event_ids == ("first",)
     assert second.event_ids == ("second",)
+    reports.close()
+
+
+def test_briefing_uses_effective_event_risk_taxonomy(tmp_path) -> None:
+    raw = event("corrected", datetime(2026, 7, 14, 2, 0, tzinfo=UTC)).model_copy(
+        update={"event_type": "market_news", "themes": ("风险事件",)}
+    )
+    news = News([raw])
+    news.effective_items = [raw.model_copy(update={"themes": ()})]
+    reports = BriefingRepository(tmp_path / "briefing.sqlite3")
+
+    report = DailyBriefingWorkflow(news, reports, Calendar()).run(
+        "intraday", TRADE_DATE, now=datetime(2026, 7, 14, 2, 5, tzinfo=UTC)
+    )
+
+    assert report.event_ids == ("corrected",)
+    assert report.sections.risk_event_ids == ()
     reports.close()
 
 

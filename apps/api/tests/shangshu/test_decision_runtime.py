@@ -13,6 +13,7 @@ from qibao_api.shangshu.decision_runtime import (
     DecisionSymbolSource,
     DeterministicIntradayEvaluator,
     RepositoryCandidateFactorSource,
+    RepositoryEvidenceSource,
     RepositoryRiskSource,
 )
 from qibao_api.shangshu.intraday_monitor import IntradayEvaluationContext
@@ -148,6 +149,28 @@ def test_candidate_factor_source_marks_a_computed_empty_board_as_available():
 
     assert result.board.universe_status == "empty"
     assert result.history_available is True
+
+
+def test_repository_evidence_source_uses_effective_events():
+    raw = SimpleNamespace(
+        event_id="raw",
+        review_state="verified",
+        occurred_at=NOW,
+        normalized_at=NOW,
+    )
+    effective = SimpleNamespace(
+        event_id="effective",
+        review_state="verified",
+        occurred_at=NOW,
+        normalized_at=NOW,
+    )
+    repository = SimpleNamespace(
+        events=lambda: [raw], effective_events=lambda cutoff=None: [effective]
+    )
+
+    result = RepositoryEvidenceSource(repository).snapshot(now=NOW, cutoff=NOW)
+
+    assert [item.event_id for item in result] == ["effective"]
 
 
 def test_intraday_evaluator_seeds_observation_when_premarket_advice_is_empty():

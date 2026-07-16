@@ -87,10 +87,16 @@ class EmptyNews:
     def events(self):
         return []
 
+    def effective_events(self, *, cutoff=None):
+        return self.events()
+
 
 class FailingNewsRepository:
     def events(self):
         raise RuntimeError("news repository unavailable")
+
+    def effective_events(self, *, cutoff=None):
+        return self.events()
 
 
 class Classifications:
@@ -144,6 +150,9 @@ class NewsWithOtherAsset:
             ),
         ]
 
+    def effective_events(self, *, cutoff=None):
+        return self.events()
+
 
 class MultiStockIndustryNews(NewsWithOtherAsset):
     def events(self):
@@ -179,6 +188,17 @@ class FutureNews:
             citations=(citation,), association_confidence=Decimal("0.9"),
             review_state="verified",
         )]
+
+    def effective_events(self, *, cutoff=None):
+        return self.events()
+
+
+class CorrectedIndustryNews(NewsWithOtherAsset):
+    def effective_events(self, *, cutoff=None):
+        return [
+            event.model_copy(update={"industries": ()})
+            for event in self.events()
+        ]
 
 
 class FutureMarket(FakeMarket):
@@ -358,6 +378,21 @@ async def test_diagnosis_only_uses_frozen_events_linked_to_symbol() -> None:
         "stock-classification-" + "a" * 24,
     )
     assert classifications.queries == [("600000", AS_OF, None)]
+
+
+@pytest.mark.asyncio
+async def test_diagnosis_uses_effective_news_taxonomy() -> None:
+    service = AShareDiagnosisService(
+        bar_repository=FakeBars({"600000": bars()}),
+        market_source=FakeMarket(),
+        finance_source=FailingFinance(),
+        news_repository=CorrectedIndustryNews(),
+    )
+
+    result = await service.diagnose("600000", AS_OF, persist=False)
+
+    assert result.sections["events"].metrics["event_count"] == 1
+    assert result.sections["events"].metrics["event_industries"] == ""
 
 
 @pytest.mark.asyncio

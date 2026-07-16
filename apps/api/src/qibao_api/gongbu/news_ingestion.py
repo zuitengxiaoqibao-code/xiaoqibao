@@ -44,7 +44,7 @@ class NewsIngestionService:
         for cluster in clusters:
             primary = article_by_id[cluster.primary_article_id]
             event = self.linker.link(primary)
-            event_inserted = self.repository.append_event(event)
+            event_inserted, _ = self.repository.reconcile_event(event)
             event_count += int(event_inserted)
             if event_inserted and self.ai_gateway is not None:
                 interpretation = await self.ai_gateway.interpret(event)

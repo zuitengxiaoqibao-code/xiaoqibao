@@ -44,10 +44,17 @@ class Repository:
         )]
 
     def corrections(self):
-        return [NewsCorrection(
-            correction_id="c1", event_id="event-1", corrected_at=NOW,
-            reason="人工复核行业归属", review_state="verified",
-        )]
+        return [
+            NewsCorrection(
+                correction_id="c1", event_id="event-1", corrected_at=NOW,
+                reason="人工复核行业归属", review_state="verified",
+            ),
+            NewsCorrection(
+                correction_id="c2", event_id="event-2", corrected_at=NOW,
+                reason="deterministic_linker_classification_update",
+                origin="system", review_state="verified",
+            ),
+        ]
 
 
 def test_quality_metrics_use_persisted_evidence_and_attempt_counts() -> None:
@@ -58,3 +65,4 @@ def test_quality_metrics_use_persisted_evidence_and_attempt_counts() -> None:
     assert metrics.invalid_json_rate == Decimal("0.2500")
     assert metrics.provider_error_rate == Decimal("0.2500")
     assert metrics.human_correction_rate == Decimal("0.5000")
+    assert metrics.correction_count == 2

@@ -313,7 +313,7 @@ class AStockPreparationService:
     def _news_source(self, symbol, as_of, cutoff, refresh_error):
         try:
             events = [
-                event for event in self.news_repository.events_for_symbol(
+                event for event in self.news_repository.effective_events_for_symbol(
                     symbol, cutoff=cutoff
                 )
                 if event.normalized_at.date() <= as_of

@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import pytest
 
@@ -141,4 +142,59 @@ def test_events_for_symbol_is_verified_linked_and_cutoff_bounded(tmp_path) -> No
     assert repository.events_for_symbol(
         "600519", cutoff=NOW - timedelta(microseconds=1)
     ) == []
+    repository.close()
+
+
+def test_reconcile_event_appends_one_system_correction_and_projects_effective_state(
+    tmp_path,
+) -> None:
+    repository = NewsRepository(tmp_path / "news.sqlite3")
+    item = article()
+    repository.append_articles((item,))
+    original = DeterministicNewsLinker(
+        instrument_aliases={},
+        industry_keywords={"legacy-industry": ("先进制造",)},
+        theme_keywords={},
+    ).link(item).model_copy(update={
+        "affected_instruments": ((AssetKind.A_SHARE, "600519"),),
+        "association_confidence": Decimal("1"),
+        "review_state": "verified",
+    })
+    repository.append_event(NormalizedNewsEvent.model_validate(original))
+    corrected = original.model_copy(update={
+        "industries": (),
+        "association_confidence": Decimal("1"),
+    })
+
+    assert repository.reconcile_event(corrected) == (False, True)
+    assert repository.reconcile_event(corrected) == (False, False)
+    assert repository.events() == [original]
+    assert len(repository.corrections()) == 1
+    correction = repository.corrections()[0]
+    assert correction.origin == "system"
+    assert repository.effective_events() == [corrected]
+    assert repository.effective_events(
+        cutoff=correction.corrected_at - timedelta(microseconds=1)
+    ) == [original]
+    assert repository.effective_events(cutoff=correction.corrected_at) == [corrected]
+    assert repository.effective_events_for_symbol("600519", cutoff=NOW) == [original]
+    assert repository.effective_events_for_symbol(
+        "600519", cutoff=NOW - timedelta(microseconds=1)
+    ) == []
+    repository.close()
+
+
+def test_reconcile_event_rejects_changes_to_frozen_evidence(tmp_path) -> None:
+    repository = NewsRepository(tmp_path / "news.sqlite3")
+    item = article()
+    repository.append_articles((item,))
+    original = DeterministicNewsLinker(
+        instrument_aliases={}, industry_keywords={}, theme_keywords={}
+    ).link(item)
+    repository.append_event(original)
+
+    with pytest.raises(NewsIntegrityError, match="collision"):
+        repository.reconcile_event(original.model_copy(update={"headline": "changed"}))
+
+    assert repository.corrections() == []
     repository.close()

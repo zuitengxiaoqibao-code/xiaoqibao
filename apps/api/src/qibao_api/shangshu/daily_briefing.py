@@ -54,7 +54,7 @@ class DailyBriefingWorkflow:
     ) -> DailyBriefing:
         window_start, window_end = self._window(phase, trading_date, now)
         events = [
-            event for event in self.news_repository.events()
+            event for event in self.news_repository.effective_events(cutoff=now)
             if window_start <= event.occurred_at <= window_end
             and event.normalized_at <= now
         ]

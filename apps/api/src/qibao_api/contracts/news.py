@@ -166,9 +166,11 @@ class NewsCorrection(BaseModel):
     corrected_at: AwareDatetime
     reason: NonBlank
     review_state: Literal["pending", "verified", "rejected"]
+    origin: Literal["human", "system"] = "human"
     affected_instruments: tuple[tuple[AssetKind, str], ...] = ()
     industries: tuple[NonBlank, ...] = ()
     themes: tuple[NonBlank, ...] = ()
+    association_confidence: Decimal | None = Field(default=None, ge=0, le=1)
 
     @field_validator("affected_instruments")
     @classmethod

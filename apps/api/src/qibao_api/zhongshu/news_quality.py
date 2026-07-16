@@ -40,7 +40,9 @@ class NewsQualityService:
         attempts = sum(item.provider_attempts for item in interpretations)
         invalid = sum(item.invalid_output_count for item in interpretations)
         provider_errors = sum(item.provider_error_count for item in interpretations)
-        corrected_events = {item.event_id for item in corrections}
+        human_corrected_events = {
+            item.event_id for item in corrections if item.origin == "human"
+        }
         return NewsQualityMetrics(
             article_count=len(articles),
             cluster_count=len(clusters),
@@ -51,7 +53,7 @@ class NewsQualityService:
             duplicate_rate=_rate(len(articles) - len(clusters), len(articles)),
             invalid_json_rate=_rate(invalid, attempts),
             provider_error_rate=_rate(provider_errors, attempts),
-            human_correction_rate=_rate(len(corrected_events), len(events)),
+            human_correction_rate=_rate(len(human_corrected_events), len(events)),
         )
 
 

@@ -83,7 +83,9 @@ class FinanceSourcePort(Protocol):
 
 
 class NewsRepositoryPort(Protocol):
-    def events(self) -> list[NormalizedNewsEvent]: ...
+    def effective_events(
+        self, *, cutoff: datetime | None = None
+    ) -> list[NormalizedNewsEvent]: ...
 
 
 class ClassificationRepositoryPort(Protocol):
@@ -292,7 +294,7 @@ class AShareDiagnosisService:
     ) -> tuple[list[NormalizedNewsEvent], str | None]:
         try:
             events = [
-                event for event in self.news_repository.events()
+                event for event in self.news_repository.effective_events(cutoff=cutoff)
                 if (AssetKind.A_SHARE, symbol) in event.affected_instruments
                 and event.normalized_at.date() <= as_of
                 and (cutoff is None or event.normalized_at <= cutoff)
