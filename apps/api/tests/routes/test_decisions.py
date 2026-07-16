@@ -134,32 +134,6 @@ def test_manual_run_failure_is_not_reported_as_delegated_success():
     assert response.json()["detail"]["code"] == "decision_run_failed"
 
 
-def test_plan_readiness_requires_all_gate_states_and_reciprocal_references():
-    advice = {
-        "advice_id": "a1", "action": "simulated_plan", "simulation_plan_id": "p1",
-        "risk_decision_id": "r1", "strategy_version": "v1",
-        "supporting_evidence": [], "contrary_evidence": [],
-        "simulation_gate": {
-            "quote_state": "ready", "compliance_state": "ready",
-            "evidence_state": "blocked", "risk_state": "approve",
-            "risk_decision_id": "r1", "compliance_snapshot_id": "c1",
-        },
-    }
-    aggregate = {
-        "snapshot": {"snapshot_id": "s1", "status": "partial", "data_quality": "partial", "ai_status": "not_requested"},
-        "advice": [advice],
-        "plans": [{"plan_id": "p1", "advice_id": "a1", "risk_decision_id": "r1", "compliance_snapshot_id": "c1"}],
-    }
-
-    blocked = _slot(aggregate)["plan_readiness"]["a1"]
-    advice["simulation_gate"]["evidence_state"] = "ready"
-    ready = _slot(aggregate)["plan_readiness"]["a1"]
-
-    assert blocked["ready"] is False
-    assert blocked["reasons"] == ["evidence_blocked"]
-    assert ready["ready"] is True
-
-
 def test_polling_response_uses_persisted_backoff_and_failure_state():
     now = datetime(2026, 7, 15, 10, 30, tzinfo=CHINA_TZ)
     state = PollState(

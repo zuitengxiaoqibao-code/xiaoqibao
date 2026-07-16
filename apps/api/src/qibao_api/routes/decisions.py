@@ -31,53 +31,15 @@ def _model_dump(value):
     return value.model_dump(mode="json") if hasattr(value, "model_dump") else value
 
 
-def _plan_readiness(payload):
-    plans = {item["plan_id"]: item for item in payload.get("plans", [])}
-    readiness = {}
-    for advice in payload.get("advice", []):
-        if advice.get("action") != "simulated_plan":
-            continue
-        gate = advice.get("simulation_gate")
-        plan = plans.get(advice.get("simulation_plan_id"))
-        reasons = []
-        for field in ("quote", "compliance", "evidence"):
-            if not gate or gate.get(f"{field}_state") != "ready":
-                reasons.append(f"{field}_blocked" if gate else "gate_state_missing")
-        if not gate or gate.get("risk_state") != "approve":
-            reasons.append("risk_rejected" if gate else "gate_state_missing")
-        if plan is None:
-            reasons.append("plan_reference_missing")
-        elif (
-            plan.get("advice_id") != advice.get("advice_id")
-            or plan.get("risk_decision_id") != advice.get("risk_decision_id")
-            or gate is None
-            or gate.get("risk_decision_id") != plan.get("risk_decision_id")
-            or gate.get("compliance_snapshot_id") != plan.get("compliance_snapshot_id")
-        ):
-            reasons.append("reciprocal_reference_mismatch")
-        readiness[advice["advice_id"]] = {
-            "ready": not reasons,
-            "reasons": list(dict.fromkeys(reasons)),
-            "quote_state": gate.get("quote_state") if gate else "blocked",
-            "compliance_state": gate.get("compliance_state") if gate else "blocked",
-            "evidence_state": gate.get("evidence_state") if gate else "blocked",
-            "risk_state": gate.get("risk_state") if gate else "reject",
-        }
-    return readiness
-
-
-def _slot(aggregate, *, materialized_advice=None, materialized_plans=None, change_stream=None):
+def _slot(aggregate, *, materialized_advice=None, change_stream=None):
     if aggregate is None:
         return {
             "phase_status": "empty", "quality": "empty", "aggregate_version": None,
-            "ai_status": "not_requested", "advice": [], "evidence": [], "plans": [],
-            "plan_readiness": {},
+            "ai_status": "not_requested", "advice": [], "evidence": [],
         }
     payload = _model_dump(aggregate)
     snapshot = payload["snapshot"]
     effective_advice = materialized_advice if materialized_advice is not None else payload.get("advice", [])
-    effective_plans = materialized_plans if materialized_plans is not None else payload.get("plans", [])
-    effective_payload = {**payload, "advice": effective_advice, "plans": effective_plans}
     evidence = [
         item for advice in effective_advice
         for item in advice.get("supporting_evidence", []) + advice.get("contrary_evidence", [])
@@ -91,18 +53,14 @@ def _slot(aggregate, *, materialized_advice=None, materialized_plans=None, chang
         "generated_at": snapshot.get("generated_at"),
         "advice": effective_advice,
         "evidence": evidence,
-        "plans": effective_plans,
-        "plan_readiness": _plan_readiness(effective_payload),
         "delta_version": snapshot["snapshot_id"],
         "delta_advice": payload.get("advice", []),
-        "delta_plans": payload.get("plans", []),
         "change_stream": change_stream or [],
     }
 
 
 def _intraday_state(repository, trading_date):
     current = {}
-    plans = {}
     premarket = repository.latest(trading_date, "premarket")
     if premarket is not None:
         for item in _model_dump(premarket).get("advice", []):
@@ -120,18 +78,10 @@ def _intraday_state(repository, trading_date):
             "sequence": snapshot["sequence"],
             "generated_at": snapshot["generated_at"],
             "delta_advice": payload.get("advice", []),
-            "delta_plans": payload.get("plans", []),
         })
         for item in payload.get("advice", []):
             current[(item["symbol"], item["horizon"])] = item
-        for item in payload.get("plans", []):
-            plans[item["plan_id"]] = item
-    referenced = {item.get("simulation_plan_id") for item in current.values()}
-    return (
-        list(current.values()),
-        [item for key, item in plans.items() if key in referenced],
-        stream,
-    )
+    return list(current.values()), stream
 
 
 def _polling(state, server_time, market_session):
@@ -162,10 +112,9 @@ def _response(repository, trading_date: date, current_phase: str, server_time: d
         slots = {phase: _slot(repository.latest(trading_date, phase)) for phase in PHASES}
         latest_intraday = repository.latest(trading_date, "intraday")
         if latest_intraday is not None and hasattr(repository, "cycles"):
-            advice, plans, stream = _intraday_state(repository, trading_date)
+            advice, stream = _intraday_state(repository, trading_date)
             slots["intraday"] = _slot(
-                latest_intraday, materialized_advice=advice,
-                materialized_plans=plans, change_stream=stream,
+                latest_intraday, materialized_advice=advice, change_stream=stream,
             )
     except DecisionIntegrityError:
         raise HTTPException(status_code=503, detail={

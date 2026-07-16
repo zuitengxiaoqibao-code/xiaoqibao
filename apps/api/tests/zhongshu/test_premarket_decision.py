@@ -193,7 +193,7 @@ def test_short_term_and_swing_remain_separate_and_future_news_is_excluded(tmp_pa
     assert result.snapshot.news_event_ids == ("news-1",)
     assert result.advice[0].action == "observe"
     assert result.advice[1].action == "observe"
-    assert result.plans == ()
+    assert "plans" not in result.model_dump(mode="json")
 
 
 @pytest.mark.parametrize("headline", ["并非利好", "利好出尽"])

@@ -17,7 +17,7 @@ from qibao_api.contracts.market import AssetKind
 
 
 DecisionPhase = Literal["premarket", "intraday", "postclose"]
-AdviceAction = Literal["observe", "wait", "avoid", "invalidated", "simulated_plan"]
+AdviceAction = Literal["observe", "wait", "avoid", "invalidated"]
 NonBlank = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
@@ -100,7 +100,6 @@ class AdviceCard(BaseModel):
     quantitative_result: dict[str, Decimal | str | None]
     ai_interpretation_id: str | None = None
     risk_decision_id: str | None = None
-    simulation_plan_id: str | None = None
     simulation_gate: SimulationGateAudit | None = None
     previous_advice_id: str | None = None
     changed_fields: tuple[NonBlank, ...] = ()
@@ -113,64 +112,6 @@ class AdviceCard(BaseModel):
             validate_a_share_code(self.symbol)
         else:
             validate_convertible_bond_code(self.symbol)
-        if self.action == "simulated_plan":
-            if not self.simulation_plan_id or not self.risk_decision_id:
-                raise ValueError("simulated plan advice requires plan and risk references")
-            gate = self.simulation_gate
-            if gate is None or (
-                gate.quote_state != "ready" or gate.compliance_state != "ready"
-                or gate.evidence_state != "ready" or gate.risk_state != "approve"
-                or gate.risk_decision_id != self.risk_decision_id
-                or not gate.compliance_snapshot_id
-            ):
-                raise ValueError("simulated plan advice requires every immutable gate to pass")
-        elif self.simulation_plan_id is not None:
-            raise ValueError("non-plan advice cannot reference a simulation plan")
-        return self
-
-
-class SimulationPlan(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    plan_id: NonBlank
-    advice_id: NonBlank
-    risk_decision_id: NonBlank
-    compliance_snapshot_id: NonBlank
-    watch_price_low: Decimal = Field(gt=0)
-    watch_price_high: Decimal = Field(gt=0)
-    stop_loss: Decimal = Field(gt=0)
-    take_profit: tuple[Decimal, ...] = Field(max_length=2)
-    tranches: tuple[Decimal, ...] = Field(max_length=3)
-    max_position: Decimal = Field(gt=0, le=1)
-    invalidation_conditions: tuple[NonBlank, ...] = Field(min_length=1)
-    valid_from: AwareDatetime
-    valid_until: AwareDatetime
-    strategy_version: NonBlank
-    risk_version: NonBlank
-    compliance_version: NonBlank
-
-    @field_validator("take_profit")
-    @classmethod
-    def require_positive_targets(cls, values: tuple[Decimal, ...]) -> tuple[Decimal, ...]:
-        if any(value <= 0 for value in values):
-            raise ValueError("take-profit prices must be positive")
-        return values
-
-    @field_validator("tranches")
-    @classmethod
-    def validate_tranches(cls, values: tuple[Decimal, ...]) -> tuple[Decimal, ...]:
-        if any(value <= 0 for value in values) or sum(values, Decimal()) > 1:
-            raise ValueError("tranches must be positive and sum to at most one")
-        return values
-
-    @model_validator(mode="after")
-    def validate_ranges(self) -> "SimulationPlan":
-        if self.watch_price_low > self.watch_price_high:
-            raise ValueError("watch price low must not exceed high")
-        if self.valid_from >= self.valid_until:
-            raise ValueError("plan validity duration must be positive")
-        if sum(self.tranches, Decimal()) > self.max_position:
-            raise ValueError("tranches must sum to at most max position")
         return self
 
 
@@ -179,4 +120,3 @@ class DecisionCycleAggregate(BaseModel):
 
     snapshot: DecisionCycleSnapshot
     advice: tuple[AdviceCard, ...]
-    plans: tuple[SimulationPlan, ...] = ()

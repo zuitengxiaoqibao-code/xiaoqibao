@@ -11,10 +11,8 @@ from typing import Any, Literal, Protocol
 from pydantic import AwareDatetime, BaseModel, ConfigDict
 
 from qibao_api.contracts.instruments import validate_a_share_code
-from qibao_api.bingbu.simulation_plan import SimulationGateContext, SimulationPlanBuilder
 from qibao_api.contracts.decision import (
-    AdviceCard, DecisionCycleAggregate, DecisionCycleSnapshot, SimulationGateAudit,
-    SimulationPlan,
+    AdviceCard, DecisionCycleAggregate, DecisionCycleSnapshot,
 )
 from qibao_api.gongbu.market_feed import DeterministicPollingCadence, MarketFeedSnapshot
 
@@ -27,7 +25,7 @@ BACKOFF = (60, 120, 240, 300)
 class AdviceChangeDetector:
     _FIELDS = (
         "action", "conclusion", "risks", "invalidation_conditions",
-        "membership", "simulation_plan",
+        "membership",
     )
 
     @classmethod
@@ -47,11 +45,6 @@ class AdviceChangeDetector:
     def _value(advice: AdviceCard, field: str):
         if field == "membership":
             return advice.quantitative_result.get("membership")
-        if field == "simulation_plan":
-            return (
-                advice.simulation_plan_id,
-                advice.simulation_gate,
-            )
         return getattr(advice, field)
 
     @classmethod
@@ -67,7 +60,7 @@ class AdviceChangeDetector:
             "quantitative_result": {
                 **previous.quantitative_result, "invalidation_reason_code": reason,
             },
-            "simulation_plan_id": None, "risk_decision_id": None,
+            "risk_decision_id": None,
             "created_at": now,
         })
         return cls.changed(previous, proposed)
@@ -109,7 +102,7 @@ class IntradayEvaluationResult(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     advice: tuple[AdviceCard, ...]
-    gates: dict[str, SimulationGateContext]
+    gates: dict[str, Any]
     source_content: dict[str, Any]
     market_state: Literal["strong", "range", "weak", "insufficient_data"]
     data_quality: Literal["ready", "partial", "blocked"]
@@ -504,7 +497,6 @@ class IntradayMonitor:
         window_start = datetime.combine(trading_date, time(9, 25), CHINA_TZ)
         window_end = min(now, datetime.combine(trading_date, time(15, 0), CHINA_TZ))
         current = self._current_advice(trading_date)
-        current_plans = self._current_plans(trading_date)
         inputs = tuple(
             port.snapshot(now=now, cutoff=window_end) for port in self.input_ports
             if port is not None
@@ -530,7 +522,6 @@ class IntradayMonitor:
         snapshot_id = f"intraday-{trading_date.isoformat()}-{sequence}-{source_hash[:16]}"
         proposed_keys = {(item.symbol, item.horizon) for item in result.advice}
         changed = []
-        plans = []
         for item in result.advice:
             key = (item.symbol, item.horizon)
             previous = current.get(key)
@@ -540,80 +531,14 @@ class IntradayMonitor:
                 "created_at": now, "previous_advice_id": None, "changed_fields": (),
             })
             gate = result.gates.get(item.advice_id)
-            plan = None
-            plan_semantics_unchanged = False
             if gate is not None:
                 candidate = candidate.model_copy(update={
-                    "simulation_gate": SimulationGateAudit(
-                        quote_state=gate.quote_state,
-                        compliance_state=gate.compliance_state,
-                        evidence_state=gate.evidence_state,
-                        risk_state=gate.risk_state,
-                        risk_decision_id=gate.risk_decision_id,
-                        compliance_snapshot_id=gate.compliance_snapshot_id,
-                    ),
-                })
-                semantic_advice_id = previous.advice_id if previous is not None else advice_id
-                semantic_gate = gate.model_copy(update={"advice_id": semantic_advice_id})
-                semantic_plan = SimulationPlanBuilder(now=now).build(semantic_gate)
-                previous_plan = (
-                    current_plans.get(previous.simulation_plan_id)
-                    if previous is not None and previous.simulation_plan_id else None
-                )
-                plan_semantics_unchanged = self._same_plan_semantics(
-                    semantic_plan, previous_plan,
-                )
-                if semantic_plan is not None and plan_semantics_unchanged and previous is not None:
-                    candidate = candidate.model_copy(update={
-                        "action": "simulated_plan",
-                        "simulation_plan_id": previous.simulation_plan_id,
-                        "risk_decision_id": previous.risk_decision_id,
-                    })
-                elif semantic_plan is not None:
-                    bound_gate = gate.model_copy(update={"advice_id": advice_id})
-                    plan = SimulationPlanBuilder(now=now).build(bound_gate)
-                    candidate = candidate.model_copy(update={
-                        "action": "simulated_plan", "simulation_plan_id": plan.plan_id,
-                        "risk_decision_id": plan.risk_decision_id,
-                    })
-                else:
-                    reasons = semantic_gate.failed_gate_reasons()
-                    allowed = {"observe", "wait", "avoid", "invalidated"}
-                    fallback = item.action if item.action in allowed else (
-                        previous.action if previous is not None and previous.action in allowed
-                        else "observe"
-                    )
-                    candidate = candidate.model_copy(update={
-                        "action": fallback, "simulation_plan_id": None,
-                        "risk_decision_id": None,
-                        "risks": tuple(dict.fromkeys((*candidate.risks, *reasons))),
-                    })
-            elif candidate.action == "simulated_plan":
-                allowed = {"observe", "wait", "avoid", "invalidated"}
-                fallback = (
-                    previous.action if previous is not None and previous.action in allowed
-                    else "observe"
-                )
-                candidate = candidate.model_copy(update={
-                    "action": fallback, "simulation_plan_id": None,
-                    "risk_decision_id": None,
-                    "risks": tuple(dict.fromkeys((
-                        *candidate.risks, "simulation_gate_missing",
-                    ))),
+                    "simulation_gate": None,
+                    "risk_decision_id": gate.risk_decision_id,
                 })
             updated = candidate if previous is None else AdviceChangeDetector.changed(previous, candidate)
             if updated is not None:
-                if gate is not None and plan_semantics_unchanged and candidate.action == "simulated_plan":
-                    rebound_gate = gate.model_copy(update={"advice_id": updated.advice_id})
-                    plan = SimulationPlanBuilder(now=now).build(rebound_gate)
-                    assert plan is not None
-                    updated = updated.model_copy(update={
-                        "simulation_plan_id": plan.plan_id,
-                        "risk_decision_id": plan.risk_decision_id,
-                    })
                 changed.append(updated)
-                if plan is not None:
-                    plans.append(plan)
         for key, previous in current.items():
             if key not in proposed_keys:
                 invalidated = AdviceChangeDetector.removed(previous, "candidate_removed", now)
@@ -637,7 +562,6 @@ class IntradayMonitor:
         aggregate = DecisionCycleAggregate(
             snapshot=snapshot,
             advice=tuple(sorted(changed, key=lambda item: item.advice_id)),
-            plans=tuple(sorted(plans, key=lambda item: item.plan_id)),
         )
         self.decision_repository.append_cycle(aggregate)
         return aggregate
@@ -651,23 +575,6 @@ class IntradayMonitor:
             values.update({(item.symbol, item.horizon): item for item in cycle.advice})
         return values
 
-    def _current_plans(self, trading_date) -> dict[str, SimulationPlan]:
-        values: dict[str, SimulationPlan] = {}
-        for phase in ("premarket", "intraday"):
-            for cycle in self.decision_repository.cycles(trading_date, phase):
-                values.update({item.plan_id: item for item in cycle.plans})
-        return values
-
-    @staticmethod
-    def _same_plan_semantics(
-        proposed: SimulationPlan | None, previous: SimulationPlan | None,
-    ) -> bool:
-        if proposed is None or previous is None:
-            return proposed is previous
-        ignored = {"plan_id", "advice_id"}
-        proposed_value = proposed.model_dump(mode="json", exclude=ignored)
-        previous_value = previous.model_dump(mode="json", exclude=ignored)
-        return proposed_value == previous_value
 
     @staticmethod
     def _source_hash(result: IntradayEvaluationResult, quotes) -> str:

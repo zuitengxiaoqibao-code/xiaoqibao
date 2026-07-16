@@ -1,5 +1,6 @@
 from datetime import date, datetime, timezone
 from decimal import Decimal
+from types import SimpleNamespace
 import pytest
 
 from qibao_api.a_shares.cockpit import StockDecisionCockpitService
@@ -16,7 +17,6 @@ from qibao_api.contracts.decision import (
     DecisionCycleSnapshot,
     EvidenceReference,
     SimulationGateAudit,
-    SimulationPlan,
 )
 from qibao_api.contracts.market import AssetKind
 from qibao_api.shangshu.decision_repository import DecisionIntegrityError
@@ -24,6 +24,7 @@ from qibao_api.shangshu.decision_repository import DecisionIntegrityError
 
 TRADE_DATE = date(2026, 7, 15)
 CUTOFF = datetime(2026, 7, 15, 6, 0, tzinfo=timezone.utc)
+SimulationPlan = SimpleNamespace
 
 
 class Directory:
@@ -199,7 +200,7 @@ async def test_cockpit_filters_every_phase_and_evidence_to_selected_symbol() -> 
     assert result.phases["intraday"].change_stream[0].sequence == 1
     assert result.candidate_membership == ("short_term",)
     assert result.assessment.symbol == "600000"
-    assert result.assessment.simulation_eligible is False
+    assert "simulation_eligible" not in result.assessment.model_dump(mode="json")
 
 
 @pytest.mark.asyncio
@@ -279,6 +280,7 @@ class SimulationDecisions:
 
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="paper simulation plans were removed")
 async def test_candidate_and_two_non_candidates_keep_separate_assessment_and_plan_layers() -> None:
     subject = StockDecisionCockpitService(
         AcceptanceDirectory(), Diagnosis(),
@@ -312,6 +314,7 @@ async def test_candidate_and_two_non_candidates_keep_separate_assessment_and_pla
         (simulation_plan(compliance_snapshot_id="wrong-compliance"),),
     ],
 )
+@pytest.mark.skip(reason="paper simulation plans were removed")
 async def test_simulation_eligibility_requires_persisted_mutually_verified_plan(plans) -> None:
     result = await service(decisions=SimulationDecisions(plans)).get(
         "600000", TRADE_DATE, CUTOFF
@@ -321,6 +324,7 @@ async def test_simulation_eligibility_requires_persisted_mutually_verified_plan(
 
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="paper simulation plans were removed")
 async def test_simulation_eligibility_accepts_complete_persisted_plan_chain() -> None:
     result = await service(
         decisions=SimulationDecisions((simulation_plan(),))
@@ -351,6 +355,7 @@ class MixedHorizonSimulationDecisions:
 
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="paper simulation plans were removed")
 async def test_authorized_simulation_reference_keeps_advice_and_plan_together() -> None:
     plan = simulation_plan(plan_id="swing-plan", advice_id="swing-authorized")
     result = await service(decisions=MixedHorizonSimulationDecisions(plan)).get(
@@ -362,6 +367,7 @@ async def test_authorized_simulation_reference_keeps_advice_and_plan_together() 
 
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="paper simulation plans were removed")
 async def test_expired_simulation_plan_does_not_return_an_authorized_reference() -> None:
     expired = simulation_plan(
         plan_id="swing-plan", advice_id="swing-authorized",
@@ -375,12 +381,6 @@ async def test_expired_simulation_plan_does_not_return_an_authorized_reference()
     assert result.assessment.simulation_eligible is False
     assert result.assessment.authorized_simulation_advice_id is None
     assert result.assessment.authorized_simulation_plan_id is None
-
-
-def test_avoid_assessment_cannot_reuse_old_ready_plan() -> None:
-    assert StockDecisionCockpitService._simulation_eligible(
-        "avoid", (simulated_advice(),), {"a-600000"}
-    ) is False
 
 
 @pytest.mark.asyncio
@@ -452,7 +452,7 @@ async def test_latest_invalidation_removes_current_advice_and_membership() -> No
     )
     assert result.current_advice == ()
     assert result.candidate_membership == ()
-    assert result.assessment.simulation_eligible is False
+    assert "simulation_eligible" not in result.assessment.model_dump(mode="json")
 
 
 class NoBars:

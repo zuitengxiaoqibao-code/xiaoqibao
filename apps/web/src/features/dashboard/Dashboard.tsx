@@ -9,8 +9,6 @@ import { DataStatusPanel } from "../data-status/DataStatusPanel";
 import type { DataStatusState, SyncReport } from "../data-status/types";
 import { BacktestPanel } from "../backtest/BacktestPanel";
 import type { BacktestResult } from "../backtest/types";
-import { PaperTradingPanel } from "../paper-trading/PaperTradingPanel";
-import type { OrderResult, PaperAccount, Portfolio } from "../paper-trading/types";
 import type { ResearchCard } from "./types";
 import { GovernanceView, type AuditStatus, type ComplianceStatus, type RiskStatus } from "../governance/GovernanceViews";
 import { ConvertibleBondView } from "../convertible-bonds/ConvertibleBondView";
@@ -39,9 +37,6 @@ type Props = {
   loadSnapshot: (symbol: string) => Promise<ResearchCard>;
   syncHistory?: (symbol: string, limit?: number) => Promise<SyncReport>;
   runBacktest?: (symbol: string, signal?: AbortSignal) => Promise<BacktestResult>;
-  loadPaperPortfolio?: () => Promise<Portfolio>;
-  createPaperAccount?: () => Promise<PaperAccount>;
-  submitPaperOrder?: (symbol: string, side: "buy" | "sell", shares: number) => Promise<OrderResult>;
   loadRisk?: () => Promise<RiskStatus>; loadCompliance?: (asset?: "a_share" | "convertible_bond") => Promise<ComplianceStatus>; loadAudit?: () => Promise<AuditStatus>;
   complianceAction?: (source: string, action: "authorize" | "revoke" | "acknowledge", permissionReference?: string, asset?: "a_share" | "convertible_bond") => Promise<unknown>;
   loadBondDashboard?: () => Promise<BondDashboard>;
@@ -179,7 +174,7 @@ function SelectedBacktestWorkspace({ runBacktest }: { runBacktest: (symbol: stri
   return <main className="command-center"><BacktestPanel symbol={symbol ?? ""} runBacktest={runBacktest} /></main>;
 }
 
-export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadPaperPortfolio, createPaperAccount, submitPaperOrder, loadRisk, loadCompliance, loadAudit, complianceAction, loadBondDashboard, loadBondDiagnosis, loadBondCandidates, loadNewsIntelligence, syncNews, createNewsCorrection, loadOperationsStatus, setSchedulerPaused, createBackup, verifyBackup, runManualJob, loadAShareCandidates, loadAShareDiagnosis, loadDecisionCurrent, loadDecisionDate, searchAShareInstruments, loadStockCockpit }: Props) {
+export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, loadCompliance, loadAudit, complianceAction, loadBondDashboard, loadBondDiagnosis, loadBondCandidates, loadNewsIntelligence, syncNews, createNewsCorrection, loadOperationsStatus, setSchedulerPaused, createBackup, verifyBackup, runManualJob, loadAShareCandidates, loadAShareDiagnosis, loadDecisionCurrent, loadDecisionDate, searchAShareInstruments, loadStockCockpit }: Props) {
   const [state, setState] = useState<ViewState>({ kind: "idle" });
   const [symbol, setSymbol] = useState("600000");
   const [dataState, setDataState] = useState<DataStatusState>({ kind: "idle" });
@@ -327,14 +322,6 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadPaperPor
           </aside>
         </div>
         {runBacktest && <BacktestPanel symbol={symbol} runBacktest={runBacktest} />}
-        {loadPaperPortfolio && createPaperAccount && submitPaperOrder && (
-          <PaperTradingPanel
-            symbol={symbol}
-            loadPortfolio={loadPaperPortfolio}
-            createAccount={createPaperAccount}
-            submitOrder={submitPaperOrder}
-          />
-        )}
       </main>}
     </div>
   );

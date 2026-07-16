@@ -8,7 +8,7 @@ const phases: Array<[DecisionPhase, string, string]> = [
   ["intraday", "盘中变化", "行情变化后的版本轨迹"],
   ["postclose", "盘后验证", "收盘后的验证与归因"],
 ];
-const actions: Record<Advice["action"], string> = { observe: "观察", wait: "等待", avoid: "回避", invalidated: "已失效", simulated_plan: "模拟观察" };
+const actions: Record<Advice["action"], string> = { observe: "观察", wait: "等待", avoid: "回避", invalidated: "已失效" };
 
 export function PhaseTimeline({ phases: histories, symbol }: { phases: StockCockpitSnapshot["phases"]; symbol: string }) {
   return <section className="stock-phase-timeline" aria-labelledby="phase-timeline-title"><header className="cockpit-block-title"><div><p className="eyebrow">中书省 / 单股变化谱系</p><h2 id="phase-timeline-title">三阶段判断记录</h2></div><span>{symbol}</span></header>

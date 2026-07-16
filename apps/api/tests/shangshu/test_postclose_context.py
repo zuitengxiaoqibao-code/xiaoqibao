@@ -1,4 +1,5 @@
 from datetime import UTC, date, datetime
+from types import SimpleNamespace
 
 from qibao_api.contracts.market import AssetKind
 from qibao_api.contracts.risk import AuditFinding
@@ -8,15 +9,18 @@ from qibao_api.shangshu.postclose_context import RepositoryPostcloseContextSourc
 NOW = datetime(2026, 7, 14, 8, 0, tzinfo=UTC)
 
 
-class Paper:
-    def list_order_outcomes_between(self, start, end):
-        assert start == datetime(2026, 7, 14, 1, 25, tzinfo=UTC)
-        assert end == datetime(2026, 7, 14, 7, 0, tzinfo=UTC)
-        return [
-            {"order_id": "filled-1", "status": "filled", "rejection_reason": None},
-            {"order_id": "rejected-1", "status": "rejected", "rejection_reason": "stale_quote"},
-            {"order_id": "pending-1", "status": "pending", "rejection_reason": None},
-        ]
+class Decisions:
+    def cycles(self, trading_date, phase):
+        assert trading_date == date(2026, 7, 14)
+        if phase != "intraday":
+            return []
+        return [SimpleNamespace(
+            snapshot=SimpleNamespace(generated_at=datetime(2026, 7, 14, 6, 0, tzinfo=UTC)),
+            advice=(SimpleNamespace(
+                advice_id="advice-1",
+                created_at=datetime(2026, 7, 14, 5, 0, tzinfo=UTC),
+            ),),
+        )]
 
 
 class Audit:
@@ -31,11 +35,11 @@ class Audit:
         )]
 
 
-def test_postclose_context_collects_terminal_orders_and_audit_findings() -> None:
-    context = RepositoryPostcloseContextSource(Paper(), Audit()).snapshot(
+def test_postclose_context_collects_decisions_and_audit_findings() -> None:
+    context = RepositoryPostcloseContextSource(Decisions(), Audit()).snapshot(
         date(2026, 7, 14), NOW
     )
 
-    assert context.signal_outcome_ids == ("filled-1", "rejected-1")
-    assert context.error_codes == ("stale_quote",)
+    assert context.signal_outcome_ids == ("advice-1",)
+    assert context.error_codes == ()
     assert context.risk_event_ids == ("finding-1",)

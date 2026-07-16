@@ -22,9 +22,6 @@ class StockAssessment(BaseModel):
     contrary_evidence: tuple[EvidenceReference, ...]
     risks: tuple[str, ...]
     invalidation_conditions: tuple[str, ...]
-    simulation_eligible: bool
-    authorized_simulation_advice_id: str | None
-    authorized_simulation_plan_id: str | None
     generated_at: AwareDatetime
 
 
@@ -165,8 +162,5 @@ class DeterministicStockAssessor:
             invalidation_conditions=(
                 "任一核心分区状态或指标发生变化。", *snapshot_risks
             ),
-            simulation_eligible=False,
-            authorized_simulation_advice_id=None,
-            authorized_simulation_plan_id=None,
             generated_at=cutoff,
         )

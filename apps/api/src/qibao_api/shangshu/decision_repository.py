@@ -9,7 +9,10 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from qibao_api.contracts.decision import (
-    AdviceCard, DecisionCycleAggregate, DecisionCycleSnapshot, DecisionPhase, SimulationPlan,
+    AdviceCard,
+    DecisionCycleAggregate,
+    DecisionCycleSnapshot,
+    DecisionPhase,
 )
 
 
@@ -17,9 +20,12 @@ class DecisionIntegrityError(RuntimeError):
     pass
 
 
-def _payload(model: DecisionCycleSnapshot | AdviceCard | SimulationPlan) -> str:
+def _payload(model: DecisionCycleSnapshot | AdviceCard) -> str:
     return json.dumps(
-        model.model_dump(mode="json"), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        model.model_dump(mode="json"),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
     )
 
 
@@ -37,19 +43,13 @@ class DecisionRepository:
         CREATE TABLE IF NOT EXISTS decision_cycles (
           snapshot_id TEXT PRIMARY KEY, trading_date TEXT NOT NULL, phase TEXT NOT NULL,
           sequence INTEGER NOT NULL, previous_snapshot_id TEXT, previous_hash TEXT,
-          canonical_hash TEXT NOT NULL, advice_count INTEGER NOT NULL, plan_count INTEGER NOT NULL,
+          canonical_hash TEXT NOT NULL, advice_count INTEGER NOT NULL,
           payload TEXT NOT NULL, UNIQUE(trading_date, phase, sequence)
         );
         CREATE TABLE IF NOT EXISTS decision_advice (
-          advice_id TEXT PRIMARY KEY, snapshot_id TEXT NOT NULL, plan_id TEXT,
+          advice_id TEXT PRIMARY KEY, snapshot_id TEXT NOT NULL,
           canonical_hash TEXT NOT NULL, payload TEXT NOT NULL,
           FOREIGN KEY(snapshot_id) REFERENCES decision_cycles(snapshot_id)
-        );
-        CREATE TABLE IF NOT EXISTS decision_plans (
-          plan_id TEXT PRIMARY KEY, snapshot_id TEXT NOT NULL, advice_id TEXT NOT NULL,
-          canonical_hash TEXT NOT NULL, payload TEXT NOT NULL,
-          FOREIGN KEY(snapshot_id) REFERENCES decision_cycles(snapshot_id),
-          FOREIGN KEY(advice_id) REFERENCES decision_advice(advice_id)
         );
         CREATE TRIGGER IF NOT EXISTS reject_update_decision_cycles BEFORE UPDATE ON decision_cycles
         BEGIN SELECT RAISE(ABORT, 'append-only decision cycles'); END;
@@ -59,39 +59,26 @@ class DecisionRepository:
         BEGIN SELECT RAISE(ABORT, 'append-only decision advice'); END;
         CREATE TRIGGER IF NOT EXISTS reject_delete_decision_advice BEFORE DELETE ON decision_advice
         BEGIN SELECT RAISE(ABORT, 'append-only decision advice'); END;
-        CREATE TRIGGER IF NOT EXISTS reject_update_decision_plans BEFORE UPDATE ON decision_plans
-        BEGIN SELECT RAISE(ABORT, 'append-only decision plans'); END;
-        CREATE TRIGGER IF NOT EXISTS reject_delete_decision_plans BEFORE DELETE ON decision_plans
-        BEGIN SELECT RAISE(ABORT, 'append-only decision plans'); END;
         """)
+        self._cycle_columns = {
+            row["name"] for row in self.connection.execute("PRAGMA table_info(decision_cycles)")
+        }
+        self._advice_columns = {
+            row["name"] for row in self.connection.execute("PRAGMA table_info(decision_advice)")
+        }
 
     @staticmethod
     def _validate_references(aggregate: DecisionCycleAggregate) -> None:
         snapshot_id = aggregate.snapshot.snapshot_id
-        advice_by_id = {item.advice_id: item for item in aggregate.advice}
-        plans_by_id = {item.plan_id: item for item in aggregate.plans}
-        if len(advice_by_id) != len(aggregate.advice) or len(plans_by_id) != len(aggregate.plans):
-            raise DecisionIntegrityError("duplicate advice or plan id")
+        advice_ids = {item.advice_id for item in aggregate.advice}
+        if len(advice_ids) != len(aggregate.advice):
+            raise DecisionIntegrityError("duplicate advice id")
         if any(item.snapshot_id != snapshot_id for item in aggregate.advice):
             raise DecisionIntegrityError("advice references a different snapshot")
         for advice in aggregate.advice:
             evidence = advice.supporting_evidence + advice.contrary_evidence
             if any(item.observed_at > aggregate.snapshot.window_end for item in evidence):
                 raise DecisionIntegrityError("advice evidence is after snapshot window end")
-        for plan in aggregate.plans:
-            advice = advice_by_id.get(plan.advice_id)
-            if advice is None:
-                raise DecisionIntegrityError("plan references advice outside the aggregate")
-            if advice.simulation_plan_id != plan.plan_id:
-                raise DecisionIntegrityError("advice and plan references are not reciprocal")
-            if advice.risk_decision_id != plan.risk_decision_id:
-                raise DecisionIntegrityError("advice and plan risk references differ")
-            gate = advice.simulation_gate
-            if gate is None or gate.compliance_snapshot_id != plan.compliance_snapshot_id:
-                raise DecisionIntegrityError("advice gate and plan compliance references differ")
-        for advice in aggregate.advice:
-            if advice.simulation_plan_id and advice.simulation_plan_id not in plans_by_id:
-                raise DecisionIntegrityError("advice references a missing plan")
 
     def append_cycle(self, aggregate: DecisionCycleAggregate) -> bool:
         self._validate_references(aggregate)
@@ -100,13 +87,13 @@ class DecisionRepository:
         canonical_hash = _hash(snapshot_payload)
         with self._lock:
             existing = self.connection.execute(
-                "SELECT canonical_hash FROM decision_cycles WHERE snapshot_id=?", (snapshot.snapshot_id,)
+                "SELECT canonical_hash FROM decision_cycles WHERE snapshot_id=?",
+                (snapshot.snapshot_id,),
             ).fetchone()
             if existing is not None:
                 if not hmac.compare_digest(existing["canonical_hash"], canonical_hash):
                     raise DecisionIntegrityError(f"snapshot id collision: {snapshot.snapshot_id}")
-                stored = self._cycles(snapshot_id=snapshot.snapshot_id)
-                if stored != [aggregate]:
+                if self._cycles(snapshot_id=snapshot.snapshot_id) != [aggregate]:
                     raise DecisionIntegrityError(f"snapshot id collision: {snapshot.snapshot_id}")
                 return False
             tail = self.connection.execute(
@@ -120,29 +107,41 @@ class DecisionRepository:
                 raise DecisionIntegrityError("cycle sequence does not follow the stored chain")
             if snapshot.previous_snapshot_id != expected_previous:
                 raise DecisionIntegrityError("previous snapshot does not match the stored chain")
-            previous_hash = None if tail is None else tail["canonical_hash"]
+            columns = [
+                "snapshot_id", "trading_date", "phase", "sequence", "previous_snapshot_id",
+                "previous_hash", "canonical_hash", "advice_count",
+            ]
+            values = [
+                snapshot.snapshot_id, snapshot.trading_date.isoformat(), snapshot.phase,
+                snapshot.sequence, snapshot.previous_snapshot_id,
+                None if tail is None else tail["canonical_hash"], canonical_hash,
+                len(aggregate.advice),
+            ]
+            if "plan_count" in self._cycle_columns:
+                columns.append("plan_count")
+                values.append(0)
+            columns.append("payload")
+            values.append(snapshot_payload)
             try:
                 with self.connection:
+                    placeholders = ",".join("?" for _ in columns)
                     self.connection.execute(
-                        """INSERT INTO decision_cycles(snapshot_id,trading_date,phase,sequence,
-                        previous_snapshot_id,previous_hash,canonical_hash,advice_count,plan_count,payload)
-                        VALUES(?,?,?,?,?,?,?,?,?,?)""",
-                        (snapshot.snapshot_id, snapshot.trading_date.isoformat(), snapshot.phase,
-                         snapshot.sequence, snapshot.previous_snapshot_id, previous_hash, canonical_hash,
-                         len(aggregate.advice), len(aggregate.plans), snapshot_payload),
+                        f"INSERT INTO decision_cycles({','.join(columns)}) VALUES({placeholders})",
+                        values,
                     )
                     for advice in aggregate.advice:
                         payload = _payload(advice)
+                        advice_columns = ["advice_id", "snapshot_id"]
+                        advice_values = [advice.advice_id, snapshot.snapshot_id]
+                        if "plan_id" in self._advice_columns:
+                            advice_columns.append("plan_id")
+                            advice_values.append(None)
+                        advice_columns.extend(("canonical_hash", "payload"))
+                        advice_values.extend((_hash(payload), payload))
+                        marks = ",".join("?" for _ in advice_columns)
                         self.connection.execute(
-                            "INSERT INTO decision_advice VALUES(?,?,?,?,?)",
-                            (advice.advice_id, snapshot.snapshot_id, advice.simulation_plan_id,
-                             _hash(payload), payload),
-                        )
-                    for plan in aggregate.plans:
-                        payload = _payload(plan)
-                        self.connection.execute(
-                            "INSERT INTO decision_plans VALUES(?,?,?,?,?)",
-                            (plan.plan_id, snapshot.snapshot_id, plan.advice_id, _hash(payload), payload),
+                            f"INSERT INTO decision_advice({','.join(advice_columns)}) VALUES({marks})",
+                            advice_values,
                         )
             except sqlite3.IntegrityError as exc:
                 raise DecisionIntegrityError("decision aggregate transaction failed") from exc
@@ -169,44 +168,25 @@ class DecisionRepository:
                 if not hmac.compare_digest(_hash(row["payload"]), row["canonical_hash"]):
                     raise DecisionIntegrityError("cycle payload hash mismatch")
                 snapshot = DecisionCycleSnapshot.model_validate_json(row["payload"])
-                if (snapshot.snapshot_id != row["snapshot_id"]
-                        or snapshot.trading_date.isoformat() != row["trading_date"]
-                        or snapshot.phase != row["phase"]
-                        or snapshot.sequence != row["sequence"]
-                        or snapshot.previous_snapshot_id != row["previous_snapshot_id"]):
-                    raise DecisionIntegrityError("cycle metadata does not match its payload")
                 key = (row["trading_date"], row["phase"])
                 prior = prior_by_chain.get(key)
                 if snapshot_id is None:
-                    expected_sequence = 1 if prior is None else int(prior["sequence"]) + 1
-                    expected_previous_hash = None if prior is None else prior["canonical_hash"]
-                    expected_previous_id = None if prior is None else prior["snapshot_id"]
-                    if (row["sequence"] != expected_sequence or row["previous_hash"] != expected_previous_hash
-                            or row["previous_snapshot_id"] != expected_previous_id):
+                    if row["sequence"] != (1 if prior is None else int(prior["sequence"]) + 1):
+                        raise DecisionIntegrityError("decision cycle chain is broken")
+                    if row["previous_hash"] != (None if prior is None else prior["canonical_hash"]):
                         raise DecisionIntegrityError("decision cycle chain is broken")
                 advice_rows = self.connection.execute(
                     "SELECT * FROM decision_advice WHERE snapshot_id=? ORDER BY advice_id",
                     (row["snapshot_id"],),
                 ).fetchall()
-                plan_rows = self.connection.execute(
-                    "SELECT * FROM decision_plans WHERE snapshot_id=? ORDER BY plan_id",
-                    (row["snapshot_id"],),
-                ).fetchall()
-                if len(advice_rows) != row["advice_count"] or len(plan_rows) != row["plan_count"]:
+                if len(advice_rows) != row["advice_count"]:
                     raise DecisionIntegrityError("decision aggregate has missing children")
-                advice = tuple(self._validated_child(item, AdviceCard) for item in advice_rows)
-                plans = tuple(self._validated_child(item, SimulationPlan) for item in plan_rows)
+                advice = tuple(self._validated_child(item) for item in advice_rows)
                 for stored, model in zip(advice_rows, advice, strict=True):
                     if (stored["advice_id"] != model.advice_id
-                            or stored["snapshot_id"] != snapshot.snapshot_id
-                            or stored["plan_id"] != model.simulation_plan_id):
-                        raise DecisionIntegrityError("stored reciprocal plan link is corrupt")
-                for stored, model in zip(plan_rows, plans, strict=True):
-                    if (stored["plan_id"] != model.plan_id
-                            or stored["snapshot_id"] != snapshot.snapshot_id
-                            or stored["advice_id"] != model.advice_id):
-                        raise DecisionIntegrityError("stored plan link is corrupt")
-                aggregate = DecisionCycleAggregate(snapshot=snapshot, advice=advice, plans=plans)
+                            or stored["snapshot_id"] != snapshot.snapshot_id):
+                        raise DecisionIntegrityError("stored advice link is corrupt")
+                aggregate = DecisionCycleAggregate(snapshot=snapshot, advice=advice)
                 self._validate_references(aggregate)
                 results.append(aggregate)
                 prior_by_chain[key] = row
@@ -215,10 +195,10 @@ class DecisionRepository:
         return results
 
     @staticmethod
-    def _validated_child(row: sqlite3.Row, model: type[AdviceCard] | type[SimulationPlan]):
+    def _validated_child(row: sqlite3.Row) -> AdviceCard:
         if not hmac.compare_digest(_hash(row["payload"]), row["canonical_hash"]):
             raise DecisionIntegrityError("decision child payload hash mismatch")
-        return model.model_validate_json(row["payload"])
+        return AdviceCard.model_validate_json(row["payload"])
 
     def cycles(self, trading_date: date | None = None,
                phase: DecisionPhase | None = None) -> list[DecisionCycleAggregate]:

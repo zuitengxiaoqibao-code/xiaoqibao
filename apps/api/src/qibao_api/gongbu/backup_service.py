@@ -291,7 +291,6 @@ class BackupService:
         )
         from qibao_api.dongchang.repository import AuditFindingRepository
         from qibao_api.gongbu.news_repository import NewsRepository
-        from qibao_api.hubu.repository import PaperRepository
         from qibao_api.libu_compliance.repository import ComplianceRepository
         from qibao_api.shangshu.briefing_repository import BriefingRepository
         from qibao_api.shangshu.operations_repository import OperationsRepository
@@ -312,7 +311,6 @@ class BackupService:
                 repo.list_findings(asset=AssetKind.A_SHARE),
                 repo.list_findings(asset=AssetKind.CONVERTIBLE_BOND),
             )),
-            ("paper.sqlite3", PaperRepository, lambda repo: repo.list_risk_decisions()),
             ("bond-diagnoses.sqlite3", BondDiagnosisRepository,
              lambda repo: repo.latest_by_bond()),
             ("operations.sqlite3", OperationsRepository, lambda repo: repo.jobs()),

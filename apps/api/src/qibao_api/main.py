@@ -26,9 +26,6 @@ from qibao_api.gongbu.news_collection import EastmoneyGlobalNewsSource
 from qibao_api.gongbu.news_ingestion import NewsIngestionService
 from qibao_api.gongbu.news_linking import DeterministicNewsLinker
 from qibao_api.gongbu.news_repository import NewsRepository
-from qibao_api.bingbu.paper_broker import PaperBroker
-from qibao_api.bingbu.paper_service import PaperTradingService
-from qibao_api.hubu.repository import PaperRepository
 from qibao_api.libu_compliance.guard import (
     AuthorizedFinanceSource,
     AuthorizedHistorySource,
@@ -39,7 +36,6 @@ from qibao_api.routes.backtest import router as backtest_router
 from qibao_api.routes.data import router as data_router
 from qibao_api.routes.health import router as health_router
 from qibao_api.routes.research import router as research_router
-from qibao_api.routes.paper import router as paper_router
 from qibao_api.settings import Settings
 from qibao_api.shangshu.pipeline import ResearchPipeline
 from qibao_api.storage.database import create_schema
@@ -238,21 +234,13 @@ async def lifespan(application: FastAPI):
                     prompt_version="news-v1",
                 ),
             )
-            paper_repository = PaperRepository(settings.data_dir / "paper.sqlite3")
-            application.state.paper_repository = paper_repository
             application.state.briefing_workflow = DailyBriefingWorkflow(
                 news_repository,
                 briefing_repository,
                 trading_calendar,
-                RepositoryPostcloseContextSource(
-                    paper_repository, audit_repository
-                ),
+                RepositoryPostcloseContextSource(decision_repository, audit_repository),
             )
             application.state.decision_calendar = trading_calendar
-            application.state.paper_service = PaperTradingService(
-                application.state.pipeline,
-                PaperBroker(paper_repository),
-            )
             operations_repository = OperationsRepository(
                 settings.data_dir / "operations.sqlite3"
             )
@@ -308,7 +296,6 @@ async def lifespan(application: FastAPI):
             postclose_review = PostcloseReviewService(
                 decision_repository=decision_repository,
                 market_outcome_source=decision_outcome_source,
-                paper_repository=paper_repository,
                 audit_repository=audit_repository,
             )
             decision_phase_runner = DecisionPhaseRunner(
@@ -381,7 +368,6 @@ async def lifespan(application: FastAPI):
                     scheduler_task.cancel()
                     with suppress(asyncio.CancelledError):
                         await scheduler_task
-                paper_repository.close()
                 bond_repository.close()
                 diagnosis_repository.close()
                 news_repository.close()
@@ -416,7 +402,6 @@ app.include_router(health_router)
 app.include_router(research_router)
 app.include_router(data_router)
 app.include_router(backtest_router)
-app.include_router(paper_router)
 app.include_router(xingbu_router)
 app.include_router(libu_router)
 app.include_router(dongchang_router)

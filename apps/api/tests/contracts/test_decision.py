@@ -8,7 +8,6 @@ from qibao_api.contracts.decision import (
     AdviceCard,
     DecisionCycleSnapshot,
     EvidenceReference,
-    SimulationPlan,
 )
 
 
@@ -33,20 +32,6 @@ def advice(**updates: object) -> AdviceCard:
     )
     values.update(updates)
     return AdviceCard(**values)
-
-
-def plan(**updates: object) -> SimulationPlan:
-    values = dict(
-        plan_id="plan-1", advice_id="advice-1", risk_decision_id="risk-1",
-        compliance_snapshot_id="compliance-1", watch_price_low="10.00",
-        watch_price_high="10.20", stop_loss="9.70", take_profit=("10.60", "11.00"),
-        tranches=("0.3", "0.3"), max_position="0.6",
-        invalidation_conditions=("breaks support",), valid_from=NOW,
-        valid_until=NOW + timedelta(hours=1), strategy_version="decision-v1",
-        risk_version="risk-v1", compliance_version="compliance-v1",
-    )
-    values.update(updates)
-    return SimulationPlan(**values)
 
 
 def test_advice_requires_risk_and_invalidation_disclosures() -> None:
@@ -78,23 +63,6 @@ def test_cycle_rejects_inputs_after_window_end() -> None:
         )
 
 
-def test_simulation_plan_enforces_numeric_limits() -> None:
+def test_advice_rejects_removed_simulated_plan_action() -> None:
     with pytest.raises(ValidationError):
-        plan(watch_price_low="10.30")
-    with pytest.raises(ValidationError):
-        plan(take_profit=("10.5", "11", "12"))
-    with pytest.raises(ValidationError):
-        plan(tranches=("0.4", "0.4", "0.4"))
-    with pytest.raises(ValidationError):
-        plan(max_position="0")
-    with pytest.raises(ValidationError):
-        plan(tranches=("0.4", "0.3"), max_position="0.6")
-
-
-def test_simulated_advice_requires_gate_references() -> None:
-    with pytest.raises(ValidationError):
-        advice(action="simulated_plan", simulation_plan_id="plan-1")
-    with pytest.raises(ValidationError):
-        advice(simulation_plan_id="plan-1")
-    with pytest.raises(ValidationError):
-        advice(action="simulated_plan", simulation_plan_id="plan-1", risk_decision_id="risk-1")
+        advice(action="simulated_plan")

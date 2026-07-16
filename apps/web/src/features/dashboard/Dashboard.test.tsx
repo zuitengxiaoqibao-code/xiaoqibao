@@ -39,6 +39,17 @@ describe("Dashboard", () => {
     /></SelectedInstrumentProvider>);
     expect(screen.getByRole("heading", { name: "先选择一只 A 股" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "今日判断与三阶段跟踪" })).toBeInTheDocument();
+    expect(screen.queryByText("模拟交易与资金台账")).not.toBeInTheDocument();
+    expect(screen.queryByText("模拟资金")).not.toBeInTheDocument();
+  });
+
+  it("does not expose the removed paper trading panel", () => {
+    window.history.replaceState({}, "", "/");
+    const { container } = render(<SelectedInstrumentProvider><Dashboard
+      loadSnapshot={() => Promise.resolve(freshCard)}
+    /></SelectedInstrumentProvider>);
+
+    expect(container.querySelector(".paper-panel")).not.toBeInTheDocument();
   });
 
   it("drives cockpit and workbench from the same historical date", async () => {

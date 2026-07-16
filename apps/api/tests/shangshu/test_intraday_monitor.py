@@ -12,7 +12,6 @@ from qibao_api.contracts.decision import (
 )
 from qibao_api.contracts.market import AssetKind
 from decimal import Decimal
-from qibao_api.bingbu.simulation_plan import QuantitativeLevels, SimulationGateContext
 from qibao_api.gongbu.market_feed import MarketFeedSnapshot
 from qibao_api.shangshu.decision_repository import DecisionRepository
 
@@ -462,6 +461,7 @@ def test_removed_candidate_invalidates_once(tmp_path) -> None:
     assert cycles[0].advice[0].quantitative_result["invalidation_reason_code"] == "candidate_removed"
 
 
+@pytest.mark.skip(reason="paper simulation plans were removed")
 def test_passing_gate_persists_reciprocal_simulation_plan(tmp_path) -> None:
     repository = DecisionRepository(tmp_path / "decisions.sqlite3")
     baseline_aggregate(repository)
@@ -486,6 +486,7 @@ def test_passing_gate_persists_reciprocal_simulation_plan(tmp_path) -> None:
     assert aggregate.advice[0].risk_decision_id == aggregate.plans[0].risk_decision_id
 
 
+@pytest.mark.skip(reason="paper simulation plans were removed")
 def test_source_change_with_identical_plan_semantics_does_not_append(tmp_path) -> None:
     repository = DecisionRepository(tmp_path / "decisions.sqlite3")
     baseline_aggregate(repository)
@@ -515,6 +516,7 @@ def test_source_change_with_identical_plan_semantics_does_not_append(tmp_path) -
     {"evidence_state": "blocked"}, {"risk_state": "reject"},
     {"risk_decision_id": None}, {"compliance_snapshot_id": None}, {"levels": None},
 ])
+@pytest.mark.skip(reason="paper simulation plans were removed")
 def test_failed_gate_clears_stale_simulated_plan(gate_update, tmp_path) -> None:
     repository = DecisionRepository(tmp_path / "decisions.sqlite3")
     baseline_aggregate(repository)
@@ -541,6 +543,7 @@ def test_failed_gate_clears_stale_simulated_plan(gate_update, tmp_path) -> None:
     assert set(base_gate.failed_gate_reasons()).issubset(updated.risks)
 
 
+@pytest.mark.skip(reason="paper simulation plans were removed")
 def test_missing_gate_clears_stale_simulated_plan(tmp_path) -> None:
     repository = DecisionRepository(tmp_path / "decisions.sqlite3")
     baseline_aggregate(repository)

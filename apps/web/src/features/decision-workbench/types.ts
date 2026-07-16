@@ -8,31 +8,19 @@ export type SimulationGateAudit = {
 export type Advice = {
   advice_id: string; snapshot_id: string; asset: "a_share" | "convertible_bond"; symbol: string; horizon: "intraday" | "swing";
   observation_state: string;
-  action: "observe" | "wait" | "avoid" | "invalidated" | "simulated_plan";
+  action: "observe" | "wait" | "avoid" | "invalidated";
   conclusion: string; confidence: string; supporting_evidence: Evidence[]; contrary_evidence: Evidence[];
   risks: string[]; invalidation_conditions: string[]; plain_language_explanation: string | null;
   quantitative_result: Record<string, string | null>; ai_interpretation_id: string | null;
-  strategy_version: string; created_at: string; simulation_plan_id: string | null; risk_decision_id: string | null;
+  strategy_version: string; created_at: string; risk_decision_id: string | null;
   simulation_gate: SimulationGateAudit | null; previous_advice_id: string | null; changed_fields: string[];
-};
-export type SimulationPlan = {
-  plan_id: string; advice_id: string; risk_decision_id: string; compliance_snapshot_id: string;
-  watch_price_low: string; watch_price_high: string; stop_loss: string; take_profit: string[];
-  tranches: string[]; max_position: string; invalidation_conditions: string[];
-  valid_from: string; valid_until: string; strategy_version: string; risk_version: string; compliance_version: string;
-};
-export type PlanReadiness = {
-  ready: boolean; reasons: string[]; quote_state: "ready" | "blocked";
-  compliance_state: "ready" | "blocked"; evidence_state: "ready" | "blocked";
-  risk_state: "approve" | "reject";
 };
 export type PhaseSlot = {
   phase_status: "empty" | "ready" | "partial" | "blocked"; quality: "empty" | "ready" | "partial" | "blocked";
   aggregate_version: string | null; strategy_versions?: string[]; ai_status: "ready" | "unavailable" | "not_requested";
-  generated_at?: string; advice: Advice[]; evidence: Evidence[]; plans: SimulationPlan[];
-  plan_readiness: Record<string, PlanReadiness>;
-  delta_version?: string; delta_advice?: Advice[]; delta_plans?: SimulationPlan[];
-  change_stream?: Array<{ snapshot_id: string; sequence: number; generated_at: string; delta_advice: Advice[]; delta_plans: SimulationPlan[] }>;
+  generated_at?: string; advice: Advice[]; evidence: Evidence[];
+  delta_version?: string; delta_advice?: Advice[];
+  change_stream?: Array<{ snapshot_id: string; sequence: number; generated_at: string; delta_advice: Advice[] }>;
 };
 export type DecisionResponse = {
   server_time: string; trading_date: string; current_phase: DecisionPhase; market_session: "open" | "closed";

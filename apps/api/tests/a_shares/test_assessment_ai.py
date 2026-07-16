@@ -144,7 +144,7 @@ async def test_sends_strict_json_request_and_accepts_frozen_evidence() -> None:
     assert result.explanation.evidence_ids == ("evidence-1",)
     assert result.assessment.action == "observe"
     assert result.assessment.confidence == Decimal("0.75")
-    assert result.assessment.simulation_eligible is True
+    assert "simulation_eligible" not in result.assessment.model_dump(mode="json")
 
 
 @pytest.mark.asyncio

@@ -227,7 +227,7 @@ class DeterministicIntradayEvaluator:
             )
             advice.append(current.model_copy(update={
                 "supporting_evidence": (evidence,), "contrary_evidence": (),
-                "action": "observe", "simulation_plan_id": None, "risk_decision_id": None,
+                "action": "observe", "risk_decision_id": None,
                 "quantitative_result": {
                     "price": quote.price, "change_percent": quote.change_percent,
                     "membership": current.quantitative_result.get("membership"),

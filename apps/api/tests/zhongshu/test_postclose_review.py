@@ -127,7 +127,6 @@ def _service(advice, market, *, executions=(), decisions=(), findings=()):
     service = PostcloseReviewService(
         decision_repository=repository,
         market_outcome_source=Outcomes(market),
-        paper_repository=Paper(executions, decisions),
         audit_repository=Audit(findings),
     )
     return service, repository
@@ -218,7 +217,7 @@ def test_excludes_backdated_advice_from_snapshot_frozen_after_close() -> None:
     repository = Decisions([cycle])
     service = PostcloseReviewService(
         decision_repository=repository, market_outcome_source=Outcomes(()),
-        paper_repository=Paper(), audit_repository=Audit(),
+        audit_repository=Audit(),
     )
 
     result = service.run(TRADING_DATE, NOW)
@@ -233,7 +232,7 @@ def test_rejects_conflicting_duplicate_frozen_advice_ids() -> None:
     repository = Decisions([_cycle(first), _cycle(second, "intraday")])
     service = PostcloseReviewService(
         decision_repository=repository, market_outcome_source=Outcomes(()),
-        paper_repository=Paper(), audit_repository=Audit(),
+        audit_repository=Audit(),
     )
 
     with pytest.raises(ValueError, match="conflicting duplicate advice_id"):
@@ -318,8 +317,8 @@ def test_wrong_invalidated_and_risk_blocked_advice_are_withdrawn() -> None:
             {"advice_id": "blocked", "observed_at": CLOSE, "available": True,
              "direction": "favorable", "invalidation_triggered": False},
         ),
-        decisions=({"decision_id": "risk-1", "advice_id": "blocked",
-                    "outcome": "reject", "decided_at": CLOSE},),
+        findings=({"finding_id": "risk-1", "input_snapshot_ids": ("blocked",),
+                   "severity": "critical", "detected_at": CLOSE},),
     )
 
     result = service.run(TRADING_DATE, NOW)

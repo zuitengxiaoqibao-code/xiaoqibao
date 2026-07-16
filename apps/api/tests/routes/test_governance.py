@@ -1,20 +1,15 @@
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from qibao_api.contracts.market import AssetKind
 from qibao_api.contracts.risk import ComplianceRecord
-from qibao_api.contracts.risk import RiskDecision
-from qibao_api.contracts.trading import OrderRequest
 from qibao_api.dependencies import (
     get_audit_repository,
     get_compliance_repository,
-    get_paper_repository,
 )
 from qibao_api.dongchang.repository import AuditFindingRepository
-from qibao_api.hubu.repository import PaperRepository
 from qibao_api.libu_compliance.repository import ComplianceRepository
 from qibao_api.routes.dongchang import router as dongchang_router
 from qibao_api.routes.libu import router as libu_router
@@ -25,15 +20,13 @@ NOW = datetime(2026, 7, 13, tzinfo=timezone.utc)
 
 
 def make_client(tmp_path):
-    paper = PaperRepository(tmp_path / "paper.sqlite3")
     compliance = ComplianceRepository(tmp_path / "compliance.sqlite3")
     audit = AuditFindingRepository(tmp_path / "audit.sqlite3")
-    compliance.set_feature_sources("paper_orders", AssetKind.A_SHARE, ("tencent",))
+    compliance.set_feature_sources("market_data", AssetKind.A_SHARE, ("tencent",))
     application = FastAPI()
     application.include_router(xingbu_router)
     application.include_router(libu_router)
     application.include_router(dongchang_router)
-    application.dependency_overrides[get_paper_repository] = lambda: paper
     application.dependency_overrides[get_compliance_repository] = lambda: compliance
     application.dependency_overrides[get_audit_repository] = lambda: audit
     return TestClient(application), compliance, audit
@@ -117,22 +110,10 @@ def test_audit_store_unavailable_is_explicit() -> None:
     assert response.json()["detail"] == "audit_store_unavailable"
 
 
-def test_xingbu_rejections_follow_order_status_including_observe_only(tmp_path) -> None:
+def test_xingbu_status_has_no_paper_order_rejections(tmp_path) -> None:
     client, _, _ = make_client(tmp_path)
-    paper = client.app.dependency_overrides[get_paper_repository]()
-    paper.create_account("paper-1", Decimal("100000"))
-    order_id = paper.create_order("paper-1", OrderRequest(client_order_id="observe", symbol="600000", side="buy", shares=100))
-    paper.record_risk_decision(RiskDecision(
-        decision_id="risk-observe", order_id=order_id, symbol="600000", asset=AssetKind.A_SHARE,
-        outcome="observe_only", reason_code="industry_liquidity_data_missing",
-        evidence=("snapshot:one",), rule_id="complete_order_review",
-        rule_version="market-quality.1+missing-inputs.1", decided_at=NOW,
-    ))
-    paper.reject_order(order_id, "risk_rejected")
-
     response = client.get("/api/v1/xingbu/status")
-
-    assert response.json()["recent_rejections"][0]["decision_id"] == "risk-observe"
+    assert response.json()["recent_rejections"] == []
 
 
 def test_dongchang_audit_run_generates_and_persists_findings(tmp_path) -> None:

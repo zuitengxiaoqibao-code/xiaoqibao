@@ -63,7 +63,7 @@ def test_observes_complete_non_candidate_without_inventing_plan() -> None:
     result = DeterministicStockAssessor().assess("600519", sections(), (), CUTOFF)
 
     assert result.action == "observe"
-    assert result.simulation_eligible is False
+    assert "simulation_eligible" not in result.model_dump(mode="json")
 
 
 def test_assessment_evidence_is_deterministic_and_cutoff_traceable() -> None:
@@ -81,7 +81,7 @@ def test_assessment_evidence_is_deterministic_and_cutoff_traceable() -> None:
     assert len({item.evidence_id for item in first.supporting_evidence}) == len(
         first.supporting_evidence
     )
-    assert first.simulation_eligible is False
+    assert "simulation_eligible" not in first.model_dump(mode="json")
 
 
 def test_missing_observation_is_a_risk_but_not_evidence() -> None:
@@ -93,7 +93,7 @@ def test_missing_observation_is_a_risk_but_not_evidence() -> None:
     assert "行情" in result.conclusion
     assert not any(item.source == "fixture-market" for item in result.contrary_evidence)
     assert any("缺失" in risk for risk in result.risks)
-    assert result.simulation_eligible is False
+    assert "simulation_eligible" not in result.model_dump(mode="json")
 
 
 def test_future_source_observation_never_enters_assessment_evidence() -> None:
