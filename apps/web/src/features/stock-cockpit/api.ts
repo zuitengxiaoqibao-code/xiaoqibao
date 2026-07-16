@@ -1,4 +1,4 @@
-import type { InstrumentSearchResponse, StockCockpitSnapshot } from "./types";
+import type { InstrumentSearchResponse, StockCockpitSnapshot, StockPreparation } from "./types";
 
 async function request<T>(path: string): Promise<T> {
   const response = await fetch(path);
@@ -20,6 +20,13 @@ export function loadStockCockpit(symbol: string, asOf?: string, signal?: AbortSi
       const body = await response.json().catch(() => ({}));
       throw new Error(body.detail?.message ?? body.detail ?? `A 股请求失败 (${response.status})`);
     }
+    return response.json();
+  });
+}
+
+export function prepareStockData(symbol: string, signal?: AbortSignal): Promise<StockPreparation> {
+  return fetch(`/api/v1/a-shares/${symbol}/prepare`, { method: "POST", signal }).then(async (response) => {
+    if (!response.ok) throw new Error(`数据补齐失败 (${response.status})`);
     return response.json();
   });
 }

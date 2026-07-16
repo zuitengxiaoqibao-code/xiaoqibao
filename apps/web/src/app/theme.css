@@ -387,6 +387,12 @@ body { font-size: 13px; }
 .phase-empty { display: flex; align-items: center; gap: 7px; }
 .cockpit-data { overflow: hidden; }.cockpit-data > summary { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 10px; min-height: 50px; padding: 0 16px; cursor: pointer; list-style: none; }.cockpit-data > summary::-webkit-details-marker { display: none; }.cockpit-data > summary > span { display: flex; align-items: center; gap: 8px; }.cockpit-data > summary b { font-size: 14px; }.cockpit-data > summary small { color: var(--muted); font-size: 12px; }.cockpit-data[open] > summary { border-bottom: 1px solid var(--line); }.cockpit-data[open] > summary > svg { transform: rotate(180deg); }
 .cockpit-section h3, .cockpit-section > header span, .section-summary, .section-degraded, .section-reason, .cockpit-section summary, .cockpit-section dt, .cockpit-section dd, .cockpit-section > footer { font-size: 12px; }
+.data-settings-view { max-width: 1100px; margin: 0 auto; padding: 32px; }.data-settings-view > header { margin-bottom: 24px; }.data-settings-view > header h1 { margin: 4px 0 8px; font-size: 28px; }.data-settings-view > header p:last-child, .settings-heading p, .settings-empty { color: var(--muted); }
+.settings-section { margin-top: 18px; padding: 22px; border: 1px solid var(--line); background: #10181e; }.settings-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }.settings-heading > div { display: flex; align-items: flex-start; gap: 12px; }.settings-heading h2 { margin: 0 0 5px; font-size: 18px; }.settings-heading p { margin: 0; }
+.toggle-control { display: flex; align-items: center; gap: 9px; min-height: 36px; cursor: pointer; }.toggle-control input { width: 18px; height: 18px; accent-color: var(--ok); }
+.source-status-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 18px 0; }.source-status-list article { padding: 14px; border: 1px solid var(--line); background: #0c1318; }.source-status-list article > div { display: flex; align-items: center; gap: 8px; }.source-status-list article > div span { margin-left: auto; color: var(--text-soft); }.source-status-list article small { display: block; margin-top: 9px; color: var(--muted); }.source-status-list article p { margin: 7px 0 0; color: var(--warning); }
+.settings-form { display: grid; grid-template-columns: 2fr 1fr 1.4fr; gap: 12px; margin-top: 18px; }.settings-form label { display: grid; gap: 7px; color: var(--text-soft); font-size: 13px; }.settings-form input { width: 100%; min-height: 42px; padding: 9px 11px; border: 1px solid var(--line); background: #0b1115; color: var(--text); }.settings-actions { display: flex; gap: 10px; margin-top: 16px; }
+.settings-action { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; padding: 0 16px; border: 1px solid var(--ok); background: var(--ok); color: #07100d; font-weight: 700; }.settings-action.secondary { margin-top: 14px; border-color: var(--line); background: transparent; color: var(--text); }.settings-action.danger { border-color: #754243; background: transparent; color: #ffb5b5; }.settings-action:disabled { cursor: not-allowed; opacity: .48; }
 
 @media (max-width: 900px) {
   .app-shell { display: block; }
@@ -399,6 +405,7 @@ body { font-size: 13px; }
   .history-phases { grid-template-columns: 1fr; }.history-phases > section { border-right: 0; border-bottom: 1px solid var(--line); }
 }
 @media (max-width: 520px) {
+  .data-settings-view { padding: 20px 14px 86px; }.settings-section { padding: 16px; }.settings-heading { display: grid; }.source-status-list, .settings-form { grid-template-columns: 1fr; }.settings-actions { align-items: stretch; flex-direction: column; }
   .beginner-sidebar nav button { font-size: 12px; }.beginner-sidebar nav button svg { display: none; }
   .beginner-page { padding: 18px 12px; }.beginner-page > header h1 { font-size: 21px; }
   .cockpit-identity { padding: 14px; }.cockpit-identity h1 { font-size: 20px; }.cockpit-quality { min-width: 0; }

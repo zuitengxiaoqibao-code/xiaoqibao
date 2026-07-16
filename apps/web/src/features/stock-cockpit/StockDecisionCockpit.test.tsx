@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { SelectedInstrumentProvider } from "../instrument-selection/SelectedInstrumentProvider";
@@ -51,6 +51,29 @@ function renderCockpit(load: (symbol: string, asOf?: string, signal?: AbortSigna
 }
 
 describe("StockDecisionCockpit", () => {
+  it("prepares incomplete live data and reloads the cockpit exactly once", async () => {
+    const partial = snapshot({ preparation: { ...snapshot().preparation!, status: "partial", refreshed: false } });
+    const load = vi.fn().mockResolvedValueOnce(partial).mockResolvedValueOnce(snapshot());
+    let finishPreparation!: (value: NonNullable<StockCockpitSnapshot["preparation"]>) => void;
+    const prepare = vi.fn().mockReturnValue(new Promise((resolve) => { finishPreparation = resolve; }));
+    window.localStorage.setItem("qibao.autoSync", "true");
+    window.history.replaceState({}, "", "/?symbol=600000");
+    render(<SelectedInstrumentProvider><StockDecisionCockpit load={load} prepare={prepare} /></SelectedInstrumentProvider>);
+    expect(await screen.findByText("正在补齐数据")).toBeInTheDocument();
+    await act(async () => finishPreparation({ ...partial.preparation!, refreshed: true }));
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
+    expect(prepare).toHaveBeenCalledTimes(1);
+  });
+
+  it("never prepares historical snapshots", async () => {
+    const load = vi.fn().mockResolvedValue(snapshot({ preparation: { ...snapshot().preparation!, status: "partial" } }));
+    const prepare = vi.fn();
+    window.localStorage.setItem("qibao.autoSync", "true");
+    window.history.replaceState({}, "", "/?symbol=600000");
+    render(<SelectedInstrumentProvider><StockDecisionCockpit load={load} prepare={prepare} asOf="2026-07-14" /></SelectedInstrumentProvider>);
+    await screen.findByText("浦发银行");
+    expect(prepare).not.toHaveBeenCalled();
+  });
   it("renders a beginner action card and hides internal decision machinery", async () => {
     renderCockpit(() => Promise.resolve(snapshot()));
     expect(await screen.findByText("行情与趋势可用，保持观察。")).toBeInTheDocument();

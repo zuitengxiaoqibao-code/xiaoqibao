@@ -3,12 +3,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useSelectedInstrument } from "../instrument-selection/SelectedInstrumentProvider";
 import { friendlyError } from "../../shared/friendlyError";
+import { isAutoSyncEnabled } from "../data-settings/DataSettingsView";
 import type { AssessmentAIExplanation, AssessmentAIStatus, StockAssessment, StockCockpitSnapshot } from "./types";
 import { CockpitSections } from "./CockpitSections";
 import { PhaseTimeline } from "./PhaseTimeline";
 
 type Loader = (symbol: string, asOf?: string, signal?: AbortSignal) => Promise<StockCockpitSnapshot>;
-type Props = { load: Loader; asOf?: string; refreshToken?: number; onRefreshRequest?: () => void };
+type Preparer = (symbol: string, signal?: AbortSignal) => Promise<import("./types").StockPreparation>;
+type Props = { load: Loader; prepare?: Preparer; asOf?: string; refreshToken?: number; onRefreshRequest?: () => void; onSnapshot?: (snapshot: StockCockpitSnapshot) => void };
 
 const qualityNames = { ready: "数据完整", partial: "部分可用", blocked: "数据已拦截" } as const;
 const sectionQualityNames = { ready: "行情有效", partial: "行情部分可用", stale: "行情陈旧", unavailable: "行情不可用", blocked: "行情已拦截" } as const;
@@ -44,7 +46,7 @@ function AssessmentConclusion({ assessment, aiStatus, aiExplanation }: { assessm
   </section>;
 }
 
-function PreparationStatus({ data }: { data: StockCockpitSnapshot }) {
+function PreparationStatus({ data, preparing = false }: { data: StockCockpitSnapshot; preparing?: boolean }) {
   const fallbackSources = [
     ["quote", "market"], ["history", "trend"], ["finance", "fundamentals"], ["news", "news"],
   ].map(([name, section]) => ({
@@ -59,20 +61,22 @@ function PreparationStatus({ data }: { data: StockCockpitSnapshot }) {
   };
   const ready = preparation.sources.filter((source) => source.status === "ready").length;
   const names = { quote: "实时行情", history: "历史走势", finance: "基本面", news: "新闻" } as const;
-  const title = !data.preparation ? "根据现有数据估算" : preparation.status === "ready" ? "数据已准备" : "部分数据待补齐";
+  const title = preparing ? "正在补齐数据" : !data.preparation ? "根据现有数据估算" : preparation.status === "ready" ? "数据已准备" : "部分数据待补齐";
   return <section className={`preparation-status ${preparation.status}`} aria-label="数据准备状态"><div><Database size={17} /><span><b>{title}</b><small>{preparation.refreshed ? "已自动检查并更新" : data.preparation ? "尚未执行自动补齐" : "已根据当前数据分区检查可用性"}</small></span></div><div className="preparation-sources">{preparation.sources.map((source) => <span className={source.status} key={source.name}>{names[source.name]}<b>{source.status === "ready" ? "可用" : "待补齐"}</b></span>)}</div><small>{ready}/{preparation.sources.length} 类核心数据可用</small></section>;
 }
 
-export function StockDecisionCockpit({ load, asOf, refreshToken = 0, onRefreshRequest }: Props) {
+export function StockDecisionCockpit({ load, prepare, asOf, refreshToken = 0, onRefreshRequest, onSnapshot }: Props) {
   const { symbol } = useSelectedInstrument();
   const [data, setData] = useState<StockCockpitSnapshot | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [stale, setStale] = useState(false);
+  const [preparing, setPreparing] = useState(false);
   const generation = useRef(0);
   const controller = useRef<AbortController | null>(null);
   const hasData = useRef(false);
   const loadedContext = useRef<string | null>(null);
+  const preparedContext = useRef<string | null>(null);
   const contextKey = symbol ? `${symbol}:${asOf || "live"}` : null;
 
   const refresh = useCallback(async () => {
@@ -85,17 +89,32 @@ export function StockDecisionCockpit({ load, asOf, refreshToken = 0, onRefreshRe
     try {
       const next = await load(symbol, asOf || undefined, nextController.signal);
       if (request !== generation.current || nextController.signal.aborted) return;
-      setData(next); loadedContext.current = contextKey; hasData.current = true; setStale(false);
+      setData(next); onSnapshot?.(next); loadedContext.current = contextKey; hasData.current = true; setStale(false);
+      if (!asOf && prepare && next.preparation?.status !== "ready" && isAutoSyncEnabled() && preparedContext.current !== contextKey) {
+        preparedContext.current = contextKey; setPreparing(true);
+        try {
+          const report = await prepare(symbol, nextController.signal);
+          if (request !== generation.current || nextController.signal.aborted) return;
+          setData((current) => current ? { ...current, preparation: report } : current);
+          if (report.refreshed) {
+            const refreshed = await load(symbol, undefined, nextController.signal);
+            if (request !== generation.current || nextController.signal.aborted) return;
+            setData(refreshed); onSnapshot?.(refreshed);
+          }
+        } catch (caught) {
+          if (request === generation.current && !nextController.signal.aborted) setError(friendlyError(caught, "数据同步"));
+        } finally { if (request === generation.current) setPreparing(false); }
+      }
     } catch (caught) {
       if (request !== generation.current || nextController.signal.aborted) return;
       setError(friendlyError(caught, "股票分析"));
       setStale(hasData.current);
     } finally { if (request === generation.current) setLoading(false); }
-  }, [asOf, contextKey, load, symbol]);
+  }, [asOf, contextKey, load, onSnapshot, prepare, symbol]);
 
   useEffect(() => {
-    if (!symbol) { generation.current += 1; controller.current?.abort(); setData(null); loadedContext.current = null; hasData.current = false; setError(""); setStale(false); return; }
-    if (loadedContext.current !== contextKey) { setData(null); loadedContext.current = null; hasData.current = false; setStale(false); }
+    if (!symbol) { generation.current += 1; controller.current?.abort(); setData(null); loadedContext.current = null; preparedContext.current = null; hasData.current = false; setError(""); setStale(false); return; }
+    if (loadedContext.current !== contextKey) { setData(null); loadedContext.current = null; preparedContext.current = null; hasData.current = false; setStale(false); }
     void refresh();
     return () => controller.current?.abort();
   }, [symbol, load, asOf, refreshToken]);
@@ -112,7 +131,7 @@ export function StockDecisionCockpit({ load, asOf, refreshToken = 0, onRefreshRe
       <div className="cockpit-quality"><div><Clock3 size={15} /><span>行情时间</span><b>{data.sections.market?.observed_at ? new Date(data.sections.market.observed_at).toLocaleString("zh-CN", { hour12: false }) : "未提供"}</b></div><div><span>快照质量</span><b>{qualityNames[data.overall_quality]}</b><small>{data.sections.market ? sectionQualityNames[data.sections.market.status] : "行情不可用"}</small></div><button type="button" aria-label="刷新驾驶舱" onClick={() => onRefreshRequest ? onRefreshRequest() : void refresh()} disabled={loading}><RefreshCw size={15} className={loading ? "spin" : ""} /></button></div>
     </header>
     {error && <div className="cockpit-error" role="alert"><AlertTriangle size={16} /><span>{error}</span>{stale && <b>当前内容已陈旧</b>}</div>}
-    <PreparationStatus data={data} />
+    <PreparationStatus data={data} preparing={preparing} />
     <AssessmentConclusion assessment={data.assessment} aiStatus={data.ai_status} aiExplanation={data.ai_explanation} />
     <PhaseTimeline phases={data.phases} symbol={data.symbol} />
     <CockpitSections sections={data.sections} />
