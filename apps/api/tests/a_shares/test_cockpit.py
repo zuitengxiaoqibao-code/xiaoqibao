@@ -134,6 +134,8 @@ async def test_cockpit_filters_every_phase_and_evidence_to_selected_symbol() -> 
     assert all(item.observed_at <= CUTOFF for item in result.all_evidence())
     assert result.phases["intraday"].change_stream[0].sequence == 1
     assert result.candidate_membership == ("short_term",)
+    assert result.assessment.symbol == "600000"
+    assert result.assessment.simulation_eligible is True
 
 
 @pytest.mark.asyncio
@@ -224,6 +226,7 @@ async def test_latest_invalidation_removes_current_advice_and_membership() -> No
     )
     assert result.current_advice == ()
     assert result.candidate_membership == ()
+    assert result.assessment.simulation_eligible is False
 
 
 class NoBars:

@@ -4,6 +4,7 @@ from zoneinfo import ZoneInfo
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
+from qibao_api.a_shares.assessment import DeterministicStockAssessor, StockAssessment
 from qibao_api.a_shares.diagnosis import DiagnosisUnavailableError
 from qibao_api.a_shares.instrument_directory import AShareInstrument
 from qibao_api.contracts.decision import AdviceCard, DecisionPhase, EvidenceReference
@@ -59,6 +60,7 @@ class StockCockpitSnapshot(BaseModel):
     overall_quality: Literal["ready", "partial", "blocked"]
     instrument: AShareInstrument
     candidate_membership: tuple[Literal["short_term", "swing"], ...]
+    assessment: StockAssessment
     current_advice: tuple[AdviceCard, ...]
     sections: dict[str, CockpitSection]
     phases: dict[DecisionPhase, StockPhaseHistory]
@@ -89,10 +91,13 @@ def _unavailable(source: str, reason: str, explanation: str | None = None) -> Co
 
 
 class StockDecisionCockpitService:
-    def __init__(self, instrument_directory, diagnosis_service, decision_repository) -> None:
+    def __init__(
+        self, instrument_directory, diagnosis_service, decision_repository, assessor=None
+    ) -> None:
         self.instrument_directory = instrument_directory
         self.diagnosis_service = diagnosis_service
         self.decision_repository = decision_repository
+        self.assessor = assessor or DeterministicStockAssessor()
 
     async def get(
         self, symbol: AShareCode, as_of: date, cutoff: datetime
@@ -115,6 +120,7 @@ class StockDecisionCockpitService:
         phases = self._phases(symbol, as_of, effective_cutoff)
         current = self._current_advice(phases)
         membership = self._candidate_membership(current)
+        assessment = self.assessor.assess(symbol, sections, membership, effective_cutoff)
         qualities = {section.status for section in sections.values()}
         overall: Literal["ready", "partial", "blocked"] = (
             "blocked" if "blocked" in qualities else
@@ -123,7 +129,7 @@ class StockDecisionCockpitService:
         return StockCockpitSnapshot(
             symbol=symbol, as_of=as_of, cutoff=effective_cutoff, overall_quality=overall,
             instrument=instrument, candidate_membership=membership,
-            current_advice=current, sections=sections, phases=phases,
+            assessment=assessment, current_advice=current, sections=sections, phases=phases,
         )
 
     async def _diagnosis_sections(self, symbol, as_of, cutoff):
