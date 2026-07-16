@@ -10,7 +10,7 @@ from qibao_api.dependencies import (
     get_scheduler,
     get_server_time,
 )
-from qibao_api.routes.decisions import _slot, router
+from qibao_api.routes.decisions import router
 from qibao_api.shangshu.decision_repository import DecisionIntegrityError
 from qibao_api.shangshu.intraday_monitor import PollState
 

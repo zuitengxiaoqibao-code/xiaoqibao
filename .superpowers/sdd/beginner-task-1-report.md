@@ -128,3 +128,9 @@ The first full API fix run also exposed a normal-row decimal coercion regression
 
 - The repository contains three literal legacy simulation field names in one compatibility projection method. They are necessary to recognize and strip old payloads and are not part of new models, responses, or writes.
 - Full API verification uses an ASCII temp `QIBAO_DATA_DIR` because DuckDB on this Windows environment intermittently fails to decode the Chinese workspace path; the isolated failing lifespan tests pass, and the full suite passes with the ASCII data directory.
+
+### Controller Ruff Fix
+
+- Removed the stale `_slot` import from `apps/api/tests/routes/test_decisions.py`.
+- Ruff: `apps/api/.venv/Scripts/python.exe -m ruff check apps/api/tests/routes/test_decisions.py` passed.
+- Focused route tests: `apps/api/.venv/Scripts/python.exe -m pytest apps/api/tests/routes/test_decisions.py -q` passed.
