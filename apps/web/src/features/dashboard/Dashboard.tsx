@@ -26,6 +26,7 @@ import { StockDecisionCockpit } from "../stock-cockpit/StockDecisionCockpit";
 import type { InstrumentSearchResponse, StockCockpitSnapshot } from "../stock-cockpit/types";
 import { commitLocation } from "../instrument-selection/location";
 import { useOptionalSelectedInstrument, useSelectedInstrument } from "../instrument-selection/SelectedInstrumentProvider";
+import { BeginnerNavigation, type BeginnerView } from "../beginner-shell/BeginnerNavigation";
 
 type ViewState =
   | { kind: "idle" }
@@ -58,32 +59,17 @@ type Props = {
   loadStockCockpit?: (symbol: string, asOf?: string, signal?: AbortSignal) => Promise<StockCockpitSnapshot>;
 };
 
-type ActiveView = "dashboard" | "a_shares" | "xingbu" | "libu" | "dongchang" | "bonds" | "news" | "backtest" | "operations";
+type ActiveView = BeginnerView;
 
 function viewFromPath(path: string): ActiveView {
   if (path === "/a-shares") return "a_shares";
   if (path === "/convertible-bonds") return "bonds";
   if (path === "/news-intelligence") return "news";
-  if (path === "/risk") return "xingbu";
-  if (path === "/compliance") return "libu";
-  if (path === "/audit") return "dongchang";
-  if (path === "/backtest") return "backtest";
-  if (path === "/operations") return "operations";
+  if (path === "/risk") return "risk";
+  if (path === "/history") return "history";
+  if (path === "/settings") return "settings";
   return "dashboard";
 }
-
-const departments = [
-  { name: "今日工作台", detail: "全域态势", icon: Gauge, active: true },
-  { name: "中书省", detail: "策略研究", icon: BookOpenCheck },
-  { name: "吏部", detail: "资金中心", icon: CircleDollarSign },
-  { name: "户部", detail: "交易中心", icon: BriefcaseBusiness },
-  { name: "东厂", detail: "监察审核", icon: Radar },
-  { name: "礼部", detail: "合规中心", icon: Landmark },
-  { name: "兵部", detail: "操盘中心", icon: Siren },
-  { name: "尚书省", detail: "指令执行", icon: Workflow },
-  { name: "刑部", detail: "实时风控", icon: ShieldAlert },
-  { name: "工部", detail: "数据运维", icon: Database },
-];
 
 const sourceNames: Record<string, string> = { tencent: "腾讯行情" };
 
@@ -131,7 +117,7 @@ function ResearchPanel({ card }: { card: ResearchCard }) {
       {card.invalid_reasons.length > 0 && (
         <div className="risk-notice">
           <ShieldAlert size={18} />
-          <div><b>刑部否决</b>{card.invalid_reasons.map((reason) => <p key={reason}>{reason}</p>)}</div>
+          <div><b>风险规则已拦截</b>{card.invalid_reasons.map((reason) => <p key={reason}>{reason}</p>)}</div>
         </div>
       )}
     </section>
@@ -175,10 +161,10 @@ function SelectedBacktestWorkspace({ runBacktest }: { runBacktest: (symbol: stri
 }
 
 export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, loadCompliance, loadAudit, complianceAction, loadBondDashboard, loadBondDiagnosis, loadBondCandidates, loadNewsIntelligence, syncNews, createNewsCorrection, loadOperationsStatus, setSchedulerPaused, createBackup, verifyBackup, runManualJob, loadAShareCandidates, loadAShareDiagnosis, loadDecisionCurrent, loadDecisionDate, searchAShareInstruments, loadStockCockpit }: Props) {
+  const selectedInstrument = useOptionalSelectedInstrument();
   const [state, setState] = useState<ViewState>({ kind: "idle" });
   const [symbol, setSymbol] = useState("600000");
   const [dataState, setDataState] = useState<DataStatusState>({ kind: "idle" });
-  const [complianceAsset, setComplianceAsset] = useState<"a_share" | "convertible_bond">("a_share");
   const [activeView, setActiveView] = useState<ActiveView>(viewFromPath(window.location.pathname));
   useEffect(() => {
     const syncPath = () => setActiveView(viewFromPath(window.location.pathname));
@@ -186,7 +172,7 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, lo
     return () => window.removeEventListener("popstate", syncPath);
   }, []);
   function navigate(view: ActiveView) {
-    const paths: Record<ActiveView, string> = { dashboard: "/", a_shares: "/a-shares", xingbu: "/risk", libu: "/compliance", dongchang: "/audit", bonds: "/convertible-bonds", news: "/news-intelligence", backtest: "/backtest", operations: "/operations" };
+    const paths: Record<ActiveView, string> = { dashboard: "/", a_shares: "/a-shares", risk: "/risk", history: "/history", settings: "/settings", bonds: "/convertible-bonds", news: "/news-intelligence" };
     const next = new URL(paths[view], window.location.origin);
     const selectedSymbol = new URL(window.location.href).searchParams.get("symbol");
     if (view !== "bonds" && selectedSymbol) next.searchParams.set("symbol", selectedSymbol);
@@ -222,55 +208,29 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, lo
 
   return (
     <div className="app-shell">
-      <aside className="sidebar">
-        <div className="brand-block">
-          <div className="brand-sigil"><Building2 size={18} /></div>
-          <div><strong>小七宝</strong><span>量化决策台</span></div>
-        </div>
-        <button className={activeView === "a_shares" ? "domain-switcher active" : "domain-switcher"} type="button" onClick={() => navigate("a_shares")}>
-          <span className="domain-dot" />
-          <div><b>A 股主域</b><small>ASHARE COMMAND</small></div>
-          <ChevronRight size={15} />
-        </button>
-        <nav aria-label="部门导航">
-          <p className="nav-label">中央机构</p>
-          {departments.map(({ name, detail, icon: Icon }) => { const target = name === "刑部" ? "xingbu" : name === "礼部" ? "libu" : name === "东厂" ? "dongchang" : name === "中书省" ? "news" : name === "工部" ? "operations" : name === "今日工作台" ? "dashboard" : null; return (
-            <button className={target === activeView ? "nav-item active" : "nav-item"} key={name} type="button" onClick={() => target && navigate(target)}>
-              <Icon size={16} strokeWidth={1.7} />
-              <span><b>{name}</b><small>{detail}</small></span>
-            </button>
-          )})}
-          <button className={activeView === "backtest" ? "nav-item active" : "nav-item"} type="button" onClick={() => navigate("backtest")}>
-            <BarChart3 size={16} strokeWidth={1.7} /><span><b>历史回测</b><small>固定策略验证</small></span>
-          </button>
-        </nav>
-        <button className={activeView === "bonds" ? "bond-entry active" : "bond-entry"} type="button" onClick={() => navigate("bonds")}>
-          <Boxes size={16} /><span><b>可转债专区</b><small>独立资产域</small></span><ChevronRight size={15} />
-        </button>
-        <div className="sidebar-foot"><span className="pulse-dot" />系统本地运行</div>
-      </aside>
+      <BeginnerNavigation active={activeView} onNavigate={navigate} />
 
-      {(activeView === "xingbu" || activeView === "libu" || activeView === "dongchang") && <SelectedGovernanceWorkspace view={activeView} initialAsset={complianceAsset} loadRisk={loadRisk} loadCompliance={loadCompliance} loadAudit={loadAudit} complianceAction={complianceAction} />}
+      {activeView === "risk" && <main className="beginner-page"><header><p className="eyebrow">风险提醒</p><h1>需要优先留意的风险</h1><p>按严重程度汇总市场、个股和数据风险。规则能力仍在后台运行。</p></header><section className="beginner-empty"><ShieldAlert size={24} /><h2>暂无需要立即处理的风险</h2><p>选择股票后，相关风险会直接显示在行动卡中。</p></section></main>}
 
       {activeView === "a_shares" && loadAShareCandidates && loadAShareDiagnosis && <AShareResearchView loadCandidates={loadAShareCandidates} loadDiagnosis={loadAShareDiagnosis} />}
 
-      {activeView === "bonds" && loadBondDashboard && loadBondDiagnosis && loadBondCandidates && <ConvertibleBondView loadDashboard={loadBondDashboard} loadDiagnosis={loadBondDiagnosis} loadCandidates={loadBondCandidates} openBondCompliance={() => { setComplianceAsset("convertible_bond"); navigate("libu"); }} />}
+      {activeView === "bonds" && loadBondDashboard && loadBondDiagnosis && loadBondCandidates && <ConvertibleBondView loadDashboard={loadBondDashboard} loadDiagnosis={loadBondDiagnosis} loadCandidates={loadBondCandidates} openBondCompliance={() => undefined} />}
 
-      {activeView === "news" && loadNewsIntelligence && syncNews && createNewsCorrection && <SelectedNewsWorkspace loadBundle={loadNewsIntelligence} syncNews={syncNews} createCorrection={createNewsCorrection} openNewsCompliance={() => { setComplianceAsset("a_share"); navigate("libu"); }} />}
+      {activeView === "news" && loadNewsIntelligence && syncNews && createNewsCorrection && <SelectedNewsWorkspace loadBundle={loadNewsIntelligence} syncNews={syncNews} createCorrection={createNewsCorrection} openNewsCompliance={() => undefined} />}
 
-      {activeView === "backtest" && runBacktest && <SelectedBacktestWorkspace runBacktest={runBacktest} />}
+      {activeView === "history" && loadDecisionCurrent && <main className="beginner-page history-page"><DecisionWorkbench loadCurrent={loadDecisionCurrent} loadDate={loadDecisionDate} selectedSymbol={selectedInstrument?.symbol ?? null} /></main>}
 
-      {activeView === "operations" && loadOperationsStatus && setSchedulerPaused && createBackup && verifyBackup && runManualJob && <OperationsView loadStatus={loadOperationsStatus} setSchedulerPaused={setSchedulerPaused} createBackup={createBackup} verifyBackup={verifyBackup} runManualJob={runManualJob} />}
+      {activeView === "settings" && <main className="beginner-page"><header><p className="eyebrow">数据设置</p><h1>数据源与 AI</h1><p>查看连接状态、同步时间，并配置本机 AI 分析服务。</p></header><section className="beginner-empty"><Database size={24} /><h2>设置功能正在接入</h2><p>当前研判仍使用已验证的确定性数据，不受 AI 配置影响。</p></section></main>}
 
       {activeView === "dashboard" && loadDecisionCurrent && <div className="stock-workbench-layout">
         {loadAShareCandidates && searchAShareInstruments && <StockSelector loadCandidates={loadAShareCandidates} search={searchAShareInstruments} />}
-        <CoordinatedStockWorkbench loadCockpit={loadStockCockpit} loadCurrent={loadDecisionCurrent} loadDate={loadDecisionDate} />
+        {loadStockCockpit && <StockDecisionCockpit load={loadStockCockpit} />}
       </div>}
 
-      {activeView === "dashboard" && !loadDecisionCurrent && <main className="command-center">
+      {activeView === "dashboard" && !loadDecisionCurrent && <main className="command-center beginner-fallback">
         <header className="topbar">
-          <div><p className="eyebrow">尚书省 / 全域指令视图</p><h1>今日情报态势</h1></div>
-          <div className="system-state"><span className="pulse-dot" /><div><b>工部数据链路</b><small>等待调取</small></div></div>
+          <div><p className="eyebrow">今日研判</p><h1>A 股观察</h1></div>
+          <div className="system-state"><span className="pulse-dot" /><div><b>公开数据链路</b><small>等待选择股票</small></div></div>
         </header>
         <section className="mission-strip" aria-label="每日研究流程">
           <div className="mission active"><span>01</span><div><b>盘前研判</b><small>情报聚合 / 候选生成</small></div></div>
@@ -283,8 +243,7 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, lo
         <div className="workspace-grid">
           <section className="primary-workspace">
             <div className="section-title">
-              <div><p className="eyebrow">工部数据查询</p><h2>A 股单标的侦测</h2></div>
-              <span className="section-code">GB-DATA / 01</span>
+              <div><p className="eyebrow">快速查询</p><h2>选择一只 A 股</h2></div>
             </div>
             <form className="symbol-search" onSubmit={submit}>
               <Search size={18} />
@@ -293,8 +252,8 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, lo
               <span className="input-hint">输入六位 A 股代码</span>
               <button disabled={state.kind === "loading"} type="submit"><Radar size={16} />调取行情</button>
             </form>
-            {state.kind === "idle" && <section className="empty-state"><Radar size={34} /><b>等待标的指令</b><p>输入 A 股代码后，工部将获取真实行情；中书省生成观察摘要，刑部复核数据时效。</p></section>}
-            {state.kind === "loading" && <section className="loading-state" aria-busy="true"><span className="scanner" /><Activity size={20} />正在调取工部行情...</section>}
+            {state.kind === "idle" && <section className="empty-state"><Radar size={34} /><b>等待选择股票</b><p>输入 A 股代码后，系统会检查公开行情并给出观察结论。</p></section>}
+            {state.kind === "loading" && <section className="loading-state" aria-busy="true"><span className="scanner" /><Activity size={20} />正在读取行情...</section>}
             {state.kind === "error" && <section className="error-state" role="alert"><ShieldAlert size={20} /><div><b>数据链路中断</b><p>{state.message}</p></div></section>}
             {state.kind === "ready" && <ResearchPanel card={state.card} />}
           </section>
@@ -310,10 +269,10 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, lo
               <DataStatusPanel state={dataState} />
             </section>
             <section className="rail-section">
-              <div className="rail-heading"><span>指令流</span><Archive size={15} /></div>
-              <div className="event-line"><span className="event-node ready" /><div><b>工部</b><p>行情适配器待命</p></div><small>READY</small></div>
-              <div className="event-line"><span className="event-node" /><div><b>中书省</b><p>等待研究输入</p></div><small>STANDBY</small></div>
-              <div className="event-line"><span className="event-node" /><div><b>刑部</b><p>风险规则已装载</p></div><small>ARMED</small></div>
+              <div className="rail-heading"><span>处理进度</span><Archive size={15} /></div>
+              <div className="event-line"><span className="event-node ready" /><div><b>行情</b><p>公开数据源待命</p></div><small>就绪</small></div>
+              <div className="event-line"><span className="event-node" /><div><b>分析</b><p>等待选择股票</p></div><small>等待</small></div>
+              <div className="event-line"><span className="event-node" /><div><b>风险</b><p>风险规则已加载</p></div><small>就绪</small></div>
             </section>
             <section className="rail-section protocol">
               <div className="rail-heading"><span>安全协议</span><ShieldCheck size={15} /></div>
@@ -321,7 +280,6 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, lo
             </section>
           </aside>
         </div>
-        {runBacktest && <BacktestPanel symbol={symbol} runBacktest={runBacktest} />}
       </main>}
     </div>
   );

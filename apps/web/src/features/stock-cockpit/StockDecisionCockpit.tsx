@@ -1,8 +1,7 @@
-import { AlertTriangle, CheckCircle2, Clock3, RefreshCw, ShieldAlert, Target, TrendingDown, TrendingUp } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock3, Database, RefreshCw, ShieldAlert, Target, TrendingDown, TrendingUp } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useSelectedInstrument } from "../instrument-selection/SelectedInstrumentProvider";
-import type { Advice } from "../decision-workbench/types";
 import type { AssessmentAIExplanation, AssessmentAIStatus, StockAssessment, StockCockpitSnapshot } from "./types";
 import { CockpitSections } from "./CockpitSections";
 import { PhaseTimeline } from "./PhaseTimeline";
@@ -21,42 +20,45 @@ function metric(data: StockCockpitSnapshot, key: string): unknown {
 function displayNumber(value: unknown, suffix = ""): string {
   return value === null || value === undefined || value === "" ? "--" : `${String(value)}${suffix}`;
 }
-function currentAdvice(items: Advice[]): Advice | null {
-  return [...items].sort((left, right) => {
-    if (left.horizon !== right.horizon) return left.horizon === "intraday" ? -1 : 1;
-    return Date.parse(right.created_at) - Date.parse(left.created_at);
-  })[0] ?? null;
-}
-
-function CandidateMembership({ memberships }: { memberships: StockCockpitSnapshot["candidate_membership"] }) {
-  if (!memberships.length) return <span className="candidate-membership none">非当前候选</span>;
-  return <div className="candidate-memberships">{memberships.includes("short_term") && <span>短线候选</span>}{memberships.includes("swing") && <span>波段候选</span>}</div>;
-}
-
 function AssessmentAI({ status, explanation }: { status: AssessmentAIStatus; explanation: AssessmentAIExplanation | null }) {
-  if (status === "unconfigured") return <section className="assessment-ai"><h3>AI 未配置</h3><p>确定性研判仍然有效。</p></section>;
+  if (status === "unconfigured") return <section className="assessment-ai"><h3>AI 补充分析未启用</h3><p>当前行动结论仍由可验证数据生成，可在“数据设置”中配置 AI。</p></section>;
   if (status !== "ready" || !explanation) return <section className="assessment-ai"><h3>AI 解释暂不可用</h3><p>确定性研判未受影响。</p></section>;
   return <section className="assessment-ai"><h3>AI 补充解释</h3><p>{explanation.plain_language}</p><dl><div><dt>新闻影响</dt><dd>{explanation.news_impact}</dd></div><div><dt>热点归因</dt><dd>{explanation.hotspot_attribution}</dd></div><div><dt>不确定性</dt><dd>{explanation.uncertainty}</dd></div><div><dt>反方观点</dt><dd>{explanation.contrary_view}</dd></div></dl><small>仅解释冻结证据，不改变确定性动作、置信度或方案资格。</small></section>;
 }
 
 function AssessmentConclusion({ assessment, aiStatus, aiExplanation }: { assessment: StockAssessment; aiStatus: AssessmentAIStatus; aiExplanation: AssessmentAIExplanation | null }) {
-  const actionName = { observe: "保持观察", wait: "等待补足", avoid: "风险回避" }[assessment.action];
-  return <section className="cockpit-conclusion assessment-conclusion"><header><div><p className="eyebrow">即时研判 / 确定性规则</p><h2>当前判断</h2></div><div className="advice-confidence"><span>研判置信度</span><strong>{Math.round(Number(assessment.confidence) * 100)}%</strong></div></header>
-    <div className="advice-verdict"><div><span>{actionName}</span><h3>{assessment.conclusion}</h3><p>基于当前截止时间内可验证的数据形成，不包含 AI 补充解释。</p></div><div className="observe-seal"><ShieldAlert size={18} /><b>仅供观察</b><small>不生成价格、仓位或交易指令</small></div></div>
+  const actionName = { observe: "加入观察", wait: "暂不参与", avoid: "回避" }[assessment.action];
+  const evidence = assessment.supporting_evidence.slice(0, 3);
+  const risks = [...assessment.contrary_evidence.map((item) => item.summary), ...assessment.risks].slice(0, 3);
+  return <section className={`cockpit-conclusion assessment-conclusion action-${assessment.action}`}><header><div><p className="eyebrow">新手行动卡</p><h2>现在怎么做</h2></div><div className="advice-confidence"><span>置信度</span><strong>{Math.round(Number(assessment.confidence) * 100)}%</strong></div></header>
+    <div className="advice-verdict"><div><span>{actionName}</span><h3>{assessment.conclusion}</h3><p>只根据截止时间前可验证的数据判断，不包含价格、仓位或买卖指令。</p></div><div className="observe-seal"><ShieldAlert size={18} /><b>观察提示</b><small>不构成投资建议</small></div></div>
     <AssessmentAI status={aiStatus} explanation={aiExplanation} />
     <div className="advice-evidence-grid">
-      <section><h3><CheckCircle2 size={15} />支持证据</h3>{assessment.supporting_evidence.length ? assessment.supporting_evidence.map((item) => <p key={item.evidence_id}>{item.summary}<small>{item.source} · {new Date(item.observed_at).toLocaleString("zh-CN", { hour12: false })}</small></p>) : <p>暂无已验证支持证据</p>}</section>
-      <section className="contrary"><h3><AlertTriangle size={15} />反方证据</h3>{assessment.contrary_evidence.length ? assessment.contrary_evidence.map((item) => <p key={item.evidence_id}>{item.summary}<small>{item.source} · {new Date(item.observed_at).toLocaleString("zh-CN", { hour12: false })}</small></p>) : <p>暂无已验证反方证据</p>}</section>
-      <section className="risk"><h3><ShieldAlert size={15} />关键风险</h3>{assessment.risks.length ? assessment.risks.map((item) => <p key={item}>{item}</p>) : <p>当前研判未列出风险</p>}</section>
-      <section><h3><Target size={15} />失效条件</h3>{assessment.invalidation_conditions.length ? assessment.invalidation_conditions.map((item) => <p key={item}>{item}</p>) : <p>当前研判未列出失效条件</p>}</section>
+      <section><h3><CheckCircle2 size={15} />主要依据</h3>{evidence.length ? evidence.map((item) => <p key={item.evidence_id}>{item.summary}</p>) : <p>暂缺足够的已验证依据</p>}</section>
+      <section className="risk"><h3><ShieldAlert size={15} />主要风险</h3>{risks.length ? risks.map((item) => <p key={item}>{item}</p>) : <p>未发现明确风险，但仍需持续观察</p>}</section>
+      <section><h3><Clock3 size={15} />需要等待的信号</h3><p>{assessment.action === "observe" ? "观察量价、趋势和新闻是否继续相互印证" : "等待缺失数据补齐，或风险信号减弱"}</p></section>
+      <section><h3><Target size={15} />重新判断条件</h3>{assessment.invalidation_conditions.length ? assessment.invalidation_conditions.slice(0, 3).map((item) => <p key={item}>{item}</p>) : <p>出现新的行情、公告或风险证据时重新判断</p>}</section>
     </div>
-    <footer><span>研判时间：{new Date(assessment.generated_at).toLocaleString("zh-CN", { hour12: false })}</span><span>研判编号：{assessment.assessment_id}</span></footer>
+    <footer><span>研判时间：{new Date(assessment.generated_at).toLocaleString("zh-CN", { hour12: false })}</span></footer>
   </section>;
 }
 
-function CandidateAdvice({ advice }: { advice: Advice | null }) {
-  if (!advice) return <section className="candidate-advice"><header><h2>候选账本建议</h2></header><p className="candidate-advice-empty">当前无候选账本建议；即时研判仍然有效。</p></section>;
-  return <section className="candidate-advice"><header><div><p className="eyebrow">候选观察层</p><h2>候选账本建议</h2></div><span>{advice.horizon === "intraday" ? "盘中" : "波段"}</span></header><div className="candidate-advice-body"><h3>{advice.conclusion}</h3><p>{advice.plain_language_explanation || "账本未提供补充解释。"}</p></div><footer><span>建议时间：{new Date(advice.created_at).toLocaleString("zh-CN", { hour12: false })}</span><span>策略：{advice.strategy_version}</span></footer></section>;
+function PreparationStatus({ data }: { data: StockCockpitSnapshot }) {
+  const fallbackSources = [
+    ["quote", "market"], ["history", "trend"], ["finance", "fundamentals"], ["news", "news"],
+  ].map(([name, section]) => ({
+    name: name as "quote" | "history" | "finance" | "news",
+    status: data.sections[section]?.status === "ready" ? "ready" as const : "partial" as const,
+    observed_at: data.sections[section]?.observed_at ?? null,
+    reason: data.sections[section]?.reason ?? null,
+  }));
+  const preparation = data.preparation ?? {
+    symbol: data.symbol, status: fallbackSources.every((source) => source.status === "ready") ? "ready" as const : "partial" as const,
+    sources: fallbackSources, refreshed: false, started_at: data.cutoff, completed_at: data.cutoff,
+  };
+  const ready = preparation.sources.filter((source) => source.status === "ready").length;
+  const names = { quote: "实时行情", history: "历史走势", finance: "基本面", news: "新闻" } as const;
+  return <section className={`preparation-status ${preparation.status}`} aria-label="数据准备状态"><div><Database size={17} /><span><b>{preparation.status === "ready" ? "数据已准备" : "部分数据待补齐"}</b><small>{preparation.refreshed ? "已自动检查并更新" : data.preparation ? "已检查本地可用数据" : "已根据当前数据分区检查可用性"}</small></span></div><div className="preparation-sources">{preparation.sources.map((source) => <span className={source.status} key={source.name}>{names[source.name]}<b>{source.status === "ready" ? "可用" : "待补齐"}</b></span>)}</div><small>{ready}/{preparation.sources.length} 类核心数据可用</small></section>;
 }
 
 export function StockDecisionCockpit({ load, asOf, refreshToken = 0, onRefreshRequest }: Props) {
@@ -103,15 +105,14 @@ export function StockDecisionCockpit({ load, asOf, refreshToken = 0, onRefreshRe
 
   const change = Number(metric(data, "change_percent"));
   const positive = Number.isFinite(change) && change >= 0;
-  const advice = currentAdvice(data.current_advice);
   return <main className="stock-cockpit">
-    <header className="cockpit-identity"><div><p className="eyebrow">A 股单股决策驾驶舱 / {data.instrument.exchange.toUpperCase()}</p><h1>{data.instrument.name} <span>{data.symbol}</span></h1><div className="cockpit-quote"><strong>{displayNumber(metric(data, "latest_price"))}</strong><span className={positive ? "positive" : "negative"}>{Number.isFinite(change) ? positive ? <TrendingUp size={15} /> : <TrendingDown size={15} /> : null}{displayNumber(metric(data, "change_percent"), "%")}</span></div><CandidateMembership memberships={data.candidate_membership} /></div>
+    <header className="cockpit-identity"><div><p className="eyebrow">A 股观察 / {data.instrument.exchange.toUpperCase()}</p><h1>{data.instrument.name} <span>{data.symbol}</span></h1><div className="cockpit-quote"><strong>{displayNumber(metric(data, "latest_price"))}</strong><span className={positive ? "positive" : "negative"}>{Number.isFinite(change) ? positive ? <TrendingUp size={15} /> : <TrendingDown size={15} /> : null}{displayNumber(metric(data, "change_percent"), "%")}</span></div></div>
       <div className="cockpit-quality"><div><Clock3 size={15} /><span>行情时间</span><b>{data.sections.market?.observed_at ? new Date(data.sections.market.observed_at).toLocaleString("zh-CN", { hour12: false }) : "未提供"}</b></div><div><span>快照质量</span><b>{qualityNames[data.overall_quality]}</b><small>{data.sections.market ? sectionQualityNames[data.sections.market.status] : "行情不可用"}</small></div><button type="button" aria-label="刷新驾驶舱" onClick={() => onRefreshRequest ? onRefreshRequest() : void refresh()} disabled={loading}><RefreshCw size={15} className={loading ? "spin" : ""} /></button></div>
     </header>
     {error && <div className="cockpit-error" role="alert"><AlertTriangle size={16} /><span>{error}</span>{stale && <b>当前内容已陈旧</b>}</div>}
+    <PreparationStatus data={data} />
     <AssessmentConclusion assessment={data.assessment} aiStatus={data.ai_status} aiExplanation={data.ai_explanation} />
-    <CandidateAdvice advice={advice} />
-    <CockpitSections sections={data.sections} />
     <PhaseTimeline phases={data.phases} symbol={data.symbol} />
+    <CockpitSections sections={data.sections} />
   </main>;
 }

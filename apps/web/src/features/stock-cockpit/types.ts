@@ -57,12 +57,29 @@ export type AssessmentAIExplanation = {
   evidence_ids: string[];
 };
 
+export type PreparationSource = {
+  name: "quote" | "history" | "finance" | "news";
+  status: "ready" | "partial";
+  observed_at: string | null;
+  reason: string | null;
+};
+
+export type StockPreparation = {
+  symbol: string;
+  status: "ready" | "partial";
+  sources: PreparationSource[];
+  refreshed: boolean;
+  started_at: string;
+  completed_at: string;
+};
+
 export type StockCockpitSnapshot = {
   symbol: string;
   as_of: string;
   cutoff: string;
   overall_quality: "ready" | "partial" | "blocked";
   instrument: AShareInstrument;
+  preparation: StockPreparation;
   candidate_membership: Array<"short_term" | "swing">;
   assessment: StockAssessment;
   ai_status: AssessmentAIStatus;
