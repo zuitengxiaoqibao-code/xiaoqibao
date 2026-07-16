@@ -78,6 +78,8 @@ export function StockDecisionCockpit({ load, prepare, asOf, refreshToken = 0, on
   const loadedContext = useRef<string | null>(null);
   const preparedContext = useRef<string | null>(null);
   const contextKey = symbol ? `${symbol}:${asOf || "live"}` : null;
+  const loadRef = useRef(load); const prepareRef = useRef(prepare); const snapshotRef = useRef(onSnapshot);
+  loadRef.current = load; prepareRef.current = prepare; snapshotRef.current = onSnapshot;
 
   const refresh = useCallback(async () => {
     if (!symbol) return;
@@ -87,19 +89,19 @@ export function StockDecisionCockpit({ load, prepare, asOf, refreshToken = 0, on
     controller.current = nextController;
     setLoading(true); setError("");
     try {
-      const next = await load(symbol, asOf || undefined, nextController.signal);
+      const next = await loadRef.current(symbol, asOf || undefined, nextController.signal);
       if (request !== generation.current || nextController.signal.aborted) return;
-      setData(next); onSnapshot?.(next); loadedContext.current = contextKey; hasData.current = true; setStale(false);
-      if (!asOf && prepare && next.preparation?.status !== "ready" && isAutoSyncEnabled() && preparedContext.current !== contextKey) {
+      setData(next); snapshotRef.current?.(next); loadedContext.current = contextKey; hasData.current = true; setStale(false);
+      if (!asOf && prepareRef.current && next.preparation?.status !== "ready" && isAutoSyncEnabled() && preparedContext.current !== contextKey) {
         preparedContext.current = contextKey; setPreparing(true);
         try {
-          const report = await prepare(symbol, nextController.signal);
+          const report = await prepareRef.current(symbol, nextController.signal);
           if (request !== generation.current || nextController.signal.aborted) return;
           setData((current) => current ? { ...current, preparation: report } : current);
           if (report.refreshed) {
-            const refreshed = await load(symbol, undefined, nextController.signal);
+            const refreshed = await loadRef.current(symbol, undefined, nextController.signal);
             if (request !== generation.current || nextController.signal.aborted) return;
-            setData(refreshed); onSnapshot?.(refreshed);
+            setData(refreshed); snapshotRef.current?.(refreshed);
           }
         } catch (caught) {
           if (request === generation.current && !nextController.signal.aborted) setError(friendlyError(caught, "数据同步"));
@@ -110,14 +112,14 @@ export function StockDecisionCockpit({ load, prepare, asOf, refreshToken = 0, on
       setError(friendlyError(caught, "股票分析"));
       setStale(hasData.current);
     } finally { if (request === generation.current) setLoading(false); }
-  }, [asOf, contextKey, load, onSnapshot, prepare, symbol]);
+  }, [asOf, contextKey, symbol]);
 
   useEffect(() => {
     if (!symbol) { generation.current += 1; controller.current?.abort(); setData(null); loadedContext.current = null; preparedContext.current = null; hasData.current = false; setError(""); setStale(false); return; }
     if (loadedContext.current !== contextKey) { setData(null); loadedContext.current = null; preparedContext.current = null; hasData.current = false; setStale(false); }
     void refresh();
     return () => controller.current?.abort();
-  }, [symbol, load, asOf, refreshToken]);
+  }, [contextKey, refresh, refreshToken, symbol]);
 
   if (!symbol) return <main className="stock-cockpit empty-cockpit"><Target size={24} /><h1>先选择一只 A 股</h1><p>从左侧候选池、自选或代码与名称搜索中选择，系统不会猜测股票。</p></main>;
   if (data && data.symbol !== symbol) return <main className="stock-cockpit cockpit-loading" aria-busy="true"><RefreshCw size={22} /><h1>正在切换股票</h1><p>{symbol}</p></main>;

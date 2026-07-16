@@ -6,8 +6,8 @@ async function settingsRequest(path: string, init?: RequestInit): Promise<AISett
   return response.json();
 }
 
-export const loadAISettings = () => settingsRequest("/api/v1/settings/ai");
-export const saveAISettings = (input: AISettingsInput) => settingsRequest("/api/v1/settings/ai", {
-  method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
+export const loadAISettings = (signal?: AbortSignal) => settingsRequest("/api/v1/settings/ai", { signal });
+export const saveAISettings = (input: AISettingsInput, signal?: AbortSignal) => settingsRequest("/api/v1/settings/ai", {
+  method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input), signal,
 });
-export const deleteAISettings = () => settingsRequest("/api/v1/settings/ai", { method: "DELETE" });
+export const deleteAISettings = (signal?: AbortSignal) => settingsRequest("/api/v1/settings/ai", { method: "DELETE", signal });

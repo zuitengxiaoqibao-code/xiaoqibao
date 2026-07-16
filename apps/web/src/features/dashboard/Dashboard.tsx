@@ -30,7 +30,7 @@ import { BeginnerNavigation, type BeginnerView } from "../beginner-shell/Beginne
 import { BeginnerRiskView } from "../beginner-shell/BeginnerRiskView";
 import { HistoryReview } from "../beginner-shell/HistoryReview";
 import { DataSettingsView } from "../data-settings/DataSettingsView";
-import type { AISettingsInput, AISettingsView, PreparationLoader } from "../data-settings/types";
+import type { AISettingsDeleter, AISettingsLoader, AISettingsSaver, PreparationLoader } from "../data-settings/types";
 
 type ViewState =
   | { kind: "idle" }
@@ -62,12 +62,16 @@ type Props = {
   searchAShareInstruments?: (query: string) => Promise<InstrumentSearchResponse>;
   loadStockCockpit?: (symbol: string, asOf?: string, signal?: AbortSignal) => Promise<StockCockpitSnapshot>;
   prepareStockData?: PreparationLoader;
-  loadAISettings?: () => Promise<AISettingsView>;
-  saveAISettings?: (input: AISettingsInput) => Promise<AISettingsView>;
-  deleteAISettings?: () => Promise<AISettingsView>;
+  loadAISettings?: AISettingsLoader;
+  saveAISettings?: AISettingsSaver;
+  deleteAISettings?: AISettingsDeleter;
 };
 
 type ActiveView = BeginnerView;
+
+export function preparationForSymbol(snapshot: StockCockpitSnapshot | null, symbol: string | null) {
+  return snapshot?.symbol === symbol ? snapshot.preparation ?? null : null;
+}
 
 function viewFromPath(path: string): ActiveView {
   if (path === "/a-shares") return "a_shares";
@@ -176,6 +180,8 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, lo
   const [activeView, setActiveView] = useState<ActiveView>(viewFromPath(window.location.pathname));
   const [cockpitRefreshToken, setCockpitRefreshToken] = useState(0);
   const [latestCockpit, setLatestCockpit] = useState<StockCockpitSnapshot | null>(null);
+  const selectedSymbol = selectedInstrument?.symbol ?? selectedInstrument?.lastSymbol ?? null;
+  useEffect(() => { if (latestCockpit && latestCockpit.symbol !== selectedSymbol) setLatestCockpit(null); }, [latestCockpit, selectedSymbol]);
   useEffect(() => {
     const syncPath = () => setActiveView(viewFromPath(window.location.pathname));
     window.addEventListener("popstate", syncPath);
@@ -233,7 +239,7 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, lo
 
       {activeView === "history" && loadDecisionCurrent && <HistoryReview loadCurrent={loadDecisionCurrent} loadDate={loadDecisionDate} symbol={selectedInstrument?.symbol ?? selectedInstrument?.lastSymbol ?? null} />}
 
-      {activeView === "settings" && loadAISettings && saveAISettings && deleteAISettings && <DataSettingsView loadAI={loadAISettings} saveAI={saveAISettings} deleteAI={deleteAISettings} symbol={selectedInstrument?.symbol ?? selectedInstrument?.lastSymbol} prepare={prepareStockData} preparation={latestCockpit?.preparation} onAIChanged={() => setCockpitRefreshToken((value) => value + 1)} />}
+      {activeView === "settings" && loadAISettings && saveAISettings && deleteAISettings && <DataSettingsView loadAI={loadAISettings} saveAI={saveAISettings} deleteAI={deleteAISettings} symbol={selectedSymbol} prepare={prepareStockData} preparation={preparationForSymbol(latestCockpit, selectedSymbol)} onAIChanged={() => setCockpitRefreshToken((value) => value + 1)} />}
       {activeView === "settings" && (!loadAISettings || !saveAISettings || !deleteAISettings) && <main className="beginner-page"><header><p className="eyebrow">数据设置</p><h1>数据源与 AI</h1><p>设置服务暂不可用，请检查本地服务后重试。</p></header></main>}
 
       {activeView === "dashboard" && loadDecisionCurrent && <div className="stock-workbench-layout">

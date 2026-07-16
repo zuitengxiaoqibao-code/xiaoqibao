@@ -1,7 +1,9 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { DataSettingsView } from "./DataSettingsView";
+import type { StockPreparation } from "../stock-cockpit/types";
+import type { AISettingsView } from "./types";
 
 describe("DataSettingsView", () => {
   it("shows masked AI state without rendering the secret", async () => {
@@ -21,10 +23,53 @@ describe("DataSettingsView", () => {
     fireEvent.change(screen.getByLabelText("模型"), { target: { value: "model" } });
     fireEvent.change(screen.getByLabelText("新密钥"), { target: { value: "secret-value" } });
     fireEvent.click(screen.getByRole("button", { name: "保存 AI 配置" }));
-    await waitFor(() => expect(saveAI).toHaveBeenCalledWith({ base_url: "https://ai.example/v1", model: "model", api_key: "secret-value" }));
+    await waitFor(() => expect(saveAI).toHaveBeenCalledWith({ base_url: "https://ai.example/v1", model: "model", api_key: "secret-value" }, expect.any(AbortSignal)));
     expect(refresh).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole("button", { name: "清除 AI 配置" }));
     await waitFor(() => expect(deleteAI).toHaveBeenCalledTimes(1));
     expect(refresh).toHaveBeenCalledTimes(2);
+  });
+
+  it("ignores a stale retry after the selected symbol changes", async () => {
+    let resolveOld!: (value: StockPreparation) => void;
+    const prepare = vi.fn(() => new Promise<StockPreparation>((resolve) => { resolveOld = resolve; }));
+    const base = { loadAI: () => Promise.resolve({ configured: false, base_url: null, model: null, api_key_hint: null }), saveAI: vi.fn(), deleteAI: vi.fn() };
+    const view = render(<DataSettingsView {...base} symbol="600000" prepare={prepare} />);
+    await screen.findByText("尚未配置 AI");
+    fireEvent.click(screen.getByRole("button", { name: "重试当前股票数据" }));
+    view.rerender(<DataSettingsView {...base} symbol="000001" prepare={prepare} />);
+    await act(async () => resolveOld({ symbol: "600000", status: "partial", refreshed: false, started_at: "2026-07-16T10:00:00+08:00", completed_at: "2026-07-16T10:00:01+08:00", sources: [] }));
+    expect(screen.getByText("选择一只 A 股后，这里会显示各类数据的最新状态。")).toBeInTheDocument();
+  });
+
+  it("maps source failure reasons without exposing internal text", async () => {
+    const preparation: StockPreparation = { symbol: "600000", status: "partial", refreshed: false, started_at: "2026-07-16T10:00:00+08:00", completed_at: "2026-07-16T10:00:01+08:00", sources: [{ name: "news", status: "partial", observed_at: null, reason: "SECRET_PROVIDER_STACK" }] };
+    render(<DataSettingsView loadAI={() => Promise.resolve({ configured: false, base_url: null, model: null, api_key_hint: null })} saveAI={vi.fn()} deleteAI={vi.fn()} symbol="600000" preparation={preparation} />);
+    expect(await screen.findByText("来源暂未提供详细原因")).toBeInTheDocument();
+    expect(screen.queryByText(/SECRET|STACK/)).not.toBeInTheDocument();
+  });
+
+  it("uses the effective state returned after deleting local settings", async () => {
+    const deleteAI = vi.fn().mockResolvedValue({ configured: true, base_url: "https://env.example/v1", model: "env-model", api_key_hint: "****env1" });
+    render(<DataSettingsView loadAI={() => Promise.resolve({ configured: true, base_url: "https://local.example/v1", model: "local", api_key_hint: "****ocal" })} saveAI={vi.fn()} deleteAI={deleteAI} />);
+    await screen.findByText("密钥已保存 · ****ocal");
+    fireEvent.click(screen.getByRole("button", { name: "清除 AI 配置" }));
+    expect(await screen.findByText("密钥已保存 · ****env1")).toBeInTheDocument();
+    expect(screen.getByLabelText("API 地址")).toHaveValue("https://env.example/v1");
+  });
+
+  it("does not refresh the cockpit when a save finishes after unmount", async () => {
+    let finish!: (value: AISettingsView) => void;
+    const saveAI = vi.fn(() => new Promise<AISettingsView>((resolve) => { finish = resolve; }));
+    const refresh = vi.fn();
+    const view = render(<DataSettingsView loadAI={() => Promise.resolve({ configured: false, base_url: null, model: null, api_key_hint: null })} saveAI={saveAI} deleteAI={vi.fn()} onAIChanged={refresh} />);
+    await screen.findByText("尚未配置 AI");
+    fireEvent.change(screen.getByLabelText("API 地址"), { target: { value: "https://ai.example/v1" } });
+    fireEvent.change(screen.getByLabelText("模型"), { target: { value: "model" } });
+    fireEvent.change(screen.getByLabelText("新密钥"), { target: { value: "secret" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存 AI 配置" }));
+    view.unmount();
+    await act(async () => finish({ configured: true, base_url: "https://ai.example/v1", model: "model", api_key_hint: "****cret" }));
+    expect(refresh).not.toHaveBeenCalled();
   });
 });

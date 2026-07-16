@@ -2,7 +2,8 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SelectedInstrumentProvider } from "../instrument-selection/SelectedInstrumentProvider";
-import { Dashboard } from "./Dashboard";
+import { Dashboard, preparationForSymbol } from "./Dashboard";
+import type { StockCockpitSnapshot } from "../stock-cockpit/types";
 
 const card = {
   asset: "a_share" as const, symbol: "600000", action: "observe" as const, quality: "fresh" as const,
@@ -78,5 +79,11 @@ describe("Dashboard beginner shell", () => {
     window.history.replaceState({}, "", "/settings");
     render(<Dashboard loadSnapshot={vi.fn(() => Promise.resolve(card))} />);
     expect(screen.getByRole("heading", { name: "数据源与 AI" })).toBeInTheDocument();
+  });
+
+  it("does not pass an older stock preparation into settings for a new symbol", () => {
+    const old = { symbol: "600000", preparation: { symbol: "600000", status: "ready", sources: [], refreshed: false, started_at: "2026-07-16T10:00:00+08:00", completed_at: "2026-07-16T10:00:01+08:00" } } as unknown as StockCockpitSnapshot;
+    expect(preparationForSymbol(old, "000001")).toBeNull();
+    expect(preparationForSymbol(old, "600000")?.symbol).toBe("600000");
   });
 });
