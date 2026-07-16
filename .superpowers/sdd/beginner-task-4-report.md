@@ -1,0 +1,52 @@
+# Task 4 Report: Beginner Navigation And Research Cockpit
+
+## Result
+
+- Replaced the department navigation with exactly six beginner routes: 今日研判, A 股观察, 新闻热点, 风险提醒, 历史复盘, 数据设置.
+- Kept 可转债 as an isolated asset entry that drops the A-share symbol from its URL.
+- Rebuilt the first research viewport around stock selection, preparation status, the three-state action card, reasons, risks, waiting signals, re-evaluation conditions, and the three daily phases.
+- Mapped deterministic actions to exactly 暂不参与, 加入观察, 回避.
+- Removed candidate-ledger, simulation-plan, gate, strategy-version, internal-ID, price, position, stop, order, and department UI from the cockpit.
+- Moved raw section data into one collapsed 数据详情 disclosure and omitted funds/backtest unavailable sections.
+- Preserved stale-response isolation, live-to-history context isolation, stock switching, and convertible-bond route isolation.
+- Added compatibility for older cockpit responses without `preparation`; availability is derived from existing sections without hiding the deterministic action card.
+
+## Design
+
+The interface keeps the existing dark technical identity but uses a restrained research-terminal layout. Status color is semantic: green for observable, amber for waiting, red for avoid. Body and metadata sizes were raised to 12-14px, with a fixed desktop rail and horizontally scrollable mobile navigation.
+
+## Verification
+
+- Frontend tests: 68 tests expected after the compatibility regression.
+- Production build: TypeScript and Vite build.
+- Browser: six navigation buttons present, isolated bond entry present, no horizontal overflow at the available 1157px viewport, legacy snapshot no longer crashes after compatibility fix.
+- Mobile layout is covered by responsive CSS and component tests; the connected browser surface did not expose viewport resizing.
+
+## Concerns
+
+- Risk and settings are intentionally lightweight placeholders; Task 5 owns functional data and AI settings.
+- Some legacy governance and operations components remain in source for backend compatibility but are no longer reachable from the user navigation.
+
+## Review Fix Pass
+
+- Replaced the legacy `/a-shares` research screen with the shared beginner stock selector and action-card flow.
+- Added a plain-language risk screen backed by `loadRisk`, including request isolation, error handling, and retry.
+- Replaced the internal decision workbench on `/history` with a date-based three-phase review showing only conclusions, evidence, risks, and time.
+- Preserved the last A-share selection across a symbol-free convertible-bond round trip.
+- Made preparation optional in the frontend contract and labels derived fallback state as an estimate rather than a completed refresh.
+- Restricted data details to translated source names, known reason descriptions, and whitelisted metrics. Unknown or hostile values are not rendered.
+- Removed remaining department copy from reachable bond error handling and hid provider/model/hash implementation details from beginner news views.
+
+## Review Fix Pass 2
+
+- Added one shared beginner-facing error classifier and applied it to risk, history, news, A-share selection, the stock cockpit, and convertible bonds. Raw backend messages, URLs, provider names, internal codes, and department names are no longer echoed from those requests.
+- Replaced the news `质量监测` tab with `数据状态`, limited it to verified-news count, related-stock count, and latest update time, and removed citation hashes plus model/provider telemetry from visible news UI.
+- Stopped rendering arbitrary cockpit `payload.explanation`; only fixed reason copy and whitelisted metrics remain visible.
+- Added retained compliance tests for A-share/convertible-bond separation and failure/retry completion without restoring governance navigation.
+- Verification: 19 frontend test files and 80 tests passed; TypeScript and Vite production build passed; mojibake scan and `git diff --check` reported no content errors.
+
+## Review Fix Pass 3
+
+- Removed `input_snapshot_hash` from the daily briefing DOM by construction and deleted the obsolete `.briefing-ledger code` styling/hiding rules.
+- Added a briefing-route regression test that preserves phase, date, event count, and explanation count while asserting that neither the known hash nor a `code` element is rendered.
+- Retained minor concern: the unreachable legacy compliance component can still display raw backend feature labels. It remains outside beginner navigation and is intentionally not expanded in this task.

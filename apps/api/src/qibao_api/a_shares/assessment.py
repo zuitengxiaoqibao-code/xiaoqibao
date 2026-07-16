@@ -1,0 +1,308 @@
+import hashlib
+import json
+from datetime import datetime
+from decimal import Decimal, InvalidOperation
+from typing import Any, Literal
+
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+
+from qibao_api.contracts.decision import EvidenceReference
+from qibao_api.contracts.instruments import AShareCode
+
+
+EVIDENCE_ORDER = (
+    "market", "price_volume", "trend", "valuation", "fundamentals",
+    "funds", "news", "industry", "risk",
+)
+
+
+class StockAssessment(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    assessment_id: str
+    symbol: AShareCode
+    action: Literal["observe", "wait", "avoid"]
+    conclusion: str
+    confidence: Decimal = Field(ge=0, le=1)
+    supporting_evidence: tuple[EvidenceReference, ...]
+    contrary_evidence: tuple[EvidenceReference, ...]
+    risks: tuple[str, ...]
+    invalidation_conditions: tuple[str, ...]
+    generated_at: AwareDatetime
+
+
+def _digest(value: dict[str, Any]) -> str:
+    payload = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _decimal(value: Any) -> Decimal | None:
+    if value is None or value == "":
+        return None
+    try:
+        parsed = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+    return parsed if parsed.is_finite() else None
+
+
+def _formatted(value: Any, digits: int = 2) -> str | None:
+    parsed = _decimal(value)
+    return f"{parsed:.{digits}f}" if parsed is not None else None
+
+
+def _percent(value: Any, *, fraction: bool = False) -> str | None:
+    parsed = _decimal(value)
+    if parsed is None:
+        return None
+    if fraction:
+        parsed *= Decimal("100")
+    return f"{parsed:.2f}%"
+
+
+def _billions(value: Any) -> str | None:
+    parsed = _decimal(value)
+    return f"{parsed / Decimal('100000000'):.2f}" if parsed is not None else None
+
+
+def _summary(name: str, status: str, metrics: dict[str, Any]) -> str:
+    if name == "market":
+        values = (
+            ("现价", _formatted(metrics.get("price")), " 元"),
+            ("涨跌", _percent(metrics.get("change_percent")), ""),
+            ("换手率", _percent(metrics.get("turnover_rate")), ""),
+        )
+        label = "实时行情"
+    elif name == "price_volume":
+        values = (
+            ("收盘", _formatted(metrics.get("close")), " 元"),
+            ("近5日", _percent(metrics.get("return_5d"), fraction=True), ""),
+            ("量比", _formatted(metrics.get("volume_ratio")), ""),
+        )
+        label = "量价表现"
+    elif name == "trend":
+        values = (
+            ("距20日均线", _percent(metrics.get("distance_ma20"), fraction=True), ""),
+            ("近20日", _percent(metrics.get("return_20d"), fraction=True), ""),
+            ("20日波动", _percent(metrics.get("volatility_20d"), fraction=True), ""),
+        )
+        label = "趋势状态"
+    elif name == "valuation":
+        values = (
+            ("市盈率", _formatted(metrics.get("pe_ttm")), " 倍"),
+            ("市净率", _formatted(metrics.get("pb")), " 倍"),
+            ("总市值", _formatted(metrics.get("market_cap_yi")), " 亿元"),
+        )
+        label = "估值概览"
+    elif name == "fundamentals":
+        date_label = "报告期" if metrics.get("report_period") else "数据更新日"
+        date_value = metrics.get("report_period") or metrics.get("data_updated_on")
+        values = (
+            (date_label, str(date_value or "") or None, ""),
+            ("每股收益", _formatted(metrics.get("eps")), " 元"),
+            ("净资产收益率", _percent(metrics.get("roe")), ""),
+        )
+        label = "基本面"
+    elif name == "funds":
+        values = (
+            ("最新交易日", str(metrics.get("latest_trade_date") or "") or None, ""),
+            ("当日主力净额", _billions(metrics.get("latest_main_net")), " 亿元"),
+            ("近5日主力净额", _billions(metrics.get("main_net_5d")), " 亿元"),
+            ("近20日主力净额", _billions(metrics.get("main_net_20d")), " 亿元"),
+            ("盘中主力净额", _billions(metrics.get("intraday_main_net")), " 亿元"),
+        )
+        label = "资金流观察"
+    elif name == "news":
+        values = [
+            ("关联事件", str(metrics.get("event_count", "")) or None, " 条"),
+            ("重大反方事件", str(metrics.get("adverse_event_count", "")) or None, " 条"),
+        ]
+        event_industries = str(metrics.get("event_industries") or "").strip()
+        if event_industries:
+            values.append(("新闻事件行业标签", event_industries, ""))
+        label = "新闻事件"
+    elif name == "industry":
+        industry = str(metrics.get("industry") or "").strip()
+        boards = str(metrics.get("board_tags") or "").strip()
+        details = []
+        if industry:
+            details.append(f"所属行业 {industry}")
+        if boards:
+            details.append(f"板块标签 {boards}")
+        return f"行业信息：{'；'.join(details) if details else '暂无可核验行业与板块数据'}。"
+    elif name == "risk":
+        missing = int(metrics.get("missing_section_count", 0) or 0)
+        blocked = status == "blocked" or missing >= 3
+        state = "已触发明确阻断" if blocked else "当前未触发明确阻断"
+        return f"风险检查：核心分区缺失 {missing} 项，{state}。"
+    else:
+        return f"数据证据：已冻结 {len(metrics)} 项指标。"
+    details = [
+        f"{title} {value}{suffix}"
+        for title, value, suffix in values
+        if value is not None
+    ]
+    return f"{label}：{'，'.join(details) if details else '暂无可展示指标'}。"
+
+
+def _evidence(name: str, section: Any) -> EvidenceReference | None:
+    if section.observed_at is None or section.snapshot_id is None:
+        return None
+    metrics = section.payload.get("metrics", {})
+    content = {
+        "section": name,
+        "source": section.source,
+        "snapshot_id": section.snapshot_id,
+        "observed_at": section.observed_at.isoformat(),
+        "status": section.status,
+        "reason": section.reason,
+        "metrics": metrics,
+        "source_evidence_ids": section.payload.get("evidence_ids", ()),
+    }
+    evidence_id = _digest(content)
+    return EvidenceReference(
+        evidence_id=evidence_id,
+        source=section.source,
+        snapshot_id=section.snapshot_id,
+        summary=_summary(name, section.status, metrics),
+        observed_at=section.observed_at,
+    )
+
+
+def _ordered_sections(sections: dict[str, Any]):
+    known = [name for name in EVIDENCE_ORDER if name in sections]
+    extras = sorted(set(sections) - set(known))
+    return ((name, sections[name]) for name in (*known, *extras))
+
+
+def _is_fund_outflow(name: str, section: Any) -> bool:
+    return (
+        name == "funds"
+        and section.status == "ready"
+        and section.payload.get("metrics", {}).get("flow_direction") == "outflow"
+    )
+
+
+class DeterministicStockAssessor:
+    def assess(
+        self,
+        symbol: AShareCode,
+        sections: dict[str, Any],
+        candidate_membership: tuple[Literal["short_term", "swing"], ...],
+        cutoff: datetime,
+    ) -> StockAssessment:
+        usable = {
+            name: section
+            for name, section in sections.items()
+            if section.observed_at is None or section.observed_at <= cutoff
+        }
+        risk = usable.get("risk")
+        market = usable.get("market")
+        trend = usable.get("trend")
+
+        risk_metrics = risk.payload.get("metrics", {}) if risk is not None else {}
+        trend_metrics = trend.payload.get("metrics", {}) if trend is not None else {}
+        adverse_count = sum(
+            int(section.payload.get("metrics", {}).get("adverse_event_count", 0) or 0)
+            for name, section in usable.items() if name == "news"
+        )
+        missing_count = int(risk_metrics.get("missing_section_count", 0) or 0)
+        volatility = Decimal(str(trend_metrics.get("volatility_20d", 0) or 0))
+        drawdown = Decimal(str(trend_metrics.get("drawdown_60d", 0) or 0))
+        material_risk = (
+            missing_count >= 3 or adverse_count > 0
+            or volatility >= Decimal("0.08") or drawdown <= Decimal("-0.20")
+        )
+
+        if risk is not None and risk.status == "blocked":
+            action: Literal["observe", "wait", "avoid"] = "avoid"
+            conclusion = "权威风险分区已阻断，当前应回避。"
+            confidence = Decimal("0.90")
+        elif market is None or market.status != "ready":
+            action = "wait"
+            conclusion = "实时行情不可验证，等待行情恢复后再研判。"
+            confidence = Decimal("0.40")
+        elif trend is None or trend.status != "ready":
+            action = "wait"
+            conclusion = "日线趋势样本不足，等待有效日线数据。"
+            confidence = Decimal("0.40")
+        elif material_risk:
+            action = "avoid"
+            conclusion = "重大风险指标或反方证据成立，当前应回避。"
+            confidence = Decimal("0.85")
+        else:
+            action = "observe"
+            conclusion = "行情与日线数据可用且无风险阻断，保持观察。"
+            confidence = Decimal("0.75")
+
+        supporting = tuple(
+            evidence
+            for name, section in _ordered_sections(usable)
+            if section.status == "ready"
+            if not _is_fund_outflow(name, section)
+            if (evidence := _evidence(name, section)) is not None
+        )
+        contrary = tuple(
+            evidence
+            for name, section in _ordered_sections(usable)
+            if (
+                section.status in {"partial", "unavailable", "blocked"}
+                or _is_fund_outflow(name, section)
+            )
+            if (evidence := _evidence(name, section)) is not None
+        )
+        assessment_id = _digest({
+            "symbol": symbol,
+            "cutoff": cutoff.isoformat(),
+            "action": action,
+            "candidate_membership": candidate_membership,
+            "supporting_evidence": [item.evidence_id for item in supporting],
+            "contrary_evidence": [item.evidence_id for item in contrary],
+        })
+        missing = tuple(
+            name for name, section in sorted(sections.items())
+            if name not in {"funds", "industry"}
+            if section.observed_at is None or section.observed_at > cutoff
+        )
+        snapshot_risks = tuple(
+            f"source_snapshot_unavailable:{name}"
+            for name, section in sorted(usable.items())
+            if section.observed_at is not None and section.snapshot_id is None
+        )
+        primary_risk = (
+            "风险分区阻断。" if action == "avoid" else
+            "核心行情或趋势证据不足。" if action == "wait" else
+            "市场与基本面条件可能在截止时间后变化。"
+        )
+        metric_risks = tuple(
+            reason for condition, reason in (
+                (missing_count >= 3, f"关键分区缺失数量较高：{missing_count}。"),
+                (adverse_count > 0, f"存在重大反方事件：{adverse_count}。"),
+                (volatility >= Decimal("0.08"), f"20日波动率偏高：{volatility}。"),
+                (drawdown <= Decimal("-0.20"), f"60日回撤较深：{drawdown}。"),
+                (
+                    any(
+                        _is_fund_outflow(name, section)
+                        for name, section in usable.items()
+                    ),
+                    "近5日主力资金净流出，资金方向属于反方证据。",
+                ),
+            ) if condition
+        )
+        risks = (primary_risk, *metric_risks, *(
+            (f"缺失或晚于截止时间的分区：{'、'.join(missing)}。",) if missing else ()
+        ), *snapshot_risks)
+        return StockAssessment(
+            assessment_id=assessment_id,
+            symbol=symbol,
+            action=action,
+            conclusion=conclusion,
+            confidence=confidence,
+            supporting_evidence=supporting,
+            contrary_evidence=contrary,
+            risks=risks,
+            invalidation_conditions=(
+                "任一核心分区状态或指标发生变化。", *snapshot_risks
+            ),
+            generated_at=cutoff,
+        )

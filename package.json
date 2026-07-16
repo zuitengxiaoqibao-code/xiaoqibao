@@ -1,0 +1,10 @@
+{
+  "name": "xiaoqibao",
+  "private": true,
+  "scripts": {
+    "build": "pnpm --filter @qibao/web build",
+    "test:web": "pnpm --filter @qibao/web test",
+    "dev:web": "pnpm --filter @qibao/web dev"
+  }
+}
+
