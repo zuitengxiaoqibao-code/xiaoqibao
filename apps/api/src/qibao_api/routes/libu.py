@@ -13,6 +13,7 @@ from qibao_api.libu_compliance.repository import ComplianceRepository
 
 router = APIRouter(prefix="/api/v1/libu", tags=["礼部"])
 CURRENT_DISCLAIMER_VERSION = "2026-07"
+RETIRED_FEATURES = {"paper_orders"}
 
 
 class PolicyAction(BaseModel):
@@ -23,7 +24,10 @@ class PolicyAction(BaseModel):
 def status(repository: Annotated[ComplianceRepository, Depends(get_compliance_repository)],
            asset: AssetKind = AssetKind.A_SHARE):
     records = repository.list_current_records(asset)
-    dependencies = repository.list_source_dependencies(asset)
+    dependencies = tuple(
+        item for item in repository.list_source_dependencies(asset)
+        if item.feature not in RETIRED_FEATURES
+    )
     known = {item.source for item in records}
     pending_sources = sorted({item.source for item in dependencies} - known)
     now = datetime.now(timezone.utc)

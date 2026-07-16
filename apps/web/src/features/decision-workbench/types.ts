@@ -15,6 +15,10 @@ export type PhaseContext = {
   market_state: "strong" | "range" | "weak" | "insufficient_data" | null;
   window_start: string | null; window_end: string | null; candidate_snapshot_id: string | null;
   risk_event_count: number; quality_reasons: string[];
+  market_overview?: {
+    summary: string | null; hot_topics: string[]; industries: string[];
+    fund_flow: { inflow: number; outflow: number; available: number };
+  };
   news: {
     status: "empty" | "ready" | "partial" | "unavailable";
     events: PhaseNewsEvent[]; missing_event_ids: string[]; error_code: string | null;

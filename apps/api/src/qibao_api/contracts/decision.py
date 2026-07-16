@@ -52,6 +52,12 @@ class DecisionCycleSnapshot(BaseModel):
     previous_snapshot_id: str | None
     status: Literal["ready", "partial", "blocked"]
     ai_status: Literal["ready", "unavailable", "not_requested"]
+    market_summary: str | None = None
+    hot_topics: tuple[NonBlank, ...] = ()
+    industries: tuple[NonBlank, ...] = ()
+    fund_flow_inflow_count: int = 0
+    fund_flow_outflow_count: int = 0
+    fund_flow_available_count: int = 0
 
     @model_validator(mode="after")
     def validate_window_and_chain(self) -> "DecisionCycleSnapshot":

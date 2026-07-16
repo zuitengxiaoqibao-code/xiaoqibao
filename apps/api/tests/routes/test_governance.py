@@ -63,6 +63,15 @@ def test_libu_explicit_revoke_and_acknowledge_actions(tmp_path) -> None:
     assert client.get("/api/v1/libu/status").json()["features"][0]["allowed"] is False
 
 
+def test_removed_paper_order_feature_is_not_exposed_in_status(tmp_path) -> None:
+    client, compliance, _ = make_client(tmp_path)
+    compliance.set_feature_sources("paper_orders", AssetKind.A_SHARE, ("local",))
+
+    features = client.get("/api/v1/libu/status").json()["features"]
+
+    assert all(item["feature"] != "paper_orders" for item in features)
+
+
 def test_libu_asset_query_and_actions_keep_a_share_and_bond_records_isolated(tmp_path) -> None:
     client, compliance, _ = make_client(tmp_path)
     compliance.set_feature_sources("bond_quotes", AssetKind.CONVERTIBLE_BOND, ("tencent",))

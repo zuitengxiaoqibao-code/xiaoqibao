@@ -2,6 +2,8 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 
+import pytest
+
 from qibao_api.a_shares.models import (
     CandidateBoard,
     CandidateEntry,
@@ -87,6 +89,63 @@ def test_market_risk_degrades_when_candidate_factor_data_is_unavailable():
     assert result.available is False
     assert result.market_state == "insufficient_data"
     assert "market_factor_evidence_unavailable" in result.risks
+
+
+def test_market_risk_includes_verified_topics_industries_and_candidate_fund_flow():
+    candidate_board = SimpleNamespace(
+        universe_status="ready",
+        short_term=[SimpleNamespace(symbol="600000", score=12)],
+        swing=[SimpleNamespace(symbol="600519", score=8)],
+        snapshot_id="candidate-1",
+        model_dump=lambda mode: {"symbols": ["600000", "600519"]},
+    )
+    candidates = Candidates(candidate_board)
+    news = SimpleNamespace(effective_events=lambda cutoff=None: [
+        SimpleNamespace(
+            review_state="verified", themes=("人工智能",), industries=("软件服务",),
+            occurred_at=NOW, normalized_at=NOW,
+        ),
+        SimpleNamespace(
+            review_state="verified", themes=("旧热点",), industries=("旧行业",),
+            occurred_at=NOW - timedelta(days=2), normalized_at=NOW - timedelta(days=2),
+        ),
+    ])
+    classifications = SimpleNamespace(latest=lambda symbol, as_of, cutoff=None: SimpleNamespace(
+        industry="银行" if symbol == "600000" else "白酒",
+    ))
+    flows = SimpleNamespace(latest=lambda symbol, as_of, cutoff=None: SimpleNamespace(
+        flow_direction="inflow" if symbol == "600000" else "outflow",
+    ))
+
+    result = RepositoryRiskSource(
+        Audit(), candidates, news_repository=news,
+        classification_repository=classifications, fund_flow_repository=flows,
+    ).summarize(date(2026, 7, 15), NOW)
+
+    assert result.hot_topics == ("人工智能",)
+    assert result.industries == ("软件服务", "银行", "白酒")
+    assert (result.fund_flow_inflow_count, result.fund_flow_outflow_count) == (1, 1)
+    assert result.fund_flow_available_count == 2
+
+
+def test_market_risk_deduplicates_fund_flow_for_short_and_swing_membership():
+    candidate_board = SimpleNamespace(
+        universe_status="ready",
+        short_term=[SimpleNamespace(symbol="600000", score=12)],
+        swing=[SimpleNamespace(symbol="600000", score=8)],
+        snapshot_id="candidate-1",
+        model_dump=lambda mode: {"symbols": ["600000"]},
+    )
+    flows = SimpleNamespace(latest=lambda symbol, as_of, cutoff=None: SimpleNamespace(
+        flow_direction="outflow",
+    ))
+
+    result = RepositoryRiskSource(
+        Audit(), Candidates(candidate_board), fund_flow_repository=flows,
+    ).summarize(date(2026, 7, 15), NOW)
+
+    assert result.fund_flow_available_count == 1
+    assert result.fund_flow_outflow_count == 1
 
 
 def candidate_input(symbol: str = "600000") -> CandidateInputSnapshot:
@@ -201,6 +260,112 @@ def test_intraday_evaluator_seeds_observation_when_premarket_advice_is_empty():
     assert [item.symbol for item in result.advice] == ["600000"]
     assert result.advice[0].action == "observe"
     assert "premarket_snapshot_unavailable" in result.advice[0].risks
+
+
+@pytest.mark.parametrize(
+    ("change_percent", "action", "conclusion"),
+    [
+        ("3.20", "observe", "盘中走强，等待放量确认"),
+        ("-3.20", "wait", "盘中走弱，等待止跌确认"),
+    ],
+)
+def test_intraday_evaluator_turns_live_quote_change_into_a_beginner_friendly_signal(
+    change_percent, action, conclusion,
+):
+    local_now = datetime(2026, 7, 15, 13, 0, tzinfo=timezone(timedelta(hours=8)))
+    candidates = candidate_input()
+    quote = MarketFeedSnapshot(
+        symbol="600000", price="9.20", change="0.04", change_percent=change_percent,
+        volume="1000", source="tencent", observed_at=local_now,
+        fetched_at=local_now.astimezone(timezone.utc), quality="ready",
+        source_snapshot_id="quote-live",
+    )
+    risk = MarketRiskInputSnapshot(
+        snapshot_id="risk-live", captured_at=local_now, available=True,
+        market_state="range", version="risk-v1", summary="range", risks=(),
+    )
+    compliance = ComplianceInputSnapshot(
+        snapshot_id="compliance-live", captured_at=local_now, available=True,
+        allowed=True, version="compliance-v1", risks=(),
+    )
+
+    result = DeterministicIntradayEvaluator().evaluate(IntradayEvaluationContext(
+        now=local_now, window_start=local_now.replace(hour=9, minute=25),
+        window_end=local_now, quotes=(quote,), current_advice=(),
+        candidate_factor_input=candidates, risk_input=risk,
+        compliance_input=compliance, evidence_input=(),
+    ))
+
+    assert result.advice[0].action == action
+    assert result.advice[0].conclusion == conclusion
+    assert result.market_state in {"strong", "weak"}
+    assert any("盘中行情" in item.summary for item in result.advice[0].supporting_evidence)
+
+
+def test_intraday_evaluator_attaches_verified_news_as_supporting_or_contrary_evidence():
+    local_now = datetime(2026, 7, 15, 13, 0, tzinfo=timezone(timedelta(hours=8)))
+    quote = MarketFeedSnapshot(
+        symbol="600000", price="9.20", change="0.04", change_percent="0.44",
+        volume="1000", source="tencent", observed_at=local_now,
+        fetched_at=local_now.astimezone(timezone.utc), quality="ready",
+        source_snapshot_id="quote-live",
+    )
+    risk = MarketRiskInputSnapshot(
+        snapshot_id="risk-live", captured_at=local_now, available=True,
+        market_state="range", version="risk-v1", summary="range", risks=(),
+    )
+    compliance = ComplianceInputSnapshot(
+        snapshot_id="compliance-live", captured_at=local_now, available=True,
+        allowed=True, version="compliance-v1", risks=(),
+    )
+    event = SimpleNamespace(
+        event_id="news-risk", affected_instruments=(("a_share", "600000"),),
+        event_type="risk_notice", themes=("风险事件",), normalized_at=local_now,
+        citations=(SimpleNamespace(publisher="交易所", canonical_url="https://example.com"),),
+        headline="公司风险提示",
+    )
+
+    result = DeterministicIntradayEvaluator().evaluate(IntradayEvaluationContext(
+        now=local_now, window_start=local_now.replace(hour=9, minute=25),
+        window_end=local_now, quotes=(quote,), current_advice=(),
+        candidate_factor_input=candidate_input(), risk_input=risk,
+        compliance_input=compliance, evidence_input=(event,),
+    ))
+
+    advice = result.advice[0]
+    assert [item.evidence_id for item in advice.contrary_evidence] == ["news-news-risk"]
+    assert "风险新闻" in advice.risks
+
+
+@pytest.mark.parametrize("failure", ["stale_quote", "compliance_denied"])
+def test_intraday_evaluator_blocks_new_advice_when_live_gate_is_not_valid(failure):
+    local_now = datetime(2026, 7, 15, 13, 0, tzinfo=timezone(timedelta(hours=8)))
+    observed_at = local_now - timedelta(minutes=4) if failure == "stale_quote" else local_now
+    quote = MarketFeedSnapshot(
+        symbol="600000", price="9.20", change="0.04", change_percent="0.44",
+        volume="1000", source="tencent", observed_at=observed_at,
+        fetched_at=local_now.astimezone(timezone.utc), quality="ready",
+        source_snapshot_id="quote-live",
+    )
+    risk = MarketRiskInputSnapshot(
+        snapshot_id="risk-live", captured_at=local_now, available=True,
+        market_state="range", version="risk-v1", summary="range", risks=(),
+    )
+    compliance = ComplianceInputSnapshot(
+        snapshot_id="compliance-live", captured_at=local_now, available=True,
+        allowed=failure != "compliance_denied", version="compliance-v1", risks=(),
+    )
+
+    result = DeterministicIntradayEvaluator().evaluate(IntradayEvaluationContext(
+        now=local_now, window_start=local_now.replace(hour=9, minute=25),
+        window_end=local_now, quotes=(quote,), current_advice=(),
+        candidate_factor_input=candidate_input(), risk_input=risk,
+        compliance_input=compliance, evidence_input=(),
+    ))
+
+    assert result.advice == ()
+    assert result.status == "blocked"
+    assert result.data_quality == "blocked"
 
 
 def test_intraday_evaluator_replaces_stale_advice_with_a_new_candidate():

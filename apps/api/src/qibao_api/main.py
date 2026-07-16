@@ -320,7 +320,11 @@ async def lifespan(application: FastAPI):
             )
             decision_compliance_source = RepositoryComplianceSource(compliance)
             decision_risk_source = RepositoryRiskSource(
-                audit_repository, application.state.a_share_diagnosis_service
+                audit_repository, application.state.a_share_diagnosis_service,
+                news_repository=news_repository,
+                classification_repository=stock_classification_repository,
+                fund_flow_repository=fund_flow_repository,
+                trading_calendar=trading_calendar,
             )
             decision_evidence_source = RepositoryEvidenceSource(news_repository)
             decision_market_feed = TencentPollingMarketFeed(history_client, compliance)

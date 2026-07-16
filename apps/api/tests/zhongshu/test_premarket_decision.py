@@ -201,6 +201,21 @@ def test_short_term_and_swing_remain_separate_and_future_news_is_excluded(tmp_pa
     assert "plans" not in result.model_dump(mode="json")
 
 
+def test_negative_factor_score_is_a_wait_signal_not_an_observation_upgrade(tmp_path) -> None:
+    candidates = candidate_input()
+    weak = candidates.board.swing[0].model_copy(update={"score": Decimal("-5")})
+    candidates = candidates.model_copy(update={
+        "board": candidates.board.model_copy(update={"swing": [weak]}),
+    })
+    subject, _ = service(tmp_path, candidates=candidates)
+
+    result = subject.run(TRADE_DATE, NOW)
+    advice = next(item for item in result.advice if item.horizon == "swing")
+
+    assert advice.action == "wait"
+    assert advice.conclusion == "因子评分偏低，等待趋势修复"
+
+
 @pytest.mark.parametrize("headline", ["并非利好", "利好出尽"])
 def test_headline_words_never_upgrade_or_downgrade_ranked_candidate(tmp_path, headline) -> None:
     subject, _ = service(tmp_path, events=(news(headline=headline),))
@@ -289,6 +304,26 @@ def test_missing_history_degrades_without_invented_advice(tmp_path) -> None:
     assert result.snapshot.quality_reasons == ("candidate_history_unavailable",)
 
 
+def test_stale_candidate_history_is_visible_without_erasing_deterministic_observations(tmp_path) -> None:
+    candidates = candidate_input()
+    stale_short = candidates.board.short_term[0].model_copy(update={
+        "factor_snapshot": candidates.board.short_term[0].factor_snapshot.model_copy(update={
+            "latest_trade_date": date(2026, 7, 13),
+        }),
+    })
+    candidates = candidates.model_copy(update={
+        "board": candidates.board.model_copy(update={"short_term": [stale_short]}),
+    })
+    subject, _ = service(tmp_path, candidates=candidates)
+
+    result = subject.run(TRADE_DATE, NOW)
+
+    assert "candidate_history_stale" in result.snapshot.quality_reasons
+    assert result.snapshot.status == "partial"
+    assert result.advice
+    assert "候选历史行情未更新至上一交易日" in result.advice[0].risks
+
+
 def test_unavailable_compliance_explains_why_advice_is_blocked(tmp_path) -> None:
     subject, _ = service(tmp_path, compliance=Compliance(available=False))
 
@@ -305,7 +340,7 @@ def test_ai_unavailable_retains_deterministic_advice_without_explanation(tmp_pat
     assert result.snapshot.ai_status == "unavailable"
     assert result.snapshot.quality_reasons == ("ai_unavailable",)
     assert len(result.advice) == 2
-    assert all(item.plain_language_explanation is None for item in result.advice)
+    assert all("候选评分" in (item.plain_language_explanation or "") for item in result.advice)
     stored = repository.latest(TRADE_DATE, "premarket")
     assert stored.advice[0].quantitative_result["ai_model"] == "m"
     assert stored.advice[0].quantitative_result["ai_provider_error_count"] == Decimal("1")
@@ -315,7 +350,7 @@ def test_future_ai_interpretation_is_excluded(tmp_path) -> None:
     subject, _ = service(tmp_path, events=(news(),), ai=AI(True, NOW + timedelta(minutes=1)))
     result = subject.run(TRADE_DATE, NOW)
     assert result.snapshot.ai_status == "unavailable"
-    assert all(item.plain_language_explanation is None for item in result.advice)
+    assert all("候选评分" in (item.plain_language_explanation or "") for item in result.advice)
 
 
 def test_identical_input_is_idempotent_and_changed_input_appends(tmp_path) -> None:

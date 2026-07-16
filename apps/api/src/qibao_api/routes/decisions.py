@@ -96,6 +96,16 @@ def _phase_context(news_repository, snapshot):
         "candidate_snapshot_id": snapshot.get("candidate_snapshot_id"),
         "risk_event_count": len(snapshot.get("risk_event_ids", [])),
         "quality_reasons": quality_reasons,
+        "market_overview": {
+            "summary": snapshot.get("market_summary"),
+            "hot_topics": snapshot.get("hot_topics", []),
+            "industries": snapshot.get("industries", []),
+            "fund_flow": {
+                "inflow": snapshot.get("fund_flow_inflow_count", 0),
+                "outflow": snapshot.get("fund_flow_outflow_count", 0),
+                "available": snapshot.get("fund_flow_available_count", 0),
+            },
+        },
         "news": _news_context(news_repository, snapshot),
     }
 

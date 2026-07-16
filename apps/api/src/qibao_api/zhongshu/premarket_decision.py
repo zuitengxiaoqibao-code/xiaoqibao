@@ -15,6 +15,7 @@ from qibao_api.zhongshu.decision_ai import DecisionAIEvidence, DecisionAIRequest
 
 
 CHINA_TZ = timezone(timedelta(hours=8))
+PREMARKET_STRATEGY_VERSION = "premarket-decision-v2"
 
 
 class CandidateInputSnapshot(BaseModel):
@@ -43,6 +44,11 @@ class MarketRiskInputSnapshot(BaseModel):
     version: str
     summary: str
     risks: tuple[str, ...]
+    hot_topics: tuple[str, ...] = ()
+    industries: tuple[str, ...] = ()
+    fund_flow_inflow_count: int = 0
+    fund_flow_outflow_count: int = 0
+    fund_flow_available_count: int = 0
 
 
 class PremarketDecisionService:
@@ -63,6 +69,13 @@ class PremarketDecisionService:
         if not self.trading_calendar.is_trading_day(trading_date):
             raise ValueError("unconfirmed trading date")
         previous = self.trading_calendar.previous_trading_day(trading_date)
+        schedule = getattr(self.trading_calendar, "schedule", None)
+        if schedule is not None:
+            for offset in range(1, 15):
+                scheduled = trading_date - timedelta(days=offset)
+                if schedule.is_trading_day(scheduled):
+                    previous = scheduled
+                    break
         window_start = datetime.combine(previous, time(15), CHINA_TZ)
         window_end = min(now.astimezone(CHINA_TZ), datetime.combine(trading_date, time(9, 25), CHINA_TZ))
         if now <= window_start:
@@ -71,8 +84,14 @@ class PremarketDecisionService:
         candidates = self.candidate_service.candidates(trading_date, cutoff=window_end)
         compliance = self.compliance_checker.check(trading_date, window_end)
         risk = self.market_risk_summary.summarize(trading_date, window_end)
+        candidate_entries = (*candidates.board.short_term, *candidates.board.swing)
+        history_stale = any(
+            item.factor_snapshot.latest_trade_date is not None
+            and item.factor_snapshot.latest_trade_date < previous
+            for item in candidate_entries
+        )
         candidate_symbols = {
-            item.symbol for item in (*candidates.board.short_term, *candidates.board.swing)
+            item.symbol for item in candidate_entries
         }
         events = tuple(
             event for event in self.news_repository.effective_events(cutoff=window_end)
@@ -94,6 +113,7 @@ class PremarketDecisionService:
         )
         canonical = {
             "phase": "premarket", "trading_date": trading_date.isoformat(),
+            "strategy_version": PREMARKET_STRATEGY_VERSION,
             "window_start": window_start.isoformat(), "window_end": window_end.isoformat(),
             "candidate": candidates.model_dump(mode="json"),
             "compliance": compliance.model_dump(mode="json"),
@@ -112,6 +132,7 @@ class PremarketDecisionService:
         if required_ready and compliance.allowed:
             deterministic = self._advice(
                 snapshot_id, candidates, compliance, risk, events, window_end,
+                history_stale,
             )
             if deterministic:
                 evidence = _unique_evidence(deterministic)
@@ -138,6 +159,8 @@ class PremarketDecisionService:
             status, quality = "blocked", "blocked"
         elif not advice and candidates.board.universe_status == "empty":
             status, quality = "partial", "partial"
+        elif history_stale:
+            status, quality = "partial", "partial"
         elif not ai_ready:
             status, quality = "partial", "partial"
         else:
@@ -161,6 +184,8 @@ class PremarketDecisionService:
             quality_reasons.append("risk_snapshot_after_window")
         if required_ready and compliance.allowed and candidates.board.universe_status == "empty":
             quality_reasons.append("candidate_universe_empty")
+        if required_ready and compliance.allowed and history_stale:
+            quality_reasons.append("candidate_history_stale")
         if required_ready and compliance.allowed and not ai_ready:
             quality_reasons.append("ai_unavailable")
         observed = tuple(
@@ -185,6 +210,12 @@ class PremarketDecisionService:
             input_snapshot_hash=input_hash,
             previous_snapshot_id=None if latest is None else latest.snapshot.snapshot_id,
             status=status, ai_status="ready" if ai_ready else "unavailable",
+            market_summary=risk.summary,
+            hot_topics=risk.hot_topics,
+            industries=risk.industries,
+            fund_flow_inflow_count=risk.fund_flow_inflow_count,
+            fund_flow_outflow_count=risk.fund_flow_outflow_count,
+            fund_flow_available_count=risk.fund_flow_available_count,
         )
         aggregate = DecisionCycleAggregate(snapshot=snapshot, advice=advice)
         self.decision_repository.append_cycle(aggregate)
@@ -194,7 +225,9 @@ class PremarketDecisionService:
         return persisted
 
     @staticmethod
-    def _advice(snapshot_id, candidates, compliance, risk, events, created_at):
+    def _advice(
+        snapshot_id, candidates, compliance, risk, events, created_at, history_stale,
+    ):
         results = []
         for horizon, entries in (
             ("intraday", candidates.board.short_term), ("swing", candidates.board.swing),
@@ -205,20 +238,56 @@ class PremarketDecisionService:
                     if (AssetKind.A_SHARE, item.symbol) in event.affected_instruments
                 )
                 adverse = tuple(event for event in related if _is_risk_event(event))
-                action = "wait" if adverse else "observe"
                 supporting = (_factor_evidence(candidates, item),)
                 contrary = tuple(_news_evidence(event) for event in adverse)
+                if adverse:
+                    action = "wait"
+                    conclusion = "存在已核验风险，等待风险解除"
+                    confidence = Decimal("0.3")
+                elif item.score < 0:
+                    action = "wait"
+                    conclusion = "因子评分偏低，等待趋势修复"
+                    confidence = Decimal("0.25")
+                elif related:
+                    action = "observe"
+                    conclusion = "有已核验新闻，等待新闻方向与量价确认"
+                    confidence = Decimal("0.5")
+                elif item.score >= Decimal("60"):
+                    action = "observe"
+                    conclusion = "因子评分靠前，等待开盘确认"
+                    confidence = Decimal("0.62")
+                else:
+                    action = "observe"
+                    conclusion = "候选因子可用，等待开盘确认"
+                    confidence = Decimal("0.5")
                 results.append(AdviceCard(
                     advice_id=f"advice-{snapshot_id}-{horizon}-{item.symbol}", snapshot_id=snapshot_id,
                     asset=AssetKind.A_SHARE, symbol=item.symbol, horizon=horizon,
                     observation_state="watching" if action == "observe" else "waiting",
-                    action=action, conclusion="保留观察" if action == "observe" else "等待核验正向证据",
-                    confidence=Decimal("0.6") if action == "observe" else Decimal("0.3"),
+                    action=action, conclusion=conclusion, confidence=confidence,
                     supporting_evidence=supporting, contrary_evidence=contrary,
-                    risks=tuple(dict.fromkeys((*risk.risks, *compliance.risks))) or ("数据可能变化",),
+                    risks=tuple(dict.fromkeys((
+                        *risk.risks, *compliance.risks,
+                        *(("候选历史行情未更新至上一交易日",) if history_stale else ()),
+                    ))) or ("数据可能变化",),
                     invalidation_conditions=("候选因子或核验新闻发生变化",),
-                    quantitative_result={"candidate_score": item.score},
-                    strategy_version=f"{item.factor_snapshot.factor_version}/{risk.version}/{compliance.version}",
+                    plain_language_explanation=(
+                        f"候选评分 {item.score}；5日涨跌 {item.factor_snapshot.return_5d:.2%}；"
+                        f"20日涨跌 {item.factor_snapshot.return_20d:.2%}；"
+                        f"近5日/20日成交量比 {item.factor_snapshot.volume_ratio_5_20:.2f}。"
+                        f"{conclusion}，不构成自动交易指令。"
+                    ),
+                    quantitative_result={
+                        "candidate_score": item.score,
+                        "return_5d": item.factor_snapshot.return_5d,
+                        "return_20d": item.factor_snapshot.return_20d,
+                        "volume_ratio_5_20": item.factor_snapshot.volume_ratio_5_20,
+                        "verified_news_count": len(related),
+                    },
+                    strategy_version=(
+                        f"{PREMARKET_STRATEGY_VERSION}/{item.factor_snapshot.factor_version}/"
+                        f"{risk.version}/{compliance.version}"
+                    ),
                     created_at=created_at,
                 ))
         return tuple(results)
@@ -228,7 +297,11 @@ def _factor_evidence(snapshot: CandidateInputSnapshot, item: CandidateEntry) -> 
     return EvidenceReference(
         evidence_id=f"factor-{snapshot.board.snapshot_id}-{item.horizon}-{item.symbol}",
         source=item.factor_snapshot.source, snapshot_id=snapshot.board.snapshot_id or "candidate-board",
-        summary=f"候选因子快照 {item.factor_snapshot.factor_version}", observed_at=snapshot.captured_at,
+        summary=(
+            f"候选因子：评分 {item.score}，5日涨跌 {item.factor_snapshot.return_5d:.2%}，"
+            f"20日涨跌 {item.factor_snapshot.return_20d:.2%}，"
+            f"趋势距MA20 {item.factor_snapshot.distance_ma20:.2%}"
+        ), observed_at=snapshot.captured_at,
     )
 
 
@@ -240,7 +313,7 @@ def _news_evidence(event) -> EvidenceReference:
 
 
 def _is_risk_event(event) -> bool:
-    return "risk" in event.event_type or "风险事件" in event.themes
+    return "risk" in event.event_type or "风险事件" in event.themes or "椋庨櫓浜嬩欢" in event.themes
 
 
 def _unique_evidence(advice):

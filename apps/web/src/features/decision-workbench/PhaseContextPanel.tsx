@@ -11,6 +11,7 @@ const marketStateNames: Record<NonNullable<PhaseContext["market_state"]>, string
 
 const qualityReasonNames: Record<string, string> = {
   candidate_history_unavailable: "候选股历史行情不足",
+  candidate_history_stale: "候选历史行情未更新至上一交易日，仅作观察参考",
   candidate_as_of_after_trading_date: "候选池日期晚于本交易日",
   candidate_snapshot_after_window: "候选池数据晚于本阶段截止时间",
   compliance_unavailable: "合规检查数据不可用",
@@ -55,6 +56,8 @@ function newsStatus(context: PhaseContext) {
 export function PhaseContextPanel({ context }: { context?: PhaseContext }) {
   if (!context) return null;
   const marketState = context.market_state ? marketStateNames[context.market_state] : "状态未记录";
+  const overview = context.market_overview;
+  const flow = overview?.fund_flow;
   return <section className="phase-context" aria-label="阶段依据">
     <header>
       <div>
@@ -67,6 +70,14 @@ export function PhaseContextPanel({ context }: { context?: PhaseContext }) {
         <span>{context.news.events.length} 条已验证新闻</span>
       </div>
     </header>
+    {overview && <section className="market-overview" aria-label="市场热点与资金概览">
+      {overview.summary && <p className="market-overview-summary">{overview.summary}</p>}
+      <div className="market-overview-grid">
+        <div><span>已核验热点</span><b>{overview.hot_topics.length ? overview.hot_topics.join(" · ") : "暂无"}</b></div>
+        <div><span>行业归因</span><b>{overview.industries.length ? overview.industries.join(" · ") : "暂无"}</b></div>
+        <div><span>候选资金流</span><b>{flow?.available ? `流入 ${flow.inflow} · 流出 ${flow.outflow}` : "暂无可用快照"}</b></div>
+      </div>
+    </section>}
     {context.quality_reasons.length > 0 && <section className="phase-quality-reasons">
       <h3>为什么当前没有完整建议</h3>
       <ul>{context.quality_reasons.map((reason) => <li key={reason}>{qualityReasonNames[reason] ?? `已记录的数据质量问题：${reason}`}</li>)}</ul>

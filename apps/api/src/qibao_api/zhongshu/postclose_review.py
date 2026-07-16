@@ -14,6 +14,7 @@ from qibao_api.contracts.market import AssetKind
 
 
 CHINA_TZ = timezone(timedelta(hours=8))
+POSTCLOSE_STRATEGY_VERSION = "postclose-review-v2"
 NonBlank = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 OutcomeStatus = Literal["correct", "wrong", "invalidated", "risk_blocked", "unverifiable"]
 ErrorAttribution = Literal[
@@ -87,6 +88,7 @@ class PostcloseReviewService:
         )
         input_hash = _canonical_hash({
             "trading_date": trading_date,
+            "strategy_version": POSTCLOSE_STRATEGY_VERSION,
             "advice": advice,
             "outcomes": tuple(
                 item.model_dump(mode="json", exclude={"reviewed_at"}) for item in outcomes
@@ -240,9 +242,33 @@ class PostcloseReviewService:
         original: AdviceCard, outcome: AdviceOutcome, snapshot_id: str,
     ) -> AdviceCard:
         retained = outcome.status in {"correct", "unverifiable"} and outcome.withdrawal_reason is None
+        labels = {
+            "correct": "判断成立",
+            "unverifiable": "无法验证",
+            "wrong": "判断未成立",
+            "invalidated": "条件失效",
+            "risk_blocked": "风险拦截",
+        }
+        outcome_label = labels[outcome.status]
+        conclusion = (
+            "复盘验证通过，列入次日观察"
+            if outcome.status == "correct"
+            else "收盘数据不足，保留观察但需补齐验证"
+            if outcome.status == "unverifiable" and retained
+            else "复盘未验证通过，撤回原结论"
+        )
+        explanation = (
+            f"盘前/盘中结论为“{original.conclusion}”。"
+            f"收盘后结果：{outcome_label}。"
+            + (
+                "次日继续观察，但仍需重新核验行情和风险。"
+                if retained else "原判断不再沿用，下一交易日重新评估。"
+            )
+        )
         quantitative = {
             **original.quantitative_result,
             "outcome_status": outcome.status,
+            "outcome_label": outcome_label,
             "error_attribution": outcome.attribution,
             "outcome_input_hash": outcome.outcome_input_hash,
             "original_advice_id": original.advice_id,
@@ -253,11 +279,17 @@ class PostcloseReviewService:
             "snapshot_id": snapshot_id,
             "action": "observe" if retained else "invalidated",
             "observation_state": "next_day_observation" if retained else "withdrawn_revalidation_required",
-            "conclusion": original.conclusion if retained else outcome.withdrawal_reason,
+            "conclusion": conclusion,
+            "plain_language_explanation": explanation,
             "quantitative_result": quantitative,
             "risk_decision_id": None,
             "previous_advice_id": original.advice_id,
-            "changed_fields": ("outcome_status", "observation_state"),
+            "changed_fields": (
+                "action", "conclusion", "plain_language_explanation",
+                "quantitative_result", "strategy_version",
+                "outcome_status", "observation_state",
+            ),
+            "strategy_version": f"{POSTCLOSE_STRATEGY_VERSION}/{original.strategy_version}",
             "created_at": outcome.reviewed_at,
         })
 

@@ -144,6 +144,30 @@ def test_reviews_only_frozen_advice_and_uses_observations_through_close() -> Non
     assert result.aggregate.snapshot.phase == "postclose"
 
 
+def test_postclose_advice_explains_the_outcome_and_next_day_handling_in_plain_language() -> None:
+    advice = _advice("plain-review", datetime(2026, 7, 14, 2, 0, tzinfo=UTC))
+    service, _ = _service((advice,), ({
+        "advice_id": "plain-review", "observed_at": CLOSE,
+        "available": True, "direction": "favorable",
+        "invalidation_triggered": False,
+    },))
+
+    result = service.run(TRADING_DATE, NOW)
+    review = result.aggregate.advice[0]
+
+    assert review.conclusion == "复盘验证通过，列入次日观察"
+    assert review.plain_language_explanation == (
+        "盘前/盘中结论为“deterministic conclusion”。收盘后结果：判断成立。"
+        "次日继续观察，但仍需重新核验行情和风险。"
+    )
+    assert review.quantitative_result["outcome_label"] == "判断成立"
+    assert review.changed_fields == (
+        "action", "conclusion", "plain_language_explanation",
+        "quantitative_result", "strategy_version",
+        "outcome_status", "observation_state",
+    )
+
+
 def test_unavailable_market_data_is_unverifiable_and_can_remain_observed() -> None:
     advice = _advice("missing", datetime(2026, 7, 14, 2, 0, tzinfo=UTC))
     service, _ = _service((advice,), ())
