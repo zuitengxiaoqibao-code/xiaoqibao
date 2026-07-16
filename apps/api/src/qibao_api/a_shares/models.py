@@ -13,6 +13,7 @@ class FactorSnapshot(BaseModel):
 
     symbol: str = Field(pattern=r"^\d{6}$")
     as_of: date
+    latest_trade_date: date | None = None
     close: Decimal = Field(gt=0)
     return_5d: Decimal
     return_20d: Decimal
@@ -23,6 +24,12 @@ class FactorSnapshot(BaseModel):
     liquidity_amount_20d: Decimal = Field(ge=0)
     factor_version: Literal["a-share-factors-v1"] = FACTOR_VERSION
     source: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def require_trade_date_at_or_before_cutoff(self) -> "FactorSnapshot":
+        if self.latest_trade_date is not None and self.latest_trade_date > self.as_of:
+            raise ValueError("latest_trade_date must not be after as_of")
+        return self
 
 
 class CandidateEntry(BaseModel):

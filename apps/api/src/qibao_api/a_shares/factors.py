@@ -53,6 +53,7 @@ def build_factor_snapshot(bars: Sequence[DailyBar], as_of: date) -> FactorSnapsh
     return FactorSnapshot(
         symbol=latest.symbol,
         as_of=as_of,
+        latest_trade_date=latest.trade_date,
         close=latest.close,
         return_5d=latest.close / closes[-6] - Decimal("1"),
         return_20d=latest.close / closes[-21] - Decimal("1"),

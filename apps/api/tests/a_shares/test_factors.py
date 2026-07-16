@@ -2,8 +2,10 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
+from pydantic import ValidationError
 
 from qibao_api.a_shares.factors import InsufficientHistoryError, build_factor_snapshot
+from qibao_api.a_shares.models import FactorSnapshot
 from qibao_api.contracts.bars import DailyBar
 
 
@@ -77,6 +79,16 @@ def test_factor_snapshot_keeps_requested_as_of_on_non_trading_day() -> None:
     result = build_factor_snapshot(bars, as_of=requested_as_of)
 
     assert result.as_of == requested_as_of
+    assert result.latest_trade_date == bars[-1].trade_date
+
+
+def test_factor_snapshot_rejects_trade_date_after_research_cutoff() -> None:
+    result = build_factor_snapshot(make_bars(80), as_of=date(2026, 7, 14))
+    payload = result.model_dump()
+    payload["latest_trade_date"] = result.as_of + timedelta(days=1)
+
+    with pytest.raises(ValidationError, match="latest_trade_date"):
+        FactorSnapshot.model_validate(payload)
 
 
 @pytest.mark.parametrize(

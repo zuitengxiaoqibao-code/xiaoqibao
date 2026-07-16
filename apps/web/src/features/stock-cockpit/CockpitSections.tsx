@@ -56,6 +56,10 @@ const fundFlowMoneyMetrics = new Set([
 const flowDirectionNames: Record<string, string> = {
   inflow: "净流入", outflow: "净流出", balanced: "基本平衡",
 };
+const unavailableSourceReasons: Record<string, string> = {
+  funds: "东方财富资金流暂未返回可核验数据，本项未参与当前研判。",
+  industry: "东方财富行业与板块暂未返回可核验数据，本项未参与当前研判。",
+};
 
 function formatTime(value: string | null): string {
   return value ? new Date(value).toLocaleString("zh-CN", { hour12: false }) : "未提供";
@@ -98,11 +102,10 @@ function SectionBand({ sectionKey, title, section }: { sectionKey: string; title
   const evidenceIds = Array.isArray(section.payload.evidence_ids)
     ? section.payload.evidence_ids.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
     : [];
-  const unavailableFundsReason = sectionKey === "funds"
-    && section.reason === "diagnosis_section_unavailable"
-    ? "东方财富资金流暂未返回可核验数据，本项未参与当前研判。"
+  const unavailableSourceReason = section.reason === "diagnosis_section_unavailable"
+    ? unavailableSourceReasons[sectionKey] ?? null
     : null;
-  const reason = unavailableFundsReason
+  const reason = unavailableSourceReason
     ?? (section.reason ? reasonNames[section.reason] ?? "未提供可展示说明" : null);
   const source = sourceNames[section.source] ?? "公开数据来源";
   return <section className={`cockpit-section status-${section.status}`} aria-labelledby={`cockpit-${sectionKey}`}>

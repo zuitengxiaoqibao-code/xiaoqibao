@@ -185,6 +185,27 @@ describe("StockDecisionCockpit", () => {
     expect(within(funds).queryByText("该分区数据暂不可用")).not.toBeInTheDocument();
   });
 
+  it("explains unavailable industry data without implying it affected the decision", async () => {
+    const detailed = snapshot();
+    detailed.sections.industry = {
+      status: "unavailable",
+      source: "eastmoney-stock-classification",
+      observed_at: null,
+      snapshot_id: "diagnosis-section-unavailable-industry",
+      reason: "diagnosis_section_unavailable",
+      payload: { metrics: {}, evidence_ids: [] },
+    };
+
+    renderCockpit(() => Promise.resolve(detailed));
+    fireEvent.click(await screen.findByText("数据详情"));
+
+    const industry = screen.getByRole("region", { name: "行业与题材" });
+    expect(within(industry).getByText(
+      "东方财富行业与板块暂未返回可核验数据，本项未参与当前研判。",
+    )).toBeInTheDocument();
+    expect(within(industry).queryByText("该分区数据暂不可用")).not.toBeInTheDocument();
+  });
+
   it("separates structured classification from news event labels", async () => {
     const detailed = snapshot();
     const allBoardTags = Array.from(

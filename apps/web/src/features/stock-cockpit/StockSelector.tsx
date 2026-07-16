@@ -31,12 +31,13 @@ function WatchButton({ symbol, watched, onToggle }: { symbol: string; watched: b
 
 function CandidateRow({ entry, identity, selected, watched, onSelect, onWatch }: { entry: CandidateEntry; identity?: AShareInstrument; selected: boolean; watched: boolean; onSelect: () => void; onWatch: () => void }) {
   const fiveDay = Number(entry.factor_snapshot.return_5d);
+  const twentyDay = Number(entry.factor_snapshot.return_20d);
   return <article className={selected ? "stock-option selected" : "stock-option"}>
     <button type="button" aria-pressed={selected} onClick={onSelect}>
       <span><b>{entry.symbol}</b><small>{identity?.name ?? "名称数据不可用"} · {entry.horizon === "short_term" ? "短线" : "波段"}</small></span>
       <span><strong>{Number(entry.score).toFixed(1)}</strong><small>候选分</small></span>
-      <span><small>最新价不可用</small><small>当前涨跌不可用</small></span>
-      <span><small>{mainFactor(entry)} · 近 5 日 {fiveDay >= 0 ? "+" : ""}{(fiveDay * 100).toFixed(2)}%</small><time>{entry.factor_snapshot.as_of}</time></span>
+      <span><small>最近收盘 {Number(entry.factor_snapshot.close).toFixed(2)} 元</small><small>近 20 日 {twentyDay >= 0 ? "+" : ""}{(twentyDay * 100).toFixed(2)}%</small></span>
+      <span><small>{mainFactor(entry)} · 近 5 日 {fiveDay >= 0 ? "+" : ""}{(fiveDay * 100).toFixed(2)}%</small><time>{entry.factor_snapshot.latest_trade_date ? `数据日 ${entry.factor_snapshot.latest_trade_date}` : `研判日 ${entry.factor_snapshot.as_of}`}</time></span>
     </button>
     <WatchButton symbol={entry.symbol} watched={watched} onToggle={onWatch} />
   </article>;

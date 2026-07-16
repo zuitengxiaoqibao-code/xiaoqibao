@@ -1,5 +1,6 @@
 export type FactorSnapshot = {
-  symbol: string; as_of: string; close: string; return_5d: string; return_20d: string;
+  symbol: string; as_of: string; latest_trade_date?: string | null; close: string;
+  return_5d: string; return_20d: string;
   distance_ma20: string; volume_ratio_5_20: string; volatility_20d: string;
   drawdown_60d: string; liquidity_amount_20d: string; factor_version: string;
   source: string;

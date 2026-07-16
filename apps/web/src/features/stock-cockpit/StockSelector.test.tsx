@@ -7,7 +7,8 @@ import { StockSelector } from "./StockSelector";
 import type { InstrumentSearchResponse } from "./types";
 
 const factor = {
-  symbol: "600000", as_of: "2026-07-15", close: "10.25", return_5d: "0.0149",
+  symbol: "600000", as_of: "2026-07-15", latest_trade_date: "2026-07-14",
+  close: "10.25", return_5d: "0.0149",
   return_20d: "0.04", distance_ma20: "0.02", volume_ratio_5_20: "1.25",
   volatility_20d: "0.18", drawdown_60d: "-0.06", liquidity_amount_20d: "800000000",
   factor_version: "a-share-factors-v1", source: "local-daily-bars",
@@ -130,13 +131,16 @@ describe("StockSelector", () => {
     expect(localStorage.getItem("qibao.a_share.watchlist.v1")).toBe('["000001"]');
   });
 
-  it("labels unavailable live quote fields instead of presenting five-day return as current change", async () => {
+  it("shows verified historical price without presenting it as live quote data", async () => {
     renderSelector();
     await screen.findByRole("button", { pressed: true });
     expect(await screen.findByText(/浦发银行/)).toBeInTheDocument();
-    expect(screen.getByText("最新价不可用")).toBeInTheDocument();
-    expect(screen.getByText("当前涨跌不可用")).toBeInTheDocument();
+    expect(screen.getByText("最近收盘 10.25 元")).toBeInTheDocument();
+    expect(screen.getByText("近 20 日 +4.00%")).toBeInTheDocument();
     expect(screen.getByText(/近 5 日 \+1\.49%/)).toBeInTheDocument();
+    expect(screen.getByText("数据日 2026-07-14")).toBeInTheDocument();
+    expect(screen.queryByText("最新价不可用")).not.toBeInTheDocument();
+    expect(screen.queryByText("当前涨跌不可用")).not.toBeInTheDocument();
   });
 
   it("polls candidates without replacing an explicit search selection", async () => {

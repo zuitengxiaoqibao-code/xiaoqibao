@@ -479,7 +479,7 @@ class AShareDiagnosisService:
             trend = _unavailable("local-daily-bars", f"趋势计算不可用：{error}")
         else:
             trend = DiagnosisSection(
-                status="ready", observed_at=as_of, source=factor.source,
+                status="ready", observed_at=latest.trade_date, source=factor.source,
                 metrics={
                     "distance_ma20": factor.distance_ma20,
                     "return_20d": factor.return_20d,

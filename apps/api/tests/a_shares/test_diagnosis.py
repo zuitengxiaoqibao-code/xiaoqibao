@@ -727,3 +727,18 @@ async def test_price_volume_sorts_and_validates_repository_bars() -> None:
 
     assert result.sections["price_volume"].metrics["close"] == bars()[-1].close
     assert result.sections["trend"].status == "ready"
+
+
+@pytest.mark.asyncio
+async def test_trend_observed_at_is_latest_verified_bar_date() -> None:
+    verified_bars = bars()
+    assert verified_bars[-1].trade_date < AS_OF
+    service = AShareDiagnosisService(
+        bar_repository=FakeBars({"600000": verified_bars}),
+        market_source=FakeMarket(), finance_source=FailingFinance(),
+        news_repository=EmptyNews(),
+    )
+
+    result = await service.diagnose("600000", AS_OF)
+
+    assert result.sections["trend"].observed_at == verified_bars[-1].trade_date
