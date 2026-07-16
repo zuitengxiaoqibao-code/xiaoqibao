@@ -120,3 +120,26 @@
 - Failure/retry coverage now asserts the failed call is not refreshed and the successful retry is refreshed.
 - Lock-timeout coverage asserts partial plus `refreshed=false`.
 - The two-instance shared-history/global-news concurrency test passed 20 consecutive isolated runs after the fix.
+
+## Final Preparation Semantics Review
+
+### RED Evidence
+
+- A fresh global news marker with no verified event linked to the selected symbol returned `news=ready` with no observation.
+- The prior all-or-nothing refresh flag suppressed successful history writes when news failed and successful news writes when history failed.
+- The new beginner-copy web test failed because the stable no-linked-event reason had no explicit UI mapping.
+
+### Fix
+
+- News is ready only when the bounded symbol query returns at least one verified linked event. Empty and unrelated results are partial with `news_no_verified_symbol_events` and no observation timestamp, even when global collection is fresh.
+- `refreshed` is the OR of successful history and news evidence writes performed by this call. Failures in another source do not erase a successful write; calls with no successful write and lock waiters remain false.
+- Data Settings maps the stable news reason to beginner-facing Chinese copy without exposing internal source details.
+
+### Coverage
+
+- Fresh marker with zero symbol events.
+- Verified event linked only to another symbol.
+- Verified event linked to the selected symbol.
+- History success plus news failure.
+- News success plus history failure.
+- Both mutation stages failing and successful retry behavior.

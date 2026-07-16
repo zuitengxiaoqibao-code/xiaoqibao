@@ -70,12 +70,13 @@ class News:
 
 
 class NewsRepo:
-    def __init__(self):
+    def __init__(self, events_by_symbol=None):
         self.queries = []
+        self.events_by_symbol = events_by_symbol or {}
 
     def events_for_symbol(self, symbol, *, cutoff=None):
         self.queries.append((symbol, cutoff))
-        return []
+        return self.events_by_symbol.get(symbol, [])
 
     def events(self):
         raise AssertionError("preparation must use the bounded symbol query")
@@ -94,7 +95,7 @@ class Calendar:
 
 def subject(
     tmp_path, *, bars=None, history=None, news=None, clock=None,
-    calendar=None, lock_timeout_seconds=1.0,
+    calendar=None, news_repository=None, lock_timeout_seconds=1.0,
 ):
     bars = bars or Bars()
     return AStockPreparationService(
@@ -102,7 +103,7 @@ def subject(
         history or History(bars),
         Diagnosis(),
         news or News(),
-        NewsRepo(),
+        news_repository or NewsRepo(),
         calendar or Calendar(),
         lock_dir=tmp_path,
         clock=clock or (lambda: datetime(2026, 7, 18, 3, tzinfo=UTC)),
@@ -173,7 +174,7 @@ async def test_partial_refresh_is_not_cached_and_retries(tmp_path):
 
     assert first.status == "partial"
     assert first.refreshed is False
-    assert second.status == "ready"
+    assert second.status == "partial"
     assert second.refreshed is True
     assert history.calls == ["600519", "600519"]
     assert news.calls == 2
@@ -204,6 +205,75 @@ async def test_news_read_is_bounded_to_requested_symbol_and_cutoff(tmp_path):
     await service.inspect("600519", as_of=FRIDAY, cutoff=cutoff)
 
     assert service.news_repository.queries == [("600519", cutoff)]
+
+
+class LinkedEvent:
+    def __init__(self, observed_at):
+        self.normalized_at = observed_at
+
+
+@pytest.mark.asyncio
+async def test_fresh_global_news_without_verified_symbol_event_is_partial(tmp_path):
+    service = subject(tmp_path)
+    service._write_news_marker(service._now())
+
+    result = await service.inspect("600519", as_of=SATURDAY)
+
+    news = next(item for item in result.sources if item.name == "news")
+    assert news.status == "partial"
+    assert news.reason == "news_no_verified_symbol_events"
+    assert news.observed_at is None
+
+
+@pytest.mark.asyncio
+async def test_unrelated_verified_news_does_not_make_symbol_ready(tmp_path):
+    repository = NewsRepo({"600000": [LinkedEvent(datetime(2026, 7, 18, 2, tzinfo=UTC))]})
+    service = subject(tmp_path, news_repository=repository)
+    service._write_news_marker(service._now())
+
+    result = await service.inspect("600519", as_of=SATURDAY)
+
+    news = next(item for item in result.sources if item.name == "news")
+    assert news.status == "partial"
+    assert news.reason == "news_no_verified_symbol_events"
+
+
+@pytest.mark.asyncio
+async def test_linked_verified_news_makes_symbol_ready(tmp_path):
+    observed = datetime(2026, 7, 18, 2, tzinfo=UTC)
+    service = subject(
+        tmp_path, news_repository=NewsRepo({"600519": [LinkedEvent(observed)]})
+    )
+    service._write_news_marker(service._now())
+
+    result = await service.inspect("600519", as_of=SATURDAY)
+
+    news = next(item for item in result.sources if item.name == "news")
+    assert news.status == "ready"
+    assert news.reason is None
+    assert news.observed_at == observed
+
+
+@pytest.mark.asyncio
+async def test_successful_history_write_with_news_failure_is_refreshed(tmp_path):
+    bars = Bars(latest=date(2026, 7, 16), count=59)
+    result = await subject(
+        tmp_path, bars=bars, news=News(fail_once=True)
+    ).prepare("600519", as_of=FRIDAY)
+
+    assert result.status == "partial"
+    assert result.refreshed is True
+
+
+@pytest.mark.asyncio
+async def test_successful_news_write_with_history_failure_is_refreshed(tmp_path):
+    bars = Bars(latest=date(2026, 7, 16), count=59)
+    result = await subject(
+        tmp_path, bars=bars, history=History(bars, fail_once=True)
+    ).prepare("600519", as_of=FRIDAY)
+
+    assert result.status == "partial"
+    assert result.refreshed is True
 
 
 @pytest.mark.asyncio
@@ -238,7 +308,7 @@ async def test_lock_contention_timeout_degrades_to_partial(tmp_path):
 
     history = next(item for item in result.sources if item.name == "history")
     assert result.status == "partial"
-    assert result.refreshed is False
+    assert result.refreshed is True
     assert history.reason == "preparation lock timed out: history-600519.lock"
 
 

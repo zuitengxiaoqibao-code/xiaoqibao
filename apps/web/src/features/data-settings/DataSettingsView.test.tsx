@@ -91,6 +91,12 @@ describe("DataSettingsView", () => {
     expect(screen.queryByText(/SECRET|STACK/)).not.toBeInTheDocument();
   });
 
+  it("explains when no verified news is linked to the selected stock", async () => {
+    const preparation: StockPreparation = { symbol: "600000", status: "partial", refreshed: false, started_at: "2026-07-16T10:00:00+08:00", completed_at: "2026-07-16T10:00:01+08:00", sources: [{ name: "news", status: "partial", observed_at: null, reason: "news_no_verified_symbol_events" }] };
+    render(<DataSettingsView loadAI={() => Promise.resolve({ configured: false, base_url: null, model: null, api_key_hint: null })} saveAI={vi.fn()} deleteAI={vi.fn()} symbol="600000" preparation={preparation} />);
+    expect(await screen.findByText("暂未找到与这只股票直接相关且已核实的新闻")).toBeInTheDocument();
+  });
+
   it("uses the effective state returned after deleting local settings", async () => {
     const deleteAI = vi.fn().mockResolvedValue({ configured: true, base_url: "https://env.example/v1", model: "env-model", api_key_hint: "****env1" });
     render(<DataSettingsView loadAI={() => Promise.resolve({ configured: true, base_url: "https://local.example/v1", model: "local", api_key_hint: "****ocal" })} saveAI={vi.fn()} deleteAI={deleteAI} />);

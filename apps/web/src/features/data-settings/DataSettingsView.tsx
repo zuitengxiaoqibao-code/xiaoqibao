@@ -16,6 +16,7 @@ export function friendlySourceReason(reason: string | null): string | null {
   if (!reason) return null;
   const value = reason.toLowerCase();
   if (value.includes("lock") && value.includes("timeout")) return "同步任务繁忙，请稍后重试";
+  if (value === "news_no_verified_symbol_events") return "暂未找到与这只股票直接相关且已核实的新闻";
   if (value.includes("not fresh") || value.includes("stale")) return "数据时间较早，正在等待来源更新";
   if (value.includes("history")) return "历史走势暂未补齐";
   if (value.includes("news")) return "新闻来源暂未返回内容";

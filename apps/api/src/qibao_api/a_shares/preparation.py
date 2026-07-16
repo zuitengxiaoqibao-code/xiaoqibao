@@ -184,11 +184,7 @@ class AStockPreparationService:
             history_error = str(error)
 
         news_refreshed, news_error = await self._refresh_news()
-        refreshed = (
-            (refreshed or news_refreshed)
-            and history_error is None
-            and news_error is None
-        )
+        refreshed = refreshed or news_refreshed
         return await self._inspect(
             symbol,
             as_of,
@@ -295,8 +291,9 @@ class AStockPreparationService:
         observed_at = max(
             (self._aware(event.normalized_at) for event in events), default=None
         )
-        live_unfresh = cutoff is None and not self._news_is_fresh()
-        reason = refresh_error or ("news_not_fresh" if live_unfresh else None)
+        reason = refresh_error or (
+            "news_no_verified_symbol_events" if not events else None
+        )
         return PreparationSource(
             name="news",
             status="partial" if reason else "ready",
