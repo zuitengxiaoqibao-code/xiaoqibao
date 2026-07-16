@@ -107,3 +107,48 @@ def test_cutoff_excludes_bars_ingested_after_decision_window(tmp_path) -> None:
     assert repository.latest_many(
         ["600000"], 60, date(2026, 7, 15), cutoff=cutoff,
     ) == {"600000": []}
+
+
+def test_revised_bar_is_append_only_and_replayed_by_cutoff(tmp_path) -> None:
+    repository = BarRepository(tmp_path / "market.duckdb", tmp_path / "parquet")
+    repository.upsert([make_bar("9.50")])
+    with duckdb.connect(str(repository.database_path)) as connection:
+        connection.execute("UPDATE daily_bars SET ingested_at = ?", [datetime(2026, 7, 14, 8)])
+    repository.upsert([make_bar("9.80")])
+    with duckdb.connect(str(repository.database_path)) as connection:
+        connection.execute(
+            "UPDATE daily_bars SET ingested_at = ? WHERE close = 9.80",
+            [datetime(2026, 7, 15, 8)],
+        )
+        assert connection.execute("SELECT count(*) FROM daily_bars").fetchone()[0] == 2
+
+    old = repository.latest_many(
+        ["600000"], 10, date(2026, 7, 15), cutoff=datetime(2026, 7, 14, 9, tzinfo=UTC)
+    )
+    new = repository.latest_many(
+        ["600000"], 10, date(2026, 7, 15), cutoff=datetime(2026, 7, 15, 9, tzinfo=UTC)
+    )
+
+    assert old["600000"][0].close == Decimal("9.50")
+    assert new["600000"][0].close == Decimal("9.80")
+
+
+def test_existing_primary_key_schema_migrates_without_losing_rows(tmp_path) -> None:
+    database = tmp_path / "market.duckdb"
+    with duckdb.connect(str(database)) as connection:
+        connection.execute("""CREATE TABLE daily_bars (
+            symbol VARCHAR, trade_date DATE, open DECIMAL(18,4), high DECIMAL(18,4),
+            low DECIMAL(18,4), close DECIMAL(18,4), volume BIGINT,
+            amount DECIMAL(24,4), source VARCHAR, ingested_at TIMESTAMP,
+            PRIMARY KEY(symbol, trade_date))""")
+        connection.execute(
+            "INSERT INTO daily_bars VALUES (?, ?, 9, 10, 8, 9.5, 1000, 9500, 'legacy', ?)",
+            ["600000", date(2026, 7, 13), datetime(2026, 7, 14, 8)],
+        )
+
+    repository = BarRepository(database, tmp_path / "parquet")
+    repository.upsert([make_bar("9.80")])
+
+    with duckdb.connect(str(database)) as connection:
+        assert connection.execute("SELECT count(*) FROM daily_bars").fetchone()[0] == 2
+    assert repository.latest("600000")[0].close == Decimal("9.80")

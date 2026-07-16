@@ -4,7 +4,18 @@ import { describe, expect, it, vi } from "vitest";
 import { SelectedInstrumentProvider } from "../instrument-selection/SelectedInstrumentProvider";
 import { StockDecisionCockpit } from "./StockDecisionCockpit";
 import type { Advice } from "../decision-workbench/types";
-import type { CockpitSection, StockCockpitSnapshot } from "./types";
+import type { CockpitSection, SimulationPlan, StockCockpitSnapshot } from "./types";
+
+const plan = (overrides: Partial<SimulationPlan> = {}): SimulationPlan => ({
+  plan_id: "missing-plan", advice_id: "advice-intraday",
+  risk_decision_id: "missing-gate", compliance_snapshot_id: "compliance-1",
+  watch_price_low: "10.00", watch_price_high: "10.20", stop_loss: "9.50",
+  take_profit: ["10.80"], tranches: ["0.10", "0.10"], max_position: "0.20",
+  invalidation_conditions: ["levels_changed"],
+  valid_from: "2026-07-15T10:29:00+08:00", valid_until: "2026-07-15T10:34:00+08:00",
+  strategy_version: "v1", risk_version: "missing-gate",
+  compliance_version: "compliance-1", ...overrides,
+});
 
 const advice = (overrides: Partial<Advice> = {}): Advice => ({
   advice_id: "advice-intraday", snapshot_id: "cycle-2", asset: "a_share", symbol: "600000", horizon: "intraday", observation_state: "watching",
@@ -36,6 +47,7 @@ const snapshot = (overrides: Partial<StockCockpitSnapshot> = {}): StockCockpitSn
   },
   ai_status: "unconfigured",
   ai_explanation: null,
+  authoritative_simulation_plan: null,
   sections: {
     market: section(), price_volume: section(), trend: section(), valuation: section(), fundamentals: section(),
     funds: section("unavailable", "fund_data_not_connected"), news: section(), industry: section(), risk: section(),
@@ -159,7 +171,7 @@ describe("StockDecisionCockpit", () => {
     const gated = advice({
       simulation_gate: { quote_state: "ready", compliance_state: "ready", evidence_state: "ready", risk_state: "approve", risk_decision_id: "missing-gate", compliance_snapshot_id: "compliance-1" },
     });
-    renderCockpit(() => Promise.resolve(snapshot({ candidate_membership: ["short_term", "swing"], assessment: { ...snapshot().assessment, simulation_eligible: true, authorized_simulation_advice_id: "advice-intraday", authorized_simulation_plan_id: "missing-plan" }, current_advice: [gated] })));
+    renderCockpit(() => Promise.resolve(snapshot({ candidate_membership: ["short_term", "swing"], assessment: { ...snapshot().assessment, simulation_eligible: true, authorized_simulation_advice_id: "advice-intraday", authorized_simulation_plan_id: "missing-plan" }, current_advice: [gated], authoritative_simulation_plan: plan() })));
     expect(await screen.findByText("短线候选")).toBeInTheDocument();
     expect(screen.getByText("波段候选")).toBeInTheDocument();
     expect(screen.getByText("模拟操作计划")).toBeInTheDocument();
@@ -178,10 +190,11 @@ describe("StockDecisionCockpit", () => {
 
   it("shows only the advice named by the authoritative simulation reference", async () => {
     const intraday = advice({ advice_id: "intraday-unverified", conclusion: "伪造盘中方案", simulation_plan_id: "forged-plan" });
-    const swing = advice({ advice_id: "swing-authorized", horizon: "swing", conclusion: "波段权威方案", simulation_plan_id: "swing-plan" });
+    const swing = advice({ advice_id: "swing-authorized", horizon: "swing", conclusion: "波段权威方案", simulation_plan_id: "swing-plan", simulation_gate: { quote_state: "ready", compliance_state: "ready", evidence_state: "ready", risk_state: "approve", risk_decision_id: "missing-gate", compliance_snapshot_id: "compliance-1" } });
     renderCockpit(() => Promise.resolve(snapshot({
       candidate_membership: ["short_term", "swing"], current_advice: [intraday, swing],
       assessment: { ...snapshot().assessment, simulation_eligible: true, authorized_simulation_advice_id: "swing-authorized", authorized_simulation_plan_id: "swing-plan" },
+      authoritative_simulation_plan: plan({ plan_id: "swing-plan", advice_id: "swing-authorized" }),
     })));
     expect(await screen.findByRole("heading", { name: "波段权威方案" })).toBeInTheDocument();
     expect(screen.getByText("swing-plan")).toBeInTheDocument();

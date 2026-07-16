@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useSelectedInstrument } from "../instrument-selection/SelectedInstrumentProvider";
 import type { Advice } from "../decision-workbench/types";
-import type { AssessmentAIExplanation, AssessmentAIStatus, StockAssessment, StockCockpitSnapshot } from "./types";
+import type { AssessmentAIExplanation, AssessmentAIStatus, SimulationPlan, StockAssessment, StockCockpitSnapshot } from "./types";
 import { CockpitSections } from "./CockpitSections";
 import { PhaseTimeline } from "./PhaseTimeline";
 
@@ -33,9 +33,9 @@ function CandidateMembership({ memberships }: { memberships: StockCockpitSnapsho
   return <div className="candidate-memberships">{memberships.includes("short_term") && <span>短线候选</span>}{memberships.includes("swing") && <span>波段候选</span>}</div>;
 }
 
-function AuthoritativePlan({ advice, planId }: { advice: Advice; planId: string | null }) {
-  if (!planId) return null;
-  return <section className="authoritative-plan"><header><Target size={15} /><h3>模拟操作计划</h3></header><p>后端已返回同一账本聚合内验证通过的权威方案引用，不展示未返回的价格或仓位。</p><dl><div><dt>方案引用</dt><dd>{planId}</dd></div><div><dt>风控决策</dt><dd>{advice.risk_decision_id}</dd></div><div><dt>合规快照</dt><dd>{advice.simulation_gate?.compliance_snapshot_id}</dd></div></dl></section>;
+function AuthoritativePlan({ advice, plan }: { advice: Advice; plan: SimulationPlan | null }) {
+  if (!plan) return null;
+  return <section className="authoritative-plan"><header><Target size={15} /><h3>模拟操作计划</h3></header><p>仅模拟：以下数值来自后端权威冻结方案，不构成真实交易指令。</p><dl><div><dt>观察区间</dt><dd>{plan.watch_price_low} - {plan.watch_price_high}</dd></div><div><dt>止损参考</dt><dd>{plan.stop_loss}</dd></div><div><dt>止盈参考</dt><dd>{plan.take_profit.join(" / ")}</dd></div><div><dt>模拟分批</dt><dd>{plan.tranches.map((item) => `${Number(item) * 100}%`).join(" / ")}</dd></div><div><dt>模拟仓位上限</dt><dd>{Number(plan.max_position) * 100}%</dd></div><div><dt>方案引用</dt><dd>{plan.plan_id}</dd></div><div><dt>风控决策</dt><dd>{advice.risk_decision_id}</dd></div><div><dt>合规快照</dt><dd>{advice.simulation_gate?.compliance_snapshot_id}</dd></div></dl></section>;
 }
 
 function AssessmentAI({ status, explanation }: { status: AssessmentAIStatus; explanation: AssessmentAIExplanation | null }) {
@@ -65,9 +65,9 @@ function AssessmentConclusion({ assessment, isCandidate, aiStatus, aiExplanation
 
 const gateLabels = { quote_state: "行情门禁", compliance_state: "合规门禁", evidence_state: "证据门禁", risk_state: "风控门禁" } as const;
 
-function CandidateAdvice({ advice, authorizedPlanId }: { advice: Advice | null; authorizedPlanId: string | null }) {
+function CandidateAdvice({ advice, plan }: { advice: Advice | null; plan: SimulationPlan | null }) {
   if (!advice) return <section className="candidate-advice"><header><h2>候选账本建议</h2></header><p className="candidate-advice-empty">当前无候选账本建议；即时研判仍然有效。</p></section>;
-  return <section className="candidate-advice"><header><div><p className="eyebrow">候选交易层</p><h2>候选账本建议</h2></div><span>{advice.horizon === "intraday" ? "盘中" : "波段"}</span></header><div className="candidate-advice-body"><h3>{advice.conclusion}</h3><p>{advice.plain_language_explanation || "账本未提供补充解释。"}</p><div className="simulation-gates">{Object.entries(gateLabels).map(([key, label]) => <div key={key}><span>{label}</span><b>{advice.simulation_gate?.[key as keyof typeof gateLabels] ?? "未提供"}</b></div>)}</div>{!authorizedPlanId && <p className="eligibility-note"><ShieldAlert size={15} />后端未返回权威模拟方案引用</p>}<AuthoritativePlan advice={advice} planId={authorizedPlanId} /></div><footer><span>建议时间：{new Date(advice.created_at).toLocaleString("zh-CN", { hour12: false })}</span><span>策略：{advice.strategy_version}</span></footer></section>;
+  return <section className="candidate-advice"><header><div><p className="eyebrow">候选交易层</p><h2>候选账本建议</h2></div><span>{advice.horizon === "intraday" ? "盘中" : "波段"}</span></header><div className="candidate-advice-body"><h3>{advice.conclusion}</h3><p>{advice.plain_language_explanation || "账本未提供补充解释。"}</p><div className="simulation-gates">{Object.entries(gateLabels).map(([key, label]) => <div key={key}><span>{label}</span><b>{advice.simulation_gate?.[key as keyof typeof gateLabels] ?? "未提供"}</b></div>)}</div>{!plan && <p className="eligibility-note"><ShieldAlert size={15} />后端未返回权威模拟方案引用</p>}<AuthoritativePlan advice={advice} plan={plan} /></div><footer><span>建议时间：{new Date(advice.created_at).toLocaleString("zh-CN", { hour12: false })}</span><span>策略：{advice.strategy_version}</span></footer></section>;
 }
 
 export function StockDecisionCockpit({ load, asOf, refreshToken = 0, onRefreshRequest }: Props) {
@@ -119,16 +119,20 @@ export function StockDecisionCockpit({ load, asOf, refreshToken = 0, onRefreshRe
     (item) => item.advice_id === data.assessment.authorized_simulation_advice_id
   );
   const displayedAdvice = authorizedAdvice ?? advice;
-  const authorizedPlanId = authorizedAdvice
-    ? data.assessment.authorized_simulation_plan_id
-    : null;
+  const plan = data.authoritative_simulation_plan;
+  const authorizedPlan = authorizedAdvice && plan
+    && plan.plan_id === data.assessment.authorized_simulation_plan_id
+    && plan.advice_id === authorizedAdvice.advice_id
+    && plan.risk_decision_id === authorizedAdvice.risk_decision_id
+    && plan.compliance_snapshot_id === authorizedAdvice.simulation_gate?.compliance_snapshot_id
+    ? plan : null;
   return <main className="stock-cockpit">
     <header className="cockpit-identity"><div><p className="eyebrow">A 股单股决策驾驶舱 / {data.instrument.exchange.toUpperCase()}</p><h1>{data.instrument.name} <span>{data.symbol}</span></h1><div className="cockpit-quote"><strong>{displayNumber(metric(data, "latest_price"))}</strong><span className={positive ? "positive" : "negative"}>{Number.isFinite(change) ? positive ? <TrendingUp size={15} /> : <TrendingDown size={15} /> : null}{displayNumber(metric(data, "change_percent"), "%")}</span></div><CandidateMembership memberships={data.candidate_membership} /></div>
       <div className="cockpit-quality"><div><Clock3 size={15} /><span>行情时间</span><b>{data.sections.market?.observed_at ? new Date(data.sections.market.observed_at).toLocaleString("zh-CN", { hour12: false }) : "未提供"}</b></div><div><span>快照质量</span><b>{qualityNames[data.overall_quality]}</b><small>{data.sections.market ? sectionQualityNames[data.sections.market.status] : "行情不可用"}</small></div><button type="button" aria-label="刷新驾驶舱" onClick={() => onRefreshRequest ? onRefreshRequest() : void refresh()} disabled={loading}><RefreshCw size={15} className={loading ? "spin" : ""} /></button></div>
     </header>
     {error && <div className="cockpit-error" role="alert"><AlertTriangle size={16} /><span>{error}</span>{stale && <b>当前内容已陈旧</b>}</div>}
     <AssessmentConclusion assessment={data.assessment} isCandidate={data.candidate_membership.length > 0} aiStatus={data.ai_status} aiExplanation={data.ai_explanation} />
-    <CandidateAdvice advice={displayedAdvice} authorizedPlanId={authorizedPlanId} />
+    <CandidateAdvice advice={displayedAdvice} plan={authorizedPlan} />
     <CockpitSections sections={data.sections} />
     <PhaseTimeline phases={data.phases} symbol={data.symbol} />
   </main>;

@@ -60,6 +60,25 @@ export type AssessmentAIExplanation = {
   evidence_ids: string[];
 };
 
+export type SimulationPlan = {
+  plan_id: string;
+  advice_id: string;
+  risk_decision_id: string;
+  compliance_snapshot_id: string;
+  watch_price_low: string;
+  watch_price_high: string;
+  stop_loss: string;
+  take_profit: string[];
+  tranches: string[];
+  max_position: string;
+  invalidation_conditions: string[];
+  valid_from: string;
+  valid_until: string;
+  strategy_version: string;
+  risk_version: string;
+  compliance_version: string;
+};
+
 export type StockCockpitSnapshot = {
   symbol: string;
   as_of: string;
@@ -70,6 +89,7 @@ export type StockCockpitSnapshot = {
   assessment: StockAssessment;
   ai_status: AssessmentAIStatus;
   ai_explanation: AssessmentAIExplanation | null;
+  authoritative_simulation_plan: SimulationPlan | null;
   current_advice: Advice[];
   sections: Record<string, CockpitSection>;
   phases: Record<DecisionPhase, StockPhaseHistory>;

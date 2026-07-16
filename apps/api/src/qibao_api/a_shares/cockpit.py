@@ -9,7 +9,9 @@ from qibao_api.a_shares.assessment import DeterministicStockAssessor, StockAsses
 from qibao_api.a_shares.assessment_ai import AIStatus, AssessmentAIExplanation
 from qibao_api.a_shares.diagnosis import DiagnosisUnavailableError
 from qibao_api.a_shares.instrument_directory import AShareInstrument
-from qibao_api.contracts.decision import AdviceCard, DecisionPhase, EvidenceReference
+from qibao_api.contracts.decision import (
+    AdviceCard, DecisionPhase, EvidenceReference, SimulationPlan,
+)
 from qibao_api.contracts.instruments import AShareCode
 from qibao_api.contracts.market import AssetKind
 from qibao_api.libu_compliance.repository import SourceAuthorizationError
@@ -65,6 +67,7 @@ class StockCockpitSnapshot(BaseModel):
     assessment: StockAssessment
     ai_status: AIStatus
     ai_explanation: AssessmentAIExplanation | None
+    authoritative_simulation_plan: SimulationPlan | None
     current_advice: tuple[AdviceCard, ...]
     sections: dict[str, CockpitSection]
     phases: dict[DecisionPhase, StockPhaseHistory]
@@ -130,13 +133,15 @@ class StockDecisionCockpitService:
         current = self._current_advice(phases)
         membership = self._candidate_membership(current)
         assessment = self.assessor.assess(symbol, sections, membership, effective_cutoff)
-        authorized_advice_id, authorized_plan_id = self._authorized_simulation_reference(
+        authorized_advice_id, authorized_plan = self._authorized_simulation_reference(
             assessment.action, current, authorized_simulation_plans
         )
         assessment = assessment.model_copy(update={
             "simulation_eligible": authorized_advice_id is not None,
             "authorized_simulation_advice_id": authorized_advice_id,
-            "authorized_simulation_plan_id": authorized_plan_id,
+            "authorized_simulation_plan_id": (
+                authorized_plan.plan_id if authorized_plan is not None else None
+            ),
         })
         ai_status: AIStatus = "unconfigured"
         ai_explanation = None
@@ -156,6 +161,7 @@ class StockDecisionCockpitService:
             symbol=symbol, as_of=as_of, cutoff=effective_cutoff, overall_quality=overall,
             instrument=instrument, candidate_membership=membership,
             assessment=assessment, ai_status=ai_status, ai_explanation=ai_explanation,
+            authoritative_simulation_plan=authorized_plan,
             current_advice=current, sections=sections, phases=phases,
         )
 
@@ -189,14 +195,20 @@ class StockDecisionCockpitService:
             ),
         )
         for item in ordered:
-            if plan_id := authorized_plans.get(item.advice_id):
-                return item.advice_id, plan_id
+            if plan := authorized_plans.get(item.advice_id):
+                return item.advice_id, plan
         return None, None
 
     async def _diagnosis_sections(self, symbol, as_of, cutoff):
         try:
-            diagnosis = await self.diagnosis_service.diagnose(
-                symbol, as_of, persist=False
+            diagnosis = (
+                await self.diagnosis_service.diagnose(
+                    symbol, as_of, persist=False, cutoff=cutoff
+                )
+                if cutoff is not None
+                else await self.diagnosis_service.diagnose(
+                    symbol, as_of, persist=False
+                )
             )
         except SourceAuthorizationError as exc:
             return {
@@ -281,7 +293,7 @@ class StockDecisionCockpitService:
                             and gate.risk_state == "approve"
                             and plan.valid_from <= cutoff <= plan.valid_until
                         ):
-                            authorized_simulation_plans[item.advice_id] = plan.plan_id
+                            authorized_simulation_plans[item.advice_id] = plan
                 advice.extend(selected)
                 versions.append(DecisionVersion(
                     snapshot_id=snapshot.snapshot_id, sequence=snapshot.sequence,

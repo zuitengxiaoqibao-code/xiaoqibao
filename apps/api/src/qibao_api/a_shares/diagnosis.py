@@ -164,20 +164,25 @@ class AShareDiagnosisService:
         return self.research_repository.get_candidate_board(snapshot_id)
 
     async def diagnose(
-        self, symbol: str, as_of: date, *, persist: bool = True
+        self, symbol: str, as_of: date, *, persist: bool = True,
+        cutoff: datetime | None = None,
     ) -> AShareDiagnosis:
-        bars = self.bar_repository.latest_many([symbol], 120, as_of).get(symbol, [])
+        bars = (
+            self.bar_repository.latest_many([symbol], 120, as_of, cutoff=cutoff)
+            if cutoff is not None
+            else self.bar_repository.latest_many([symbol], 120, as_of)
+        ).get(symbol, [])
         market, market_error = await self._market(
-            symbol, as_of, degrade_authorization=not persist
+            symbol, as_of, cutoff=cutoff, degrade_authorization=not persist
         )
         if not bars and market is None and persist:
             raise DiagnosisUnavailableError(
                 f"market and local history are unavailable: {market_error}"
             )
         finance, finance_error = await self._finance(
-            symbol, as_of, degrade_authorization=not persist
+            symbol, as_of, cutoff=cutoff, degrade_authorization=not persist
         )
-        events, news_error = self._events(symbol, as_of)
+        events, news_error = self._events(symbol, as_of, cutoff=cutoff)
         sections = self._sections(
             symbol, as_of, bars, market, market_error, finance, finance_error,
             events, news_error,
@@ -211,7 +216,8 @@ class AShareDiagnosisService:
         return self.research_repository.get_diagnosis(snapshot_id)
 
     async def _market(
-        self, symbol: str, as_of: date, *, degrade_authorization: bool = False
+        self, symbol: str, as_of: date, *, cutoff: datetime | None = None,
+        degrade_authorization: bool = False,
     ) -> tuple[TencentMarketSnapshot | None, str | None]:
         try:
             snapshot = await self.market_source.fetch_snapshot(symbol)
@@ -219,6 +225,8 @@ class AShareDiagnosisService:
                 return None, "market snapshot symbol differs from requested symbol"
             if snapshot.observed_at.date() > as_of:
                 return None, "market snapshot is later than diagnosis as_of"
+            if cutoff is not None and snapshot.observed_at > cutoff:
+                return None, "market snapshot is later than diagnosis cutoff"
             return snapshot, None
         except SourceAuthorizationError as error:
             if not degrade_authorization:
@@ -228,7 +236,8 @@ class AShareDiagnosisService:
             return None, str(error)
 
     async def _finance(
-        self, symbol: str, as_of: date, *, degrade_authorization: bool = False
+        self, symbol: str, as_of: date, *, cutoff: datetime | None = None,
+        degrade_authorization: bool = False,
     ) -> tuple[FundamentalSnapshot | None, str | None]:
         try:
             snapshot = await asyncio.to_thread(self.finance_source.fetch, symbol)
@@ -236,6 +245,8 @@ class AShareDiagnosisService:
                 return None, "finance snapshot symbol differs from requested symbol"
             if snapshot.observed_at.date() > as_of:
                 return None, "finance snapshot is later than diagnosis as_of"
+            if cutoff is not None and snapshot.observed_at > cutoff:
+                return None, "finance snapshot is later than diagnosis cutoff"
             if snapshot.report_period is not None and snapshot.report_period > as_of:
                 return None, "finance report period is later than diagnosis as_of"
             return snapshot, None
@@ -247,13 +258,15 @@ class AShareDiagnosisService:
             return None, str(error)
 
     def _events(
-        self, symbol: str, as_of: date
+        self, symbol: str, as_of: date, *, cutoff: datetime | None = None,
     ) -> tuple[list[NormalizedNewsEvent], str | None]:
         try:
             events = [
                 event for event in self.news_repository.events()
                 if (AssetKind.A_SHARE, symbol) in event.affected_instruments
                 and event.normalized_at.date() <= as_of
+                and (cutoff is None or event.normalized_at <= cutoff)
+                and (cutoff is None or event.occurred_at <= cutoff)
                 and event.review_state == "verified"
             ]
             return events, None

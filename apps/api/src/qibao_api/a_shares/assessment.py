@@ -73,10 +73,24 @@ class DeterministicStockAssessor:
         market = usable.get("market")
         trend = usable.get("trend")
 
-        if risk is not None and risk.status == "blocked":
+        risk_metrics = risk.payload.get("metrics", {}) if risk is not None else {}
+        trend_metrics = trend.payload.get("metrics", {}) if trend is not None else {}
+        adverse_count = sum(
+            int(section.payload.get("metrics", {}).get("adverse_event_count", 0) or 0)
+            for name, section in usable.items() if name in {"news", "industry"}
+        )
+        missing_count = int(risk_metrics.get("missing_section_count", 0) or 0)
+        volatility = Decimal(str(trend_metrics.get("volatility_20d", 0) or 0))
+        drawdown = Decimal(str(trend_metrics.get("drawdown_60d", 0) or 0))
+        material_risk = (
+            missing_count >= 3 or adverse_count > 0
+            or volatility >= Decimal("0.08") or drawdown <= Decimal("-0.20")
+        )
+
+        if (risk is not None and risk.status == "blocked") or material_risk:
             action: Literal["observe", "wait", "avoid"] = "avoid"
-            conclusion = "权威风险分区已阻断，当前应回避。"
-            confidence = Decimal("0.90")
+            conclusion = "重大风险指标或反方证据成立，当前应回避。"
+            confidence = Decimal("0.85")
         elif market is None or market.status != "ready":
             action = "wait"
             conclusion = "实时行情不可验证，等待行情恢复后再研判。"
@@ -99,7 +113,7 @@ class DeterministicStockAssessor:
         contrary = tuple(
             evidence
             for name, section in sorted(usable.items())
-            if section.status in {"unavailable", "blocked"}
+            if section.status in {"partial", "unavailable", "blocked"}
             if (evidence := _evidence(name, section)) is not None
         )
         assessment_id = _digest({
@@ -124,7 +138,15 @@ class DeterministicStockAssessor:
             "核心行情或趋势证据不足。" if action == "wait" else
             "市场与基本面条件可能在截止时间后变化。"
         )
-        risks = (primary_risk, *(
+        metric_risks = tuple(
+            reason for condition, reason in (
+                (missing_count >= 3, f"关键分区缺失数量较高：{missing_count}。"),
+                (adverse_count > 0, f"存在重大反方事件：{adverse_count}。"),
+                (volatility >= Decimal("0.08"), f"20日波动率偏高：{volatility}。"),
+                (drawdown <= Decimal("-0.20"), f"60日回撤较深：{drawdown}。"),
+            ) if condition
+        )
+        risks = (primary_risk, *metric_risks, *(
             (f"缺失或晚于截止时间的分区：{'、'.join(missing)}。",) if missing else ()
         ), *snapshot_risks)
         return StockAssessment(

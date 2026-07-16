@@ -146,7 +146,9 @@ class CandidateFactorInputSource:
         self.candidate_source = candidate_source
 
     def snapshot(self, *, now: datetime, cutoff: datetime):
-        return self.candidate_source.candidates(now.astimezone(CHINA_TZ).date())
+        return self.candidate_source.candidates(
+            now.astimezone(CHINA_TZ).date(), cutoff=cutoff
+        )
 
 
 class DecisionSymbolSource:

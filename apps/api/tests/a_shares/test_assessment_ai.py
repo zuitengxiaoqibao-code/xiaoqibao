@@ -43,6 +43,10 @@ def assessment() -> StockAssessment:
     )
 
 
+def assessment_with_contrary() -> StockAssessment:
+    return assessment().model_copy(update={"contrary_evidence": (evidence("evidence-2"),)})
+
+
 def response_payload(**updates):
     payload = {
         "plain_language": "The deterministic result remains unchanged.",
@@ -170,3 +174,28 @@ async def test_provider_failures_degrade_without_mutating_assessment(handler, st
     assert result.assessment == original
     assert SECRET not in result.model_dump_json()
     assert SECRET not in repr(ai)
+
+
+@pytest.mark.asyncio
+async def test_ready_requires_every_assessment_evidence_reference() -> None:
+    ai = gateway(lambda request: httpx.Response(200, json=response_payload()))
+    original = assessment_with_contrary()
+
+    result = await ai.explain(original, (*original.supporting_evidence, *original.contrary_evidence))
+    await ai.aclose()
+
+    assert result.status == "invalid"
+    assert result.explanation is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("instruction", ["buy at 10.50", "仓位控制在20%", "跌破9元止损", "建议卖出"])
+async def test_rejects_free_text_trading_instructions(instruction: str) -> None:
+    ai = gateway(lambda request: httpx.Response(
+        200, json=response_payload(plain_language=instruction)
+    ))
+
+    result = await ai.explain(assessment(), (evidence(),))
+    await ai.aclose()
+
+    assert result.status == "invalid"

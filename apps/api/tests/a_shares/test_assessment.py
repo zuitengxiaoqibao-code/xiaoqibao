@@ -118,3 +118,18 @@ def test_observed_section_without_source_snapshot_is_an_explicit_risk() -> None:
     assert not any(item.source == "fixture-valuation" for item in result.supporting_evidence)
     assert "source_snapshot_unavailable:valuation" in result.risks
     assert "source_snapshot_unavailable:valuation" in result.invalidation_conditions
+
+
+def test_production_risk_metrics_and_adverse_evidence_trigger_avoid() -> None:
+    values = sections()
+    values["risk"] = section("risk", metrics={"missing_section_count": 3})
+    values["trend"] = section(
+        "trend", metrics={"volatility_20d": "0.09", "drawdown_60d": "-0.24"}
+    )
+    values["news"] = section("news", status="partial", metrics={"adverse_event_count": 1})
+
+    result = DeterministicStockAssessor().assess("600519", values, (), CUTOFF)
+
+    assert result.action == "avoid"
+    assert result.confidence != Decimal("0.75")
+    assert any("回撤" in risk or "波动" in risk or "缺失" in risk for risk in result.risks)

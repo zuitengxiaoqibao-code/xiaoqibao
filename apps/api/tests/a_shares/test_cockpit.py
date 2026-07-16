@@ -54,7 +54,7 @@ class AcceptanceDirectory:
 
 
 class Diagnosis:
-    async def diagnose(self, symbol, as_of, *, persist=True):
+    async def diagnose(self, symbol, as_of, *, persist=True, cutoff=None):
         assert persist is False
         sections = {
             name: DiagnosisSection(
@@ -76,8 +76,8 @@ class Diagnosis:
 
 
 class UnavailableValuation(Diagnosis):
-    async def diagnose(self, symbol, as_of, *, persist=True):
-        result = await super().diagnose(symbol, as_of, persist=persist)
+    async def diagnose(self, symbol, as_of, *, persist=True, cutoff=None):
+        result = await super().diagnose(symbol, as_of, persist=persist, cutoff=cutoff)
         sections = dict(result.sections)
         sections["valuation"] = DiagnosisSection(
             status="unavailable", source="fixture", explanation="missing",
@@ -86,13 +86,33 @@ class UnavailableValuation(Diagnosis):
 
 
 class QuoteObservedDuringRequest(Diagnosis):
-    async def diagnose(self, symbol, as_of, *, persist=True):
-        result = await super().diagnose(symbol, as_of, persist=persist)
+    async def diagnose(self, symbol, as_of, *, persist=True, cutoff=None):
+        result = await super().diagnose(symbol, as_of, persist=persist, cutoff=cutoff)
         sections = dict(result.sections)
         sections["market"] = sections["market"].model_copy(
             update={"observed_at": CUTOFF.replace(second=2)}
         )
         return result.model_copy(update={"sections": sections})
+
+
+class RecordingHistoricalDiagnosis(Diagnosis):
+    def __init__(self):
+        self.cutoff = None
+
+    async def diagnose(self, symbol, as_of, *, persist=True, cutoff=None):
+        self.cutoff = cutoff
+        return await super().diagnose(symbol, as_of, persist=persist, cutoff=cutoff)
+
+
+@pytest.mark.asyncio
+async def test_historical_cockpit_pushes_cutoff_into_diagnosis() -> None:
+    diagnosis = RecordingHistoricalDiagnosis()
+
+    await service(diagnosis=diagnosis).get(
+        "600000", date(2026, 7, 14), CUTOFF
+    )
+
+    assert diagnosis.cutoff == CUTOFF
 
 
 def advice(symbol, created_at=CUTOFF, action="observe"):

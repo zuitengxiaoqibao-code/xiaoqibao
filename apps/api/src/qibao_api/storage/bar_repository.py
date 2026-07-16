@@ -36,10 +36,34 @@ class BarRepository:
                     amount DECIMAL(24, 4) NOT NULL,
                     source VARCHAR NOT NULL,
                     ingested_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
-                    PRIMARY KEY (symbol, trade_date)
+                    observation_id VARCHAR NOT NULL DEFAULT (uuid()::VARCHAR)
                 )
                 """
             )
+            columns = connection.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'daily_bars'"
+            ).fetchall()
+            if "observation_id" not in {row[0] for row in columns}:
+                connection.execute("ALTER TABLE daily_bars RENAME TO daily_bars_legacy")
+                connection.execute(
+                    """CREATE TABLE daily_bars (
+                        symbol VARCHAR NOT NULL, trade_date DATE NOT NULL,
+                        open DECIMAL(18, 4) NOT NULL, high DECIMAL(18, 4) NOT NULL,
+                        low DECIMAL(18, 4) NOT NULL, close DECIMAL(18, 4) NOT NULL,
+                        volume BIGINT NOT NULL, amount DECIMAL(24, 4) NOT NULL,
+                        source VARCHAR NOT NULL,
+                        ingested_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
+                        observation_id VARCHAR NOT NULL DEFAULT (uuid()::VARCHAR)
+                    )"""
+                )
+                connection.execute(
+                    """INSERT INTO daily_bars
+                    (symbol, trade_date, open, high, low, close, volume, amount, source, ingested_at)
+                    SELECT symbol, trade_date, open, high, low, close, volume, amount, source,
+                           ingested_at FROM daily_bars_legacy"""
+                )
+                connection.execute("DROP TABLE daily_bars_legacy")
 
     def upsert(self, bars: list[DailyBar]) -> None:
         rows = [
@@ -61,21 +85,29 @@ class BarRepository:
         with self._lock, self._connect() as connection:
             connection.executemany(
                 """
-                INSERT OR REPLACE INTO daily_bars
+                INSERT INTO daily_bars
                     (symbol, trade_date, open, high, low, close, volume, amount, source)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 rows,
             )
 
-    def latest(self, symbol: str, limit: int = 250) -> list[DailyBar]:
+    def latest(
+        self, symbol: str, limit: int = 250, *, cutoff: datetime | None = None,
+    ) -> list[DailyBar]:
         with self._lock, self._connect() as connection:
             rows = connection.execute(
                 """
                 SELECT symbol, trade_date, open, high, low, close, volume, amount, source
-                FROM daily_bars WHERE symbol = ? ORDER BY trade_date DESC LIMIT ?
+                FROM daily_bars
+                WHERE symbol = ? AND (? IS NULL OR ingested_at <= ?)
+                QUALIFY row_number() OVER (
+                    PARTITION BY symbol, trade_date
+                    ORDER BY ingested_at DESC, observation_id DESC
+                ) = 1
+                ORDER BY trade_date DESC LIMIT ?
                 """,
-                [symbol, limit],
+                [symbol, _database_cutoff(cutoff), _database_cutoff(cutoff), limit],
             ).fetchall()
         return [
             DailyBar(
@@ -146,6 +178,10 @@ class BarRepository:
                     FROM daily_bars
                     WHERE symbol IN ({placeholders}) AND trade_date <= ?
                         AND (? IS NULL OR ingested_at <= ?)
+                    QUALIFY row_number() OVER (
+                        PARTITION BY symbol, trade_date
+                        ORDER BY ingested_at DESC, observation_id DESC
+                    ) = 1
                 ) ranked
                 WHERE row_number <= ?
                 ORDER BY symbol, trade_date

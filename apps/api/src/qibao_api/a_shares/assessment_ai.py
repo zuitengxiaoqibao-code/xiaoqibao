@@ -1,4 +1,5 @@
 import json
+import re
 from collections.abc import Callable
 from typing import Literal
 
@@ -93,8 +94,23 @@ class OpenAICompatibleAssessmentGateway:
             if not isinstance(content, str):
                 raise TypeError("chat completion content must be a JSON string")
             explanation = AssessmentAIExplanation.model_validate_json(content)
-            if not set(explanation.evidence_ids).issubset(allowed):
-                raise ValueError("AI evidence is outside the frozen input")
+            required = {
+                item.evidence_id for item in (
+                    *assessment.supporting_evidence, *assessment.contrary_evidence
+                )
+            }
+            if set(explanation.evidence_ids) != required or not required.issubset(allowed):
+                raise ValueError("AI evidence must exactly cover the assessment evidence")
+            text = " ".join((
+                explanation.plain_language, explanation.news_impact,
+                explanation.hotspot_attribution, explanation.uncertainty,
+                explanation.contrary_view,
+            ))
+            if re.search(
+                r"(?:\b(?:buy|sell|position|stop[ -]?loss)\b|买入|卖出|仓位|止损|止盈|\d+(?:\.\d+)?\s*(?:元|%))",
+                text, re.IGNORECASE,
+            ):
+                raise ValueError("AI explanation contains a trading instruction")
         except (ValueError, TypeError, KeyError, IndexError):
             return self._result("invalid", assessment)
         return AssessmentAIResult(
