@@ -25,6 +25,28 @@ export type CockpitSection = {
   payload: Record<string, unknown>;
 };
 
+export type AssessmentEvidence = {
+  evidence_id: string;
+  source: string;
+  snapshot_id: string;
+  summary: string;
+  observed_at: string;
+};
+
+export type StockAssessment = {
+  assessment_id: string;
+  symbol: string;
+  action: "observe" | "wait" | "avoid";
+  conclusion: string;
+  confidence: string;
+  supporting_evidence: AssessmentEvidence[];
+  contrary_evidence: AssessmentEvidence[];
+  risks: string[];
+  invalidation_conditions: string[];
+  simulation_eligible: boolean;
+  generated_at: string;
+};
+
 export type StockCockpitSnapshot = {
   symbol: string;
   as_of: string;
@@ -32,6 +54,7 @@ export type StockCockpitSnapshot = {
   overall_quality: "ready" | "partial" | "blocked";
   instrument: AShareInstrument;
   candidate_membership: Array<"short_term" | "swing">;
+  assessment: StockAssessment;
   current_advice: Advice[];
   sections: Record<string, CockpitSection>;
   phases: Record<DecisionPhase, StockPhaseHistory>;

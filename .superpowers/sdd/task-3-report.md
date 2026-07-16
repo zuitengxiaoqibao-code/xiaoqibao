@@ -1,45 +1,25 @@
-# Task 3 Implementation Report
+# Task 3 实施报告
 
-## Scope
+## 状态
 
-- Added an A-share-only selected instrument provider with URL restoration, pushState updates, popstate handling, and frontend validation aligned with the backend A-share code contract.
-- Added the candidate/search/watchlist selector with 250 ms name debounce, immediate exact-code lookup, deterministic initial candidate selection, explicit-selection stability, stale search isolation, and the fixed `qibao.a_share.watchlist.v1` key.
-- Added stock cockpit API/types consumed by later cockpit UI work.
-- Mounted the provider in `App` and composed the selector beside the existing three-phase workbench without changing convertible-bond state or Task 4 cockpit rendering.
-- Added responsive selector styling with an 11 px text floor.
-- Review fixes centralize same-tab navigation notifications so the provider always re-reads the authoritative URL, including Dashboard route changes that remove `symbol`.
-- Corrected the cockpit phase contract to the backend `StockPhaseHistory` and `DecisionVersion` payloads.
-- Added candidate polling/manual refresh, retryable search errors, independent watchlist identity restoration, search-result watchlist controls, and complete tab ARIA/keyboard behavior.
-- Candidate identity is resolved through the search API. Because neither the candidate nor search contract contains a live price/current change, those fields are explicitly unavailable; the five-day return remains separately and accurately labeled.
-- Second review fixes invalidate search generations at query-change time, guard candidate responses by generation and mount lifetime, retain retryable watchlist identity errors, sanitize persisted watchlists with the shared A-share validator, and restrict tab keys to prevented horizontal arrows.
-- Final review adds per-symbol identity generations so late success or failure from an older restore attempt cannot overwrite the newest identity; successful current requests explicitly clear prior errors.
+已完成任意 A 股即时研判前端接入。驾驶舱首屏始终展示后端 `assessment`，候选账本建议作为独立交易层展示。
 
-## TDD Evidence
+## 实现
 
-- RED: the provider and selector suites first failed because their production modules did not exist.
-- RED: the first-candidate initialization test then failed with a missing URL symbol before the one-time initialization behavior was added.
-- RED review cycle: URL same-tab navigation, independent watchlist recovery, search retry, search-result watchlist, truthful quote labels, polling stability, and tab keyboard/ARIA tests all failed against the initial implementation before their fixes.
-- RED second review cycle: identity error/retry, polluted localStorage cleanup, stale candidate ordering, and horizontal key default-prevention tests failed before implementation. A deferred search regression fixes the debounce-window generation boundary.
-- RED final review cycle: deferred old-failure/new-success and old-success/new-success tests both reproduced stale identity overwrites before per-symbol generation filtering.
-- GREEN: all focused and full frontend suites pass.
+- 补齐 `StockAssessment` 与证据类型，接入 `StockCockpitSnapshot.assessment`。
+- 非候选股票仍展示结论、置信度、支持/反方证据、风险与失效条件，并明确不生成模拟买卖方案。
+- 候选账本建议与即时研判分层，四项 `simulation_gate` 状态逐项可见。
+- 模拟方案必须同时满足后端 `assessment.simulation_eligible` 和账本引用完整性校验；前端不会重算并放宽后端资格。
+- 新增 520px 移动布局，新增文字均不低于 11px。
 
-## Verification
+## TDD 与验证
 
-- `pnpm --filter @qibao/web exec vitest run src/features/instrument-selection/SelectedInstrumentProvider.test.tsx src/features/stock-cockpit/StockSelector.test.tsx src/features/dashboard/Dashboard.test.tsx` -> 3 files, 34 tests passed.
-- `pnpm --filter @qibao/web test` -> 14 files, 79 tests passed.
-- `pnpm --filter @qibao/web build` -> TypeScript and Vite production build passed.
-- `rg -n '�|锟|烫烫|\?\?\?' apps/api/src/qibao_api apps/api/tests apps/web/src README.md` -> no matches.
-- `git diff --check` -> passed; only Git line-ending notices were emitted.
+- RED：新增非候选即时研判、后端资格不可放宽、四项门禁测试，首次运行 3 项按预期失败。
+- 聚焦测试：`pnpm --filter @qibao/web exec vitest run src/features/stock-cockpit/StockDecisionCockpit.test.tsx`，12/12 通过。
+- 全前端测试：`pnpm --filter @qibao/web test`，16 个测试文件、110 个测试通过。
+- 构建：`pnpm --filter @qibao/web build` 通过。
+- 中文乱码扫描、`git diff --check` 通过。
 
-## Risks / Follow-up
+## 关注点
 
-- Watchlist storage intentionally contains symbols only; identity metadata is restored through exact-code search and missing identity is visibly degraded.
-- Live price and current change remain explicitly unavailable until an API contract exposes them; factor close and five-day return are not presented as live data.
-- Task 4 still owns the detailed selected-stock cockpit rendering and request-isolation UI.
-
-## Commit
-
-- `f77ce34 feat(web): add global A-share selection`
-- `0761802 fix(web): harden global A-share selection`
-- `fix(web): close A-share selector races` (second review-fix commit)
-- `fix(web): isolate stock identity retries` (final review-fix commit)
+无阻塞。门禁原始状态值沿用 API 枚举显示，避免前端二次解释改变权威含义。

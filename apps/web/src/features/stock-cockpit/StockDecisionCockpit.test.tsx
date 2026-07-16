@@ -27,6 +27,12 @@ const snapshot = (overrides: Partial<StockCockpitSnapshot> = {}): StockCockpitSn
   symbol: "600000", as_of: "2026-07-15", cutoff: "2026-07-15T10:30:00+08:00", overall_quality: "partial",
   instrument: { symbol: "600000", name: "浦发银行", exchange: "sh", observed_at: "2026-07-15T10:29:00+08:00", quote_quality: "ready" },
   candidate_membership: ["short_term"], current_advice: [advice()],
+  assessment: {
+    assessment_id: "assessment-1", symbol: "600000", action: "observe", conclusion: "行情与日线数据可用且无风险阻断，保持观察。", confidence: "0.75",
+    supporting_evidence: [{ evidence_id: "assessment-e1", source: "tencent", snapshot_id: "quote-1", summary: "行情快照有效", observed_at: "2026-07-15T10:29:00+08:00" }],
+    contrary_evidence: [], risks: ["市场与基本面条件可能在截止时间后变化。"], invalidation_conditions: ["任一核心分区状态或指标发生变化。"],
+    simulation_eligible: false, generated_at: "2026-07-15T10:30:00+08:00",
+  },
   sections: {
     market: section(), price_volume: section(), trend: section(), valuation: section(), fundamentals: section(),
     funds: section("unavailable", "fund_data_not_connected"), news: section(), industry: section(), risk: section(),
@@ -45,6 +51,23 @@ function renderCockpit(load: (symbol: string, asOf?: string, signal?: AbortSigna
 }
 
 describe("StockDecisionCockpit", () => {
+  it("shows an immediate assessment for a non-candidate stock", async () => {
+    const nonCandidateCockpit = snapshot({
+      candidate_membership: [], current_advice: [],
+      assessment: {
+        ...snapshot().assessment, action: "wait", conclusion: "等待趋势样本补足", confidence: "0.4",
+        supporting_evidence: [], contrary_evidence: [], risks: [], invalidation_conditions: [], simulation_eligible: false,
+      },
+    });
+    renderCockpit(() => Promise.resolve(nonCandidateCockpit));
+    expect(await screen.findByText("等待趋势样本补足")).toBeInTheDocument();
+    expect(screen.getByText("非当前候选，不生成模拟买卖方案")).toBeInTheDocument();
+    expect(screen.getByText("暂无已验证支持证据")).toBeInTheDocument();
+    expect(screen.getByText("当前研判未列出风险")).toBeInTheDocument();
+    expect(screen.getByText("当前研判未列出失效条件")).toBeInTheDocument();
+    expect(screen.queryByText("当前没有可展示建议")).not.toBeInTheDocument();
+  });
+
   it("shows the beginner conclusion before all deterministic sections", async () => {
     renderCockpit();
     expect(await screen.findByRole("heading", { name: /浦发银行.*600000/ })).toBeInTheDocument();
@@ -101,11 +124,21 @@ describe("StockDecisionCockpit", () => {
     const gated = advice({
       simulation_gate: { quote_state: "ready", compliance_state: "ready", evidence_state: "ready", risk_state: "approve", risk_decision_id: "missing-gate", compliance_snapshot_id: "compliance-1" },
     });
-    renderCockpit(() => Promise.resolve(snapshot({ candidate_membership: ["short_term", "swing"], current_advice: [gated] })));
+    renderCockpit(() => Promise.resolve(snapshot({ candidate_membership: ["short_term", "swing"], assessment: { ...snapshot().assessment, simulation_eligible: true }, current_advice: [gated] })));
     expect(await screen.findByText("短线候选")).toBeInTheDocument();
     expect(screen.getByText("波段候选")).toBeInTheDocument();
     expect(screen.getByText("模拟操作计划")).toBeInTheDocument();
     expect(screen.getByText(/missing-plan/)).toBeInTheDocument();
+    for (const label of ["行情门禁", "合规门禁", "证据门禁", "风控门禁"]) expect(screen.getByText(label)).toBeInTheDocument();
+  });
+
+  it("does not loosen the backend simulation eligibility", async () => {
+    const gated = advice({
+      simulation_gate: { quote_state: "ready", compliance_state: "ready", evidence_state: "ready", risk_state: "approve", risk_decision_id: "missing-gate", compliance_snapshot_id: "compliance-1" },
+    });
+    renderCockpit(() => Promise.resolve(snapshot({ assessment: { ...snapshot().assessment, simulation_eligible: false }, current_advice: [gated] })));
+    expect(await screen.findByText("后端判定暂不具备模拟方案资格")).toBeInTheDocument();
+    expect(screen.queryByText("模拟操作计划")).not.toBeInTheDocument();
   });
 
   it("keeps the last successful snapshot and marks it stale after refresh failure", async () => {
