@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { Advice, DecisionPhase, DecisionResponse, PhaseSlot } from "./types";
 import { phaseExecutionCopy } from "./phaseExecution";
+import { PhaseContextPanel } from "./PhaseContextPanel";
 
 type Props = {
   loadCurrent: () => Promise<DecisionResponse>; loadDate?: (date: string) => Promise<DecisionResponse>;
@@ -42,7 +43,7 @@ function PhaseContent({ phase, slot, serverTime, staleAfter, pollingStatus, sele
   if (slot.phase_status === "empty") return <section className="decision-message"><Telescope size={24} /><h2>{executionCopy ? `${phaseNames[phase]}${executionCopy.label}` : selectedSymbol === null ? "尚未选择 A 股，当前不展示单股记录" : selectedSymbol ? `${selectedSymbol} 当前阶段暂无决策快照` : "当前阶段暂无决策快照"}</h2><p>{executionCopy?.detail ?? "等待调度生成已验证的聚合结果，不展示推测数据。"}</p></section>;
   const stale = Boolean(slot.generated_at && Date.parse(serverTime) - Date.parse(slot.generated_at) > staleAfter * 1000);
   const emptyTitle = selectedSymbol === null ? "尚未选择 A 股，当前不展示单股建议" : selectedSymbol ? `${selectedSymbol} 当前阶段暂无已验证建议` : "当前阶段没有可展示建议";
-  return <div className="decision-columns"><section>{executionCopy && <div className={`quality-banner execution-${slot.execution?.status}`}><b>{executionCopy.label}</b><span>{executionCopy.detail}</span></div>}<div className={`quality-banner ${slot.phase_status}`}><b>{slot.phase_status === "blocked" ? "决策已拦截" : slot.phase_status === "partial" ? "数据部分可用" : "决策快照就绪"}</b><span>{slot.aggregate_version}</span></div>{stale && <div className="stale-banner">聚合数据已过期</div>}{slot.advice.length === 0 && <section className="decision-message compact"><h2>{emptyTitle}</h2><p>保留阶段质量状态，不补造建议。</p></section>}{slot.advice.map((item) => <AdvicePanel key={item.advice_id} advice={item} />)}</section><aside className="decision-rail"><h3>阶段状态</h3><p><Bot size={14} />AI {slot.ai_status === "ready" ? "可用" : slot.ai_status === "unavailable" ? "不可用" : "未调用"}</p><p>质量 {slot.quality}</p><p>轮询 {pollingStatus ?? "uninitialized"}</p><p>当前观察 {slot.advice.length} · 本次变化 {slot.delta_advice?.length ?? 0}</p><p>变化版本 {slot.delta_version ?? "--"}</p><p>聚合版本 {slot.aggregate_version}</p><ChangeStream slot={slot} /></aside></div>;
+  return <div className="decision-columns"><section>{executionCopy && <div className={`quality-banner execution-${slot.execution?.status}`}><b>{executionCopy.label}</b><span>{executionCopy.detail}</span></div>}<div className={`quality-banner ${slot.phase_status}`}><b>{slot.phase_status === "blocked" ? "决策已拦截" : slot.phase_status === "partial" ? "数据部分可用" : "决策快照就绪"}</b><span>{slot.aggregate_version}</span></div>{stale && <div className="stale-banner">聚合数据已过期</div>}<PhaseContextPanel context={slot.context} />{slot.advice.length === 0 && <section className="decision-message compact"><h2>{emptyTitle}</h2><p>保留阶段质量状态，不补造建议。</p></section>}{slot.advice.map((item) => <AdvicePanel key={item.advice_id} advice={item} />)}</section><aside className="decision-rail"><h3>阶段状态</h3><p><Bot size={14} />AI {slot.ai_status === "ready" ? "可用" : slot.ai_status === "unavailable" ? "不可用" : "未调用"}</p><p>质量 {slot.quality}</p><p>轮询 {pollingStatus ?? "uninitialized"}</p><p>当前观察 {slot.advice.length} · 本次变化 {slot.delta_advice?.length ?? 0}</p><p>变化版本 {slot.delta_version ?? "--"}</p><p>聚合版本 {slot.aggregate_version}</p><ChangeStream slot={slot} /></aside></div>;
 }
 
 function selectedSlot(slot: PhaseSlot, symbol?: string | null): PhaseSlot {
@@ -50,9 +51,18 @@ function selectedSlot(slot: PhaseSlot, symbol?: string | null): PhaseSlot {
   const advice = slot.advice.filter((item) => item.asset === "a_share" && item.symbol === symbol);
   const evidenceIds = new Set(advice.flatMap((item) => [...item.supporting_evidence, ...item.contrary_evidence]).map((item) => item.evidence_id));
   const deltaAdvice = slot.delta_advice?.filter((item) => item.asset === "a_share" && item.symbol === symbol);
+  const context = slot.context ? {
+    ...slot.context,
+    news: {
+      ...slot.context.news,
+      events: slot.context.news.events.filter(
+        (item) => item.affected_symbols.length === 0 || item.affected_symbols.includes(symbol ?? "")
+      ),
+    },
+  } : undefined;
   return {
     ...slot, advice, evidence: slot.evidence.filter((item) => evidenceIds.has(item.evidence_id)),
-    delta_advice: deltaAdvice,
+    delta_advice: deltaAdvice, context,
     change_stream: slot.change_stream?.map((version) => {
       const versionAdvice = version.delta_advice.filter((item) => item.asset === "a_share" && item.symbol === symbol);
       return { ...version, delta_advice: versionAdvice };

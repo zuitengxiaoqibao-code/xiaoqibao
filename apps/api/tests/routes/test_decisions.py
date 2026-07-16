@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from qibao_api.dependencies import (
     get_decision_calendar,
+    get_news_repository,
     get_decision_repository,
     get_decision_poll_state,
     get_scheduler,
@@ -55,11 +56,25 @@ class Scheduler:
         return self.result
 
 
-def client(*, now, repository=None, trading_days=(), scheduler=None, poll_state=None):
+class NewsRepository:
+    def __init__(self, events=()):
+        self.events = list(events)
+        self.cutoffs = []
+
+    def effective_events(self, cutoff=None):
+        self.cutoffs.append(cutoff)
+        return self.events
+
+
+def client(
+    *, now, repository=None, trading_days=(), scheduler=None, poll_state=None,
+    news_repository=None,
+):
     application = FastAPI()
     application.include_router(router)
     scheduler = scheduler or Scheduler({"status": "completed"})
     application.dependency_overrides[get_decision_repository] = lambda: repository or Repository()
+    application.dependency_overrides[get_news_repository] = lambda: news_repository or NewsRepository()
     application.dependency_overrides[get_decision_calendar] = lambda: Calendar(trading_days)
     application.dependency_overrides[get_scheduler] = lambda: scheduler
     application.dependency_overrides[get_server_time] = lambda: now
@@ -293,3 +308,84 @@ def test_intraday_slot_materializes_unchanged_symbols_and_keeps_latest_delta():
     assert slot["change_stream"][0]["delta_advice"][0]["advice_id"] == "a3"
     assert {item["evidence_id"] for item in slot["evidence"]} == {"pre-evidence"}
     assert slot["execution"]["status"] == "completed"
+
+
+def test_phase_context_exposes_only_referenced_verified_news_and_missing_ids():
+    day = date(2026, 7, 15)
+    window_end = "2026-07-15T09:20:00+08:00"
+    aggregate = {
+        "snapshot": {
+            "snapshot_id": "premarket-1", "sequence": 1,
+            "generated_at": window_end, "window_start": "2026-07-14T15:00:00+08:00",
+            "window_end": window_end, "status": "partial", "data_quality": "partial",
+            "ai_status": "unavailable", "market_state": "range",
+            "candidate_snapshot_id": "candidates-1",
+            "quality_reasons": ["compliance_unavailable"],
+            "news_event_ids": ["news-1", "news-pending", "news-missing"],
+            "risk_event_ids": ["market-risk-1"],
+        },
+        "advice": [], "plans": [],
+    }
+    news = NewsRepository(events=(
+        {
+            "event_id": "news-1", "event_type": "company_update", "headline": "已核验公司事件",
+            "occurred_at": "2026-07-15T08:40:00+08:00", "normalized_at": "2026-07-15T08:45:00+08:00",
+            "affected_instruments": [["a_share", "600000"]], "industries": ["银行"],
+            "themes": ["业绩"], "association_confidence": "0.92", "review_state": "verified",
+            "citations": [{"publisher": "权威来源", "canonical_url": "https://example.com/news-1"}],
+        },
+        {
+            "event_id": "news-pending", "event_type": "market_update", "headline": "待核验事件",
+            "occurred_at": "2026-07-15T08:50:00+08:00", "normalized_at": "2026-07-15T08:55:00+08:00",
+            "affected_instruments": [], "industries": [], "themes": [],
+            "association_confidence": "0.40", "review_state": "pending", "citations": [],
+        },
+        {
+            "event_id": "news-unreferenced", "event_type": "market_update", "headline": "未被快照引用",
+            "occurred_at": "2026-07-15T08:00:00+08:00", "normalized_at": "2026-07-15T08:05:00+08:00",
+            "affected_instruments": [], "industries": [], "themes": [],
+            "association_confidence": "0.80", "review_state": "verified", "citations": [],
+        },
+    ))
+    api, _ = client(
+        now=datetime(2026, 7, 15, 9, 21, tzinfo=CHINA_TZ),
+        repository=Repository({(day, "premarket"): aggregate}),
+        trading_days=(day,), news_repository=news,
+    )
+
+    context = api.get("/api/v1/decisions/current").json()["phases"]["premarket"]["context"]
+
+    assert context["market_state"] == "range"
+    assert context["candidate_snapshot_id"] == "candidates-1"
+    assert context["risk_event_count"] == 1
+    assert context["quality_reasons"] == ["compliance_unavailable"]
+    assert context["news"]["status"] == "partial"
+    assert context["news"]["missing_event_ids"] == ["news-pending", "news-missing"]
+    assert context["news"]["events"] == [{
+        "event_id": "news-1", "event_type": "company_update", "headline": "已核验公司事件",
+        "occurred_at": "2026-07-15T08:40:00+08:00", "industries": ["银行"],
+        "themes": ["业绩"], "affected_symbols": ["600000"],
+        "association_confidence": "0.92", "publisher": "权威来源",
+        "source_url": "https://example.com/news-1",
+    }]
+    assert news.cutoffs == [datetime.fromisoformat(window_end)]
+
+
+def test_legacy_blocked_snapshot_says_the_specific_reason_was_not_recorded():
+    day = date(2026, 7, 15)
+    aggregate = {
+        "snapshot": {
+            "snapshot_id": "legacy-blocked", "status": "blocked",
+            "data_quality": "blocked", "ai_status": "unavailable",
+            "market_state": "strong", "news_event_ids": [], "risk_event_ids": [],
+        },
+        "advice": [], "plans": [],
+    }
+    api, _ = client(
+        now=datetime(2026, 7, 15, 9, 21, tzinfo=CHINA_TZ),
+        repository=Repository({(day, "premarket"): aggregate}), trading_days=(day,),
+    )
+
+    context = api.get("/api/v1/decisions/current").json()["phases"]["premarket"]["context"]
+
+    assert context["quality_reasons"] == ["block_reason_unrecorded"]

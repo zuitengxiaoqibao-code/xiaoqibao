@@ -233,6 +233,51 @@ def test_decision_failure_does_not_overwrite_briefing_completion(tmp_path) -> No
     repository.close()
 
 
+def test_scheduler_retries_failed_decision_without_rerunning_completed_briefing(tmp_path) -> None:
+    repository = OperationsRepository(tmp_path / "operations.sqlite3")
+    workflow = Workflow()
+    decisions = DecisionWorkflow(fail=True)
+    scheduler = DailyBriefingScheduler(
+        workflow, Calendar(), repository, decision_workflow=decisions,
+    )
+    now = datetime(2026, 7, 14, 1, 21, tzinfo=UTC)
+
+    scheduler.tick(now)
+    decisions.fail = False
+    scheduler.tick(now)
+
+    assert [call[0] for call in workflow.calls] == ["premarket"]
+    assert [call[0] for call in decisions.calls] == ["premarket", "premarket"]
+    attempts = repository.attempts_for("2026-07-14:premarket:0920:decision")
+    assert [(item["attempt"], item["status"]) for item in attempts] == [
+        (1, "started"), (1, "failed"), (2, "started"), (2, "completed"),
+    ]
+    repository.close()
+
+
+def test_scheduler_stops_retrying_decision_at_its_own_attempt_limit(tmp_path) -> None:
+    repository = OperationsRepository(tmp_path / "operations.sqlite3")
+    workflow = Workflow()
+    decisions = DecisionWorkflow(fail=True)
+    scheduler = DailyBriefingScheduler(
+        workflow, Calendar(), repository, decision_workflow=decisions, max_attempts=3,
+    )
+    now = datetime(2026, 7, 14, 1, 21, tzinfo=UTC)
+
+    for _ in range(5):
+        scheduler.tick(now)
+
+    assert [call[0] for call in workflow.calls] == ["premarket"]
+    assert [call[0] for call in decisions.calls] == ["premarket"] * 3
+    decision_job = next(
+        item for item in repository.jobs()
+        if item["job_key"] == "2026-07-14:premarket:0920:decision"
+    )
+    assert decision_job["status"] == "failed"
+    assert decision_job["attempts"] == 3
+    repository.close()
+
+
 def test_monitor_tick_has_separate_status_and_does_not_duplicate_briefing(tmp_path) -> None:
     repository = OperationsRepository(tmp_path / "operations.sqlite3")
     workflow = Workflow()

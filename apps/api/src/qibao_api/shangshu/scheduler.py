@@ -111,11 +111,27 @@ class DailyBriefingScheduler:
                     status="completed", occurred_at=occurred_at,
                     report_id=report.report_id,
                 )
+                decision_result = self._run_decision(
+                    phase, trading_date, slot, workflow_now=workflow_now,
+                    occurred_at=occurred_at, trigger=trigger,
+                    briefing_report_id=report.report_id,
+                )
+                if trigger == "manual" and self.decision_workflow is not None:
+                    return decision_result
                 return report
-        if not force and (
-            any(item["status"] == "completed" for item in events)
-            or attempt_count >= self.max_attempts
-        ):
+        completed = next(
+            (item for item in reversed(events) if item["status"] == "completed"), None
+        )
+        if not force and completed is not None:
+            decision_result = self._run_decision(
+                phase, trading_date, slot, workflow_now=workflow_now,
+                occurred_at=occurred_at, trigger=trigger,
+                briefing_report_id=completed.get("report_id"),
+            )
+            if trigger == "manual" and self.decision_workflow is not None:
+                return decision_result
+            return None
+        if not force and attempt_count >= self.max_attempts:
             return None
         attempt = attempt_count + 1
         self.repository.append_attempt(
@@ -137,39 +153,52 @@ class DailyBriefingScheduler:
             slot=slot, trigger=trigger, attempt=attempt, status="completed",
             occurred_at=occurred_at, report_id=report.report_id,
         )
-        if self.decision_workflow is not None:
-            decision_job_key = f"{job_key}:decision"
-            self.repository.append_attempt(
-                job_key=decision_job_key, phase=phase, trading_date=trading_date,
-                slot=f"{slot}:decision", trigger=trigger, attempt=attempt,
-                status="started", occurred_at=occurred_at,
-            )
-            try:
-                decision = self.decision_workflow.run(
-                    phase, trading_date, now=workflow_now
-                )
-            except Exception as error:
-                self.repository.append_attempt(
-                    job_key=decision_job_key, phase=phase, trading_date=trading_date,
-                    slot=f"{slot}:decision", trigger=trigger, attempt=attempt,
-                    status="failed", occurred_at=occurred_at,
-                    error_code=_error_code(error),
-                )
-            else:
-                snapshot = getattr(decision, "snapshot", decision)
-                self.repository.append_attempt(
-                    job_key=decision_job_key, phase=phase, trading_date=trading_date,
-                    slot=f"{slot}:decision", trigger=trigger, attempt=attempt,
-                    status="completed", occurred_at=occurred_at,
-                    report_id=getattr(snapshot, "snapshot_id", None),
-                )
-                if trigger == "manual":
-                    return ManualRunResult(
-                        report_id=getattr(snapshot, "snapshot_id", report.report_id)
-                    )
-            if trigger == "manual":
-                return None
+        decision_result = self._run_decision(
+            phase, trading_date, slot, workflow_now=workflow_now,
+            occurred_at=occurred_at, trigger=trigger,
+            briefing_report_id=report.report_id,
+        )
+        if trigger == "manual" and self.decision_workflow is not None:
+            return decision_result
         return report
+
+    def _run_decision(
+        self, phase: str, trading_date: date, slot: str, *,
+        workflow_now: datetime, occurred_at: datetime, trigger: str,
+        briefing_report_id: str | None,
+    ) -> ManualRunResult | None:
+        if self.decision_workflow is None:
+            return None
+        decision_job_key = f"{trading_date.isoformat()}:{phase}:{slot}:decision"
+        events = self.repository.attempts_for(decision_job_key)
+        attempt_count = max((item["attempt"] for item in events), default=0)
+        if (
+            any(item["status"] == "completed" for item in events)
+            or attempt_count >= self.max_attempts
+        ):
+            return None
+        attempt = attempt_count + 1
+        values = dict(
+            job_key=decision_job_key, phase=phase, trading_date=trading_date,
+            slot=f"{slot}:decision", trigger=trigger, attempt=attempt,
+            occurred_at=occurred_at,
+        )
+        self.repository.append_attempt(**values, status="started")
+        try:
+            decision = self.decision_workflow.run(
+                phase, trading_date, now=workflow_now
+            )
+        except Exception as error:
+            self.repository.append_attempt(
+                **values, status="failed", error_code=_error_code(error)
+            )
+            return None
+        snapshot = getattr(decision, "snapshot", decision)
+        snapshot_id = getattr(snapshot, "snapshot_id", None)
+        self.repository.append_attempt(
+            **values, status="completed", report_id=snapshot_id,
+        )
+        return ManualRunResult(report_id=snapshot_id or briefing_report_id)
 
     def _persisted_report(
         self, phase: str, trading_date: date, generated_at: datetime

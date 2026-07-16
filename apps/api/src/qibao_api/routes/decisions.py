@@ -7,6 +7,7 @@ from qibao_api.dependencies import (
     get_decision_calendar,
     get_decision_poll_state,
     get_decision_repository,
+    get_news_repository,
     get_scheduler,
     get_server_time,
 )
@@ -32,8 +33,76 @@ def _model_dump(value):
     return value.model_dump(mode="json") if hasattr(value, "model_dump") else value
 
 
+def _news_context(news_repository, snapshot):
+    referenced_ids = list(snapshot.get("news_event_ids", []))
+    if not referenced_ids:
+        return {
+            "status": "empty", "events": [], "missing_event_ids": [],
+            "error_code": None,
+        }
+    window_end = snapshot.get("window_end")
+    cutoff = datetime.fromisoformat(window_end) if window_end else None
+    try:
+        values = news_repository.effective_events(cutoff=cutoff)
+    except Exception:
+        return {
+            "status": "unavailable", "events": [],
+            "missing_event_ids": referenced_ids,
+            "error_code": "news_context_unavailable",
+        }
+    verified = {}
+    for value in values:
+        event = _model_dump(value)
+        if event.get("review_state") == "verified":
+            verified[event["event_id"]] = event
+    events = []
+    for event_id in referenced_ids:
+        event = verified.get(event_id)
+        if event is None:
+            continue
+        citations = event.get("citations", [])
+        citation = citations[0] if citations else {}
+        events.append({
+            "event_id": event_id,
+            "event_type": event.get("event_type"),
+            "headline": event.get("headline"),
+            "occurred_at": event.get("occurred_at"),
+            "industries": event.get("industries", []),
+            "themes": event.get("themes", []),
+            "affected_symbols": [
+                symbol for asset, symbol in event.get("affected_instruments", [])
+                if asset == "a_share"
+            ],
+            "association_confidence": event.get("association_confidence"),
+            "publisher": citation.get("publisher"),
+            "source_url": citation.get("canonical_url"),
+        })
+    found = {event["event_id"] for event in events}
+    missing = [event_id for event_id in referenced_ids if event_id not in found]
+    return {
+        "status": "partial" if missing else "ready",
+        "events": events, "missing_event_ids": missing, "error_code": None,
+    }
+
+
+def _phase_context(news_repository, snapshot):
+    quality_reasons = list(snapshot.get("quality_reasons", []))
+    if snapshot.get("status") == "blocked" and not quality_reasons:
+        quality_reasons = ["block_reason_unrecorded"]
+    return {
+        "market_state": snapshot.get("market_state"),
+        "window_start": snapshot.get("window_start"),
+        "window_end": snapshot.get("window_end"),
+        "candidate_snapshot_id": snapshot.get("candidate_snapshot_id"),
+        "risk_event_count": len(snapshot.get("risk_event_ids", [])),
+        "quality_reasons": quality_reasons,
+        "news": _news_context(news_repository, snapshot),
+    }
+
+
 def _slot(
-    aggregate, *, materialized_advice=None, change_stream=None, execution=None
+    aggregate, *, news_repository, materialized_advice=None, change_stream=None,
+    execution=None,
 ):
     if aggregate is None:
         return {
@@ -60,6 +129,7 @@ def _slot(
         "delta_version": snapshot["snapshot_id"],
         "delta_advice": payload.get("advice", []),
         "change_stream": change_stream or [],
+        "context": _phase_context(news_repository, snapshot),
         "execution": _model_dump(execution),
     }
 
@@ -114,7 +184,7 @@ def _polling(state, server_time, market_session):
 
 def _response(
     repository, trading_date: date, current_phase: str, server_time: datetime,
-    market_session: str, poll_state=None, scheduler=None,
+    market_session: str, poll_state=None, scheduler=None, news_repository=None,
 ):
     try:
         aggregates = {
@@ -130,7 +200,10 @@ def _response(
             for phase in PHASES
         }
         slots = {
-            phase: _slot(aggregates[phase], execution=executions[phase])
+            phase: _slot(
+                aggregates[phase], execution=executions[phase],
+                news_repository=news_repository,
+            )
             for phase in PHASES
         }
         latest_intraday = aggregates["intraday"]
@@ -138,7 +211,7 @@ def _response(
             advice, stream = _intraday_state(repository, trading_date)
             slots["intraday"] = _slot(
                 latest_intraday, materialized_advice=advice, change_stream=stream,
-                execution=executions["intraday"],
+                execution=executions["intraday"], news_repository=news_repository,
             )
     except DecisionIntegrityError:
         raise HTTPException(status_code=503, detail={
@@ -159,18 +232,28 @@ def _response(
 def current_decisions(
     repository=Depends(get_decision_repository), calendar=Depends(get_decision_calendar),
     now: datetime = Depends(get_server_time), poll_state=Depends(get_decision_poll_state),
-    scheduler=Depends(get_scheduler),
+    scheduler=Depends(get_scheduler), news_repository=Depends(get_news_repository),
 ):
     local_now = now.astimezone(CHINA_TZ)
     trading_date = local_now.date()
     if calendar.is_trading_day(trading_date):
         phase = _phase(local_now)
-        return _response(repository, trading_date, phase, now, "open" if phase == "intraday" else "closed", poll_state, scheduler)
+        return _response(
+            repository, trading_date, phase, now,
+            "open" if phase == "intraday" else "closed", poll_state, scheduler,
+            news_repository,
+        )
     for offset in range(1, 367):
         candidate = trading_date - timedelta(days=offset)
         if calendar.is_trading_day(candidate):
-            return _response(repository, candidate, "postclose", now, "closed", poll_state, scheduler)
-    return _response(repository, trading_date, "postclose", now, "closed", poll_state, scheduler)
+            return _response(
+                repository, candidate, "postclose", now, "closed", poll_state,
+                scheduler, news_repository,
+            )
+    return _response(
+        repository, trading_date, "postclose", now, "closed", poll_state,
+        scheduler, news_repository,
+    )
 
 
 @router.get("/{trading_date}")
@@ -179,12 +262,17 @@ def decisions_for_date(
     calendar=Depends(get_decision_calendar), now: datetime = Depends(get_server_time),
     poll_state=Depends(get_decision_poll_state),
     scheduler=Depends(get_scheduler),
+    news_repository=Depends(get_news_repository),
 ):
     if trading_date > now.astimezone(CHINA_TZ).date():
         raise HTTPException(status_code=422, detail={"code": "future_trading_date"})
     confirmed = calendar.is_trading_day(trading_date)
     phase = _phase(now) if confirmed and trading_date == now.astimezone(CHINA_TZ).date() else "postclose"
-    return _response(repository, trading_date, phase, now, "open" if phase == "intraday" else "closed", poll_state, scheduler)
+    return _response(
+        repository, trading_date, phase, now,
+        "open" if phase == "intraday" else "closed", poll_state, scheduler,
+        news_repository,
+    )
 
 
 @router.post("/{phase}/{trading_date}/run")

@@ -274,6 +274,11 @@ def test_future_required_inputs_are_rejected_without_advice(tmp_path, port) -> N
     result = subject.run(TRADE_DATE, NOW)
     assert result.snapshot.status == "blocked"
     assert result.advice == ()
+    assert result.snapshot.quality_reasons == ({
+        "candidate": "candidate_snapshot_after_window",
+        "compliance": "compliance_snapshot_after_window",
+        "risk": "risk_snapshot_after_window",
+    }[port],)
 
 
 def test_missing_history_degrades_without_invented_advice(tmp_path) -> None:
@@ -281,6 +286,16 @@ def test_missing_history_degrades_without_invented_advice(tmp_path) -> None:
     result = subject.run(TRADE_DATE, NOW)
     assert result.snapshot.status == "blocked"
     assert result.advice == ()
+    assert result.snapshot.quality_reasons == ("candidate_history_unavailable",)
+
+
+def test_unavailable_compliance_explains_why_advice_is_blocked(tmp_path) -> None:
+    subject, _ = service(tmp_path, compliance=Compliance(available=False))
+
+    result = subject.run(TRADE_DATE, NOW)
+
+    assert result.snapshot.status == "blocked"
+    assert result.snapshot.quality_reasons == ("compliance_unavailable",)
 
 
 def test_ai_unavailable_retains_deterministic_advice_without_explanation(tmp_path) -> None:
@@ -288,6 +303,7 @@ def test_ai_unavailable_retains_deterministic_advice_without_explanation(tmp_pat
     result = subject.run(TRADE_DATE, NOW)
     assert result.snapshot.status == "partial"
     assert result.snapshot.ai_status == "unavailable"
+    assert result.snapshot.quality_reasons == ("ai_unavailable",)
     assert len(result.advice) == 2
     assert all(item.plain_language_explanation is None for item in result.advice)
     stored = repository.latest(TRADE_DATE, "premarket")

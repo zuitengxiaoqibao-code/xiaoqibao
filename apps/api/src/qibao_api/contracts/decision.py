@@ -42,6 +42,7 @@ class DecisionCycleSnapshot(BaseModel):
     window_end: AwareDatetime
     market_state: Literal["strong", "range", "weak", "insufficient_data"]
     data_quality: Literal["ready", "partial", "blocked"]
+    quality_reasons: tuple[NonBlank, ...] = ()
     source_snapshot_ids: tuple[NonBlank, ...]
     source_observed_at: tuple[AwareDatetime, ...]
     candidate_snapshot_id: str | None
@@ -65,6 +66,8 @@ class DecisionCycleSnapshot(BaseModel):
         for values in (self.source_snapshot_ids, self.news_event_ids, self.risk_event_ids):
             if len(values) != len(set(values)):
                 raise ValueError("snapshot reference ids must be unique")
+        if len(self.quality_reasons) != len(set(self.quality_reasons)):
+            raise ValueError("quality reasons must be unique")
         return self
 
 

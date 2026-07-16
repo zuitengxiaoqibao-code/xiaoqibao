@@ -142,6 +142,27 @@ class PremarketDecisionService:
             status, quality = "partial", "partial"
         else:
             status, quality = "ready", "ready"
+        quality_reasons = []
+        if not candidates.history_available:
+            quality_reasons.append("candidate_history_unavailable")
+        if candidates.board.as_of > trading_date:
+            quality_reasons.append("candidate_as_of_after_trading_date")
+        if candidates.captured_at > window_end:
+            quality_reasons.append("candidate_snapshot_after_window")
+        if not compliance.available:
+            quality_reasons.append("compliance_unavailable")
+        if compliance.captured_at > window_end:
+            quality_reasons.append("compliance_snapshot_after_window")
+        if compliance.available and not compliance.allowed:
+            quality_reasons.append("compliance_not_allowed")
+        if not risk.available:
+            quality_reasons.append("risk_unavailable")
+        if risk.captured_at > window_end:
+            quality_reasons.append("risk_snapshot_after_window")
+        if required_ready and compliance.allowed and candidates.board.universe_status == "empty":
+            quality_reasons.append("candidate_universe_empty")
+        if required_ready and compliance.allowed and not ai_ready:
+            quality_reasons.append("ai_unavailable")
         observed = tuple(
             value for value in (candidates.captured_at, compliance.captured_at, risk.captured_at)
             if value <= window_end
@@ -156,7 +177,8 @@ class PremarketDecisionService:
             snapshot_id=snapshot_id, trading_date=trading_date, phase="premarket",
             sequence=sequence, generated_at=max(now, window_end), window_start=window_start,
             window_end=window_end, market_state=risk.market_state if risk.captured_at <= window_end else "insufficient_data",
-            data_quality=quality, source_snapshot_ids=source_ids, source_observed_at=observed,
+            data_quality=quality, quality_reasons=tuple(quality_reasons),
+            source_snapshot_ids=source_ids, source_observed_at=observed,
             candidate_snapshot_id=candidates.board.snapshot_id if candidates.captured_at <= window_end else None,
             news_event_ids=tuple(event.event_id for event in events),
             risk_event_ids=(risk.snapshot_id,) if risk.captured_at <= window_end else (),

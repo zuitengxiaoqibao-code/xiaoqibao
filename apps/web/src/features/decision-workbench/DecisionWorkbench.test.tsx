@@ -114,6 +114,79 @@ describe("DecisionWorkbench", () => {
     expect(screen.getByText(/变化版本 #1/)).toBeInTheDocument();
   });
 
+  it("renders verified market, industry, news and risk context from the phase snapshot", async () => {
+    const slot = {
+      ...emptySlot, phase_status: "partial", quality: "partial", aggregate_version: "s1",
+      context: {
+        market_state: "range", window_start: "2026-07-14T15:00:00+08:00",
+        window_end: "2026-07-15T09:20:00+08:00", candidate_snapshot_id: "candidates-1",
+        risk_event_count: 1, quality_reasons: [],
+        news: {
+          status: "ready", missing_event_ids: [], error_code: null,
+          events: [{
+            event_id: "news-1", event_type: "company_update", headline: "已核验公司事件",
+            occurred_at: "2026-07-15T08:40:00+08:00", industries: ["银行"], themes: ["业绩"],
+            affected_symbols: ["600000"], association_confidence: "0.92",
+            publisher: "权威来源", source_url: "https://example.com/news-1",
+          }],
+        },
+      },
+    } as unknown as PhaseSlot;
+    render(<DecisionWorkbench loadCurrent={() => Promise.resolve(response({
+      current_phase: "premarket", phases: { premarket: slot, intraday: emptySlot, postclose: emptySlot },
+    }))} />);
+
+    expect(await screen.findByRole("heading", { name: "市场震荡" })).toBeInTheDocument();
+    expect(screen.getByText("已核验公司事件")).toBeInTheDocument();
+    expect(screen.getByText("银行 · 业绩")).toBeInTheDocument();
+    expect(screen.getByText("1 项风险证据")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "权威来源" })).toHaveAttribute("href", "https://example.com/news-1");
+  });
+
+  it("keeps unrelated company events out of selected-stock context", async () => {
+    const slot = {
+      ...emptySlot, phase_status: "partial", quality: "partial", aggregate_version: "s1",
+      context: {
+        market_state: "range", window_start: null, window_end: null,
+        candidate_snapshot_id: "candidates-1", risk_event_count: 0, quality_reasons: [],
+        news: {
+          status: "ready", missing_event_ids: [], error_code: null,
+          events: [
+            { event_id: "n1", event_type: "company_update", headline: "浦发银行事件", occurred_at: "2026-07-15T08:40:00+08:00", industries: ["银行"], themes: [], affected_symbols: ["600000"], association_confidence: "0.9", publisher: null, source_url: null },
+            { event_id: "n2", event_type: "company_update", headline: "平安银行事件", occurred_at: "2026-07-15T08:41:00+08:00", industries: ["银行"], themes: [], affected_symbols: ["000001"], association_confidence: "0.9", publisher: null, source_url: null },
+          ],
+        },
+      },
+    } as unknown as PhaseSlot;
+    render(<DecisionWorkbench selectedSymbol="600000" loadCurrent={() => Promise.resolve(response({
+      current_phase: "premarket", phases: { premarket: slot, intraday: emptySlot, postclose: emptySlot },
+    }))} />);
+
+    expect(await screen.findByText("浦发银行事件")).toBeInTheDocument();
+    expect(screen.queryByText("平安银行事件")).not.toBeInTheDocument();
+  });
+
+  it("explains missing referenced news instead of inventing event content", async () => {
+    const slot = {
+      ...emptySlot, phase_status: "partial", quality: "partial", aggregate_version: "s1",
+      context: {
+        market_state: "insufficient_data", window_start: null, window_end: null,
+        candidate_snapshot_id: null, risk_event_count: 0,
+        quality_reasons: ["compliance_unavailable"],
+        news: {
+          status: "partial", events: [], missing_event_ids: ["news-missing"], error_code: null,
+        },
+      },
+    } as unknown as PhaseSlot;
+    render(<DecisionWorkbench loadCurrent={() => Promise.resolve(response({
+      current_phase: "premarket", phases: { premarket: slot, intraday: emptySlot, postclose: emptySlot },
+    }))} />);
+
+    expect(await screen.findByText("1 条快照新闻引用当前无法读取")).toBeInTheDocument();
+    expect(screen.getByText("不会用推测内容补位。")).toBeInTheDocument();
+    expect(screen.getByText("合规检查数据不可用")).toBeInTheDocument();
+  });
+
   it("ignores a stale historical response after a newer date wins", async () => {
     let resolveOld!: (value: DecisionResponse) => void;
     const old = new Promise<DecisionResponse>((resolve) => { resolveOld = resolve; });
