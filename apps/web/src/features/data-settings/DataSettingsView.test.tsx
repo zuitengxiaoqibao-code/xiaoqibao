@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { StrictMode } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { DataSettingsView } from "./DataSettingsView";
@@ -6,6 +7,15 @@ import type { StockPreparation } from "../stock-cockpit/types";
 import type { AISettingsView } from "./types";
 
 describe("DataSettingsView", () => {
+  it("loads settings and saves normally under React StrictMode", async () => {
+    const saveAI = vi.fn().mockResolvedValue({ configured: true, base_url: "https://strict.example/v1", model: "strict-model", api_key_hint: "****rict" });
+    const refresh = vi.fn();
+    render(<StrictMode><DataSettingsView loadAI={() => Promise.resolve({ configured: true, base_url: "https://strict.example/v1", model: "strict-model", api_key_hint: "****init" })} saveAI={saveAI} deleteAI={vi.fn()} onAIChanged={refresh} /></StrictMode>);
+    expect(await screen.findByText("密钥已保存 · ****init")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("新密钥"), { target: { value: "strict-secret" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存 AI 配置" }));
+    await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+  });
   it("shows masked AI state without rendering the secret", async () => {
     render(<DataSettingsView loadAI={() => Promise.resolve({ configured: true, base_url: "http://localhost:11434/v1", model: "local-model", api_key_hint: "****alue" })} saveAI={vi.fn()} deleteAI={vi.fn()} />);
     expect(await screen.findByText("密钥已保存 · ****alue")).toBeInTheDocument();
@@ -40,6 +50,38 @@ describe("DataSettingsView", () => {
     view.rerender(<DataSettingsView {...base} symbol="000001" prepare={prepare} />);
     await act(async () => resolveOld({ symbol: "600000", status: "partial", refreshed: false, started_at: "2026-07-16T10:00:00+08:00", completed_at: "2026-07-16T10:00:01+08:00", sources: [] }));
     expect(screen.getByText("选择一只 A 股后，这里会显示各类数据的最新状态。")).toBeInTheDocument();
+  });
+
+  it("reenables preparation retry after switching symbols during an old retry", async () => {
+    const prepare = vi.fn(() => new Promise<StockPreparation>(() => undefined));
+    const base = { loadAI: () => Promise.resolve({ configured: false, base_url: null, model: null, api_key_hint: null }), saveAI: vi.fn(), deleteAI: vi.fn(), prepare };
+    const view = render(<DataSettingsView {...base} symbol="600000" />);
+    await screen.findByText("尚未配置 AI");
+    fireEvent.click(screen.getByRole("button", { name: "重试当前股票数据" }));
+    expect(screen.getByRole("button", { name: "重试当前股票数据" })).toBeDisabled();
+    view.rerender(<DataSettingsView {...base} symbol="000001" />);
+    expect(screen.getByRole("button", { name: "重试当前股票数据" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "重试当前股票数据" }));
+    expect(prepare).toHaveBeenCalledTimes(2);
+  });
+
+  it("clears an obsolete AI busy state when context changes", async () => {
+    const saveAI = vi.fn(() => new Promise<AISettingsView>(() => undefined));
+    const loadAI = vi.fn(() => Promise.resolve({ configured: false, base_url: null, model: null, api_key_hint: null }));
+    const view = render(<DataSettingsView loadAI={loadAI} saveAI={saveAI} deleteAI={vi.fn()} symbol="600000" />);
+    await screen.findByText("尚未配置 AI");
+    fireEvent.change(screen.getByLabelText("API 地址"), { target: { value: "https://ai.example/v1" } });
+    fireEvent.change(screen.getByLabelText("模型"), { target: { value: "model" } });
+    fireEvent.change(screen.getByLabelText("新密钥"), { target: { value: "secret" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存 AI 配置" }));
+    view.rerender(<DataSettingsView loadAI={loadAI} saveAI={saveAI} deleteAI={vi.fn()} symbol="000001" />);
+    await waitFor(() => expect(loadAI).toHaveBeenCalledTimes(2));
+    fireEvent.change(screen.getByLabelText("API 地址"), { target: { value: "https://new.example/v1" } });
+    fireEvent.change(screen.getByLabelText("模型"), { target: { value: "new-model" } });
+    fireEvent.change(screen.getByLabelText("新密钥"), { target: { value: "new-secret" } });
+    expect(screen.getByRole("button", { name: "保存 AI 配置" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "保存 AI 配置" }));
+    expect(saveAI).toHaveBeenCalledTimes(2);
   });
 
   it("maps source failure reasons without exposing internal text", async () => {
