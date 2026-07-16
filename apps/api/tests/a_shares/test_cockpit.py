@@ -127,6 +127,33 @@ def service(diagnosis=None, decisions=None, clock=lambda: CUTOFF):
     )
 
 
+class Explainer:
+    async def explain(self, assessment, evidence):
+        from qibao_api.a_shares.assessment_ai import AssessmentAIResult
+
+        assert {item.evidence_id for item in evidence} == {
+            item.evidence_id
+            for item in (*assessment.supporting_evidence, *assessment.contrary_evidence)
+        }
+        return AssessmentAIResult(
+            status="invalid", assessment=assessment, explanation=None
+        )
+
+
+@pytest.mark.asyncio
+async def test_cockpit_exposes_ai_status_without_changing_assessment() -> None:
+    plain = await service().get("600000", TRADE_DATE, CUTOFF)
+    with_ai = StockDecisionCockpitService(
+        Directory(), Diagnosis(), Decisions(), assessor_ai=Explainer(), clock=lambda: CUTOFF
+    )
+
+    result = await with_ai.get("600000", TRADE_DATE, CUTOFF)
+
+    assert result.ai_status == "invalid"
+    assert result.ai_explanation is None
+    assert result.assessment == plain.assessment
+
+
 @pytest.mark.asyncio
 async def test_cockpit_filters_every_phase_and_evidence_to_selected_symbol() -> None:
     result = await service().get("600000", TRADE_DATE, CUTOFF)

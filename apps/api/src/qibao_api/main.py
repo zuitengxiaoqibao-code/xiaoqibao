@@ -9,6 +9,7 @@ from sqlalchemy import create_engine
 
 from qibao_api.a_shares.diagnosis import AShareDiagnosisService
 from qibao_api.a_shares.cockpit import StockDecisionCockpitService
+from qibao_api.a_shares.assessment_ai import OpenAICompatibleAssessmentGateway
 from qibao_api.a_shares.fundamentals import TdxFinanceSource
 from qibao_api.a_shares.instrument_directory import AShareInstrument, AShareInstrumentDirectory
 from qibao_api.a_shares.repository import AShareResearchRepository
@@ -339,10 +340,20 @@ async def lifespan(application: FastAPI):
             )
             try:
                 application.state.a_share_instrument_directory = a_share_instrument_directory
+                ai_api_key = getattr(settings, "ai_api_key", None)
                 application.state.a_share_cockpit_service = StockDecisionCockpitService(
                     a_share_instrument_directory,
                     application.state.a_share_diagnosis_service,
                     decision_repository,
+                    assessor_ai=OpenAICompatibleAssessmentGateway(
+                        base_url=getattr(settings, "ai_base_url", None),
+                        api_key=(
+                            ai_api_key.get_secret_value()
+                            if ai_api_key is not None else None
+                        ),
+                        model=getattr(settings, "ai_model", None),
+                        client=client,
+                    ),
                 )
                 observed_at = datetime.now(timezone.utc)
                 for symbol in bar_repository.symbols_with_history(1, observed_at.date()):

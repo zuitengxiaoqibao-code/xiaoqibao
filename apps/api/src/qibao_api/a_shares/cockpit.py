@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from qibao_api.a_shares.assessment import DeterministicStockAssessor, StockAssessment
+from qibao_api.a_shares.assessment_ai import AIStatus, AssessmentAIExplanation
 from qibao_api.a_shares.diagnosis import DiagnosisUnavailableError
 from qibao_api.a_shares.instrument_directory import AShareInstrument
 from qibao_api.contracts.decision import AdviceCard, DecisionPhase, EvidenceReference
@@ -62,6 +63,8 @@ class StockCockpitSnapshot(BaseModel):
     instrument: AShareInstrument
     candidate_membership: tuple[Literal["short_term", "swing"], ...]
     assessment: StockAssessment
+    ai_status: AIStatus
+    ai_explanation: AssessmentAIExplanation | None
     current_advice: tuple[AdviceCard, ...]
     sections: dict[str, CockpitSection]
     phases: dict[DecisionPhase, StockPhaseHistory]
@@ -98,12 +101,14 @@ class StockDecisionCockpitService:
         diagnosis_service,
         decision_repository,
         assessor=None,
+        assessor_ai=None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.instrument_directory = instrument_directory
         self.diagnosis_service = diagnosis_service
         self.decision_repository = decision_repository
         self.assessor = assessor or DeterministicStockAssessor()
+        self.assessor_ai = assessor_ai
         self.clock = clock or (lambda: datetime.now(timezone.utc))
 
     async def get(
@@ -133,6 +138,15 @@ class StockDecisionCockpitService:
             "authorized_simulation_advice_id": authorized_advice_id,
             "authorized_simulation_plan_id": authorized_plan_id,
         })
+        ai_status: AIStatus = "unconfigured"
+        ai_explanation = None
+        if self.assessor_ai is not None:
+            frozen_evidence = (
+                *assessment.supporting_evidence, *assessment.contrary_evidence
+            )
+            ai_result = await self.assessor_ai.explain(assessment, frozen_evidence)
+            ai_status = ai_result.status
+            ai_explanation = ai_result.explanation
         qualities = {section.status for section in sections.values()}
         overall: Literal["ready", "partial", "blocked"] = (
             "blocked" if "blocked" in qualities else
@@ -141,7 +155,8 @@ class StockDecisionCockpitService:
         return StockCockpitSnapshot(
             symbol=symbol, as_of=as_of, cutoff=effective_cutoff, overall_quality=overall,
             instrument=instrument, candidate_membership=membership,
-            assessment=assessment, current_advice=current, sections=sections, phases=phases,
+            assessment=assessment, ai_status=ai_status, ai_explanation=ai_explanation,
+            current_advice=current, sections=sections, phases=phases,
         )
 
     @staticmethod
