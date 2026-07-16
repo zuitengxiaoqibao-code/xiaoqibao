@@ -76,3 +76,30 @@ included in the full suite.
 - Web TypeScript/Vite production build: passed, 1606 modules transformed.
 - Mojibake scan of every touched source and test file: no matches.
 - `git diff --check`: passed.
+
+## Browser Historical-Date Reset Fix
+
+### Root cause and files
+
+`DecisionWorkbench` used an initial-load effect whose dependency was a callback
+that changed whenever parent loader identities changed. A historical selection
+therefore triggered another current load, which published the live trading date
+and reset both the date input and cockpit context.
+
+- `apps/web/src/features/decision-workbench/DecisionWorkbench.tsx`
+- `apps/web/src/features/decision-workbench/DecisionWorkbench.test.tsx`
+
+### TDD evidence
+
+- RED: focused DecisionWorkbench run failed `1 failed, 15 passed`; after a
+  parent rerender the date value was `2026-07-15` instead of `2026-07-14`.
+- GREEN: focused DecisionWorkbench run passed `16 passed`.
+- The regression also asserts replacement current/date loaders are not called
+  solely because their function identities changed.
+
+### Verification
+
+- Full web suite: `122 passed` across 16 files.
+- TypeScript/Vite production build: passed, 1606 modules transformed.
+- Mojibake scan of both touched TypeScript files: no matches.
+- `git diff --check`: passed.

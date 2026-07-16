@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { DecisionWorkbench } from "./DecisionWorkbench";
@@ -40,6 +40,37 @@ describe("DecisionWorkbench", () => {
     resolveFirst(response({ current_phase: "premarket" }));
 
     expect(await screen.findByRole("tab", { name: "盘后复盘", selected: true })).toBeInTheDocument();
+  });
+
+  it("keeps historical selection when parent rerenders with new loader identities", async () => {
+    const firstCurrent = vi.fn().mockResolvedValue(response());
+    const firstDate = vi.fn().mockResolvedValue(response({ trading_date: "2026-07-14" }));
+    const view = render(
+      <DecisionWorkbench loadCurrent={firstCurrent} loadDate={firstDate} />
+    );
+    await screen.findByRole("tab", { name: "盘中监测", selected: true });
+
+    fireEvent.change(screen.getByLabelText("交易日期"), {
+      target: { value: "2026-07-14" },
+    });
+    await vi.waitFor(() => expect(firstDate).toHaveBeenCalledWith("2026-07-14"));
+    await vi.waitFor(() => expect(screen.getByLabelText("交易日期")).toHaveValue("2026-07-14"));
+
+    const replacementCurrent = vi.fn().mockResolvedValue(response());
+    const replacementDate = vi.fn().mockResolvedValue(
+      response({ trading_date: "2026-07-14" })
+    );
+    view.rerender(
+      <DecisionWorkbench
+        loadCurrent={replacementCurrent}
+        loadDate={replacementDate}
+      />
+    );
+    await act(async () => { await Promise.resolve(); });
+
+    expect(screen.getByLabelText("交易日期")).toHaveValue("2026-07-14");
+    expect(replacementCurrent).not.toHaveBeenCalled();
+    expect(replacementDate).not.toHaveBeenCalled();
   });
 
   it("shows a simulation plan only when reciprocal references and gates are complete", async () => {

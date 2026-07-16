@@ -71,7 +71,8 @@ export function DecisionWorkbench({ loadCurrent, loadDate, selectedSymbol, asOf,
   const selectDate = useCallback((nextDate: string) => { setInternalDate(nextDate); onAsOfChange?.(nextDate); }, [onAsOfChange]);
   const publishResolvedDate = useCallback((nextDate: string) => { setInternalDate(nextDate); onResolvedAsOf?.(nextDate); }, [onResolvedAsOf]);
   const load = useCallback(async (selectedDate?: string) => { const request = ++sequence.current; setLoading(true); setError(""); try { const next = selectedDate && loadDate ? await loadDate(selectedDate) : await loadCurrent(); if (request !== sequence.current) return; setData(next); if (initialLoad.current || !manualPhase.current) setPhase(next.current_phase); initialLoad.current = false; publishResolvedDate(next.trading_date); } catch (caught) { if (request === sequence.current) setError(caught instanceof Error ? caught.message : "决策链路暂不可用"); } finally { if (request === sequence.current) setLoading(false); } }, [loadCurrent, loadDate, publishResolvedDate]);
-  useEffect(() => { void load(); }, [load]);
+  const loadRef = useRef(load); loadRef.current = load;
+  useEffect(() => { void loadRef.current(); }, []);
   useEffect(() => { if (refreshToken === handledRefresh.current) return; handledRefresh.current = refreshToken; void load(historicalMode ? date : undefined); }, [date, historicalMode, load, refreshToken]);
   useEffect(() => { if (historicalMode || !data || data.market_session !== "open" || !data.polling.focus_interval_seconds) return; const timer = window.setInterval(() => { if (onRefresh) onRefresh("poll"); else void load(); }, Math.max(1, data.polling.focus_interval_seconds) * 1000); return () => window.clearInterval(timer); }, [data?.market_session, data?.polling.focus_interval_seconds, historicalMode, load, onRefresh]);
   const phases = Object.keys(phaseNames) as DecisionPhase[];
