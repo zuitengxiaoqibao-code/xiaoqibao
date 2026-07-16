@@ -92,7 +92,10 @@ class Calendar:
         return value
 
 
-def subject(tmp_path, *, bars=None, history=None, news=None, clock=None):
+def subject(
+    tmp_path, *, bars=None, history=None, news=None, clock=None,
+    calendar=None, lock_timeout_seconds=1.0,
+):
     bars = bars or Bars()
     return AStockPreparationService(
         bars,
@@ -100,10 +103,11 @@ def subject(tmp_path, *, bars=None, history=None, news=None, clock=None):
         Diagnosis(),
         news or News(),
         NewsRepo(),
-        Calendar(),
+        calendar or Calendar(),
         lock_dir=tmp_path,
         clock=clock or (lambda: datetime(2026, 7, 18, 3, tzinfo=UTC)),
         news_cooldown_seconds=300,
+        lock_timeout_seconds=lock_timeout_seconds,
     )
 
 
@@ -198,3 +202,93 @@ async def test_news_read_is_bounded_to_requested_symbol_and_cutoff(tmp_path):
     await service.inspect("600519", as_of=FRIDAY, cutoff=cutoff)
 
     assert service.news_repository.queries == [("600519", cutoff)]
+
+
+@pytest.mark.asyncio
+async def test_cancelled_lock_wait_releases_after_background_acquisition(tmp_path):
+    holder = subject(tmp_path, lock_timeout_seconds=1)
+    waiter = subject(tmp_path, lock_timeout_seconds=1)
+    third = subject(tmp_path, lock_timeout_seconds=1)
+
+    async def wait_for_lock():
+        async with waiter._file_lock("cancel.lock"):
+            pass
+
+    async with holder._file_lock("cancel.lock"):
+        task = asyncio.create_task(wait_for_lock())
+        await asyncio.sleep(0.03)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    await asyncio.sleep(0.08)
+
+    async with third._file_lock("cancel.lock"):
+        assert third._active_locks == 1
+
+
+@pytest.mark.asyncio
+async def test_lock_contention_timeout_degrades_to_partial(tmp_path):
+    holder = subject(tmp_path, lock_timeout_seconds=1)
+    contender = subject(tmp_path, lock_timeout_seconds=0.04)
+
+    async with holder._file_lock("history-600519.lock"):
+        result = await contender.prepare("600519", as_of=FRIDAY)
+
+    history = next(item for item in result.sources if item.name == "history")
+    assert result.status == "partial"
+    assert history.reason == "preparation lock timed out: history-600519.lock"
+
+
+@pytest.mark.asyncio
+async def test_lock_retries_nonblocking_until_holder_releases(tmp_path):
+    holder = subject(tmp_path, lock_timeout_seconds=1)
+    waiter = subject(tmp_path, lock_timeout_seconds=0.5)
+
+    async def release_soon():
+        async with holder._file_lock("retry.lock"):
+            await asyncio.sleep(0.06)
+
+    owner = asyncio.create_task(release_soon())
+    await asyncio.sleep(0.01)
+    async with waiter._file_lock("retry.lock"):
+        assert waiter._active_locks == 1
+    await owner
+
+
+class BlockingCalendar(Calendar):
+    def is_trading_day(self, value):
+        time.sleep(0.2)
+        return super().is_trading_day(value)
+
+
+@pytest.mark.asyncio
+async def test_inspect_calendar_does_not_block_event_loop(tmp_path):
+    service = subject(tmp_path, calendar=BlockingCalendar())
+    ticked = asyncio.Event()
+
+    async def ticker():
+        await asyncio.sleep(0.01)
+        ticked.set()
+
+    inspection = asyncio.create_task(service.inspect("600519", as_of=SATURDAY))
+    tick = asyncio.create_task(ticker())
+    await asyncio.wait_for(ticked.wait(), timeout=0.1)
+    await asyncio.gather(inspection, tick)
+
+
+def test_news_marker_publication_is_atomic(tmp_path, monkeypatch):
+    service = subject(tmp_path)
+    marker = service._news_marker()
+    marker.write_text("2026-07-18T02:59:00+00:00", encoding="utf-8")
+    observed = []
+    real_replace = __import__("os").replace
+
+    def inspect_before_replace(source, destination):
+        observed.append(marker.read_text(encoding="utf-8"))
+        real_replace(source, destination)
+
+    monkeypatch.setattr("qibao_api.a_shares.preparation.os.replace", inspect_before_replace)
+    service._write_news_marker(datetime(2026, 7, 18, 3, tzinfo=UTC))
+
+    assert observed == ["2026-07-18T02:59:00+00:00"]
+    assert marker.read_text(encoding="utf-8") == "2026-07-18T03:00:00+00:00"

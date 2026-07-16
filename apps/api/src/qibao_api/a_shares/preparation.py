@@ -1,10 +1,12 @@
 import asyncio
 import os
+import time as monotonic_time
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from datetime import date, datetime, time, timezone
 from pathlib import Path
 from typing import Literal
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict
@@ -30,9 +32,17 @@ class StockPreparation(BaseModel):
     completed_at: AwareDatetime
 
 
+class PreparationLockTimeout(TimeoutError):
+    pass
+
+
 class _FileLock:
-    def __init__(self, path: Path) -> None:
+    def __init__(
+        self, path: Path, *, timeout_seconds: float, retry_seconds: float
+    ) -> None:
         self.path = path
+        self.timeout_seconds = timeout_seconds
+        self.retry_seconds = retry_seconds
         self.handle = None
 
     def acquire(self) -> None:
@@ -44,14 +54,28 @@ class _FileLock:
             pass
         self.handle = self.path.open("r+b")
         self.handle.seek(0)
-        if os.name == "nt":
-            import msvcrt
+        deadline = monotonic_time.monotonic() + self.timeout_seconds
+        while True:
+            try:
+                if os.name == "nt":
+                    import msvcrt
 
-            msvcrt.locking(self.handle.fileno(), msvcrt.LK_LOCK, 1)
-        else:
-            import fcntl
+                    msvcrt.locking(self.handle.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
 
-            fcntl.flock(self.handle.fileno(), fcntl.LOCK_EX)
+                    fcntl.flock(
+                        self.handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB
+                    )
+                return
+            except (BlockingIOError, OSError):
+                if monotonic_time.monotonic() >= deadline:
+                    self.handle.close()
+                    self.handle = None
+                    raise PreparationLockTimeout(
+                        f"preparation lock timed out: {self.path.name}"
+                    )
+                monotonic_time.sleep(self.retry_seconds)
 
     def release(self) -> None:
         if self.handle is None:
@@ -82,6 +106,8 @@ class AStockPreparationService:
         lock_dir: Path,
         clock: Callable[[], datetime] | None = None,
         news_cooldown_seconds: int = 300,
+        lock_timeout_seconds: float = 5.0,
+        lock_retry_seconds: float = 0.01,
     ) -> None:
         self.bar_repository = bar_repository
         self.market_data_service = market_data_service
@@ -92,6 +118,8 @@ class AStockPreparationService:
         self.lock_dir = Path(lock_dir)
         self.clock = clock or (lambda: datetime.now(timezone.utc))
         self.news_cooldown_seconds = news_cooldown_seconds
+        self.lock_timeout_seconds = lock_timeout_seconds
+        self.lock_retry_seconds = lock_retry_seconds
         self._active_locks = 0
 
     async def inspect(
@@ -110,22 +138,26 @@ class AStockPreparationService:
         started_at = self._now()
         refreshed = False
         history_error = None
-        async with self._file_lock(f"history-{symbol}.lock"):
-            bars = self._bars(symbol, as_of, None)
-            expected = self._expected_trading_day(as_of)
-            if not self._history_ready(bars, expected):
-                refreshed = True
-                try:
-                    report = await asyncio.to_thread(
-                        self.market_data_service.sync_symbol, symbol
-                    )
-                    state = getattr(report.state, "value", report.state)
-                    if state != "ready":
-                        history_error = (
-                            getattr(report, "message", None) or "history sync failed"
+        try:
+            async with self._file_lock(f"history-{symbol}.lock"):
+                bars = self._bars(symbol, as_of, None)
+                expected = await self._expected_trading_day(as_of)
+                if not self._history_ready(bars, expected):
+                    refreshed = True
+                    try:
+                        report = await asyncio.to_thread(
+                            self.market_data_service.sync_symbol, symbol
                         )
-                except Exception as error:
-                    history_error = str(error)
+                        state = getattr(report.state, "value", report.state)
+                        if state != "ready":
+                            history_error = (
+                                getattr(report, "message", None)
+                                or "history sync failed"
+                            )
+                    except Exception as error:
+                        history_error = str(error)
+        except PreparationLockTimeout as error:
+            history_error = str(error)
 
         news_refreshed, news_error = await self._refresh_news()
         refreshed = refreshed or news_refreshed
@@ -151,7 +183,7 @@ class AStockPreparationService:
         news_error=None,
     ):
         bars = self._bars(symbol, as_of, cutoff)
-        expected = self._expected_trading_day(as_of)
+        expected = await self._expected_trading_day(as_of)
         sources = [self._history_source(bars, expected, history_error)]
         sources.extend(await self._diagnosis_sources(symbol, as_of, cutoff))
         sources.append(self._news_source(symbol, as_of, cutoff, news_error))
@@ -174,16 +206,17 @@ class AStockPreparationService:
     async def _refresh_news(self):
         error = None
         refreshed = False
-        async with self._file_lock("news-global.lock"):
-            if not self._news_is_fresh():
-                refreshed = True
-                try:
-                    await self.news_service.sync()
-                    self._news_marker().write_text(
-                        self._now().isoformat(), encoding="utf-8"
-                    )
-                except Exception as error_value:
-                    error = str(error_value)
+        try:
+            async with self._file_lock("news-global.lock"):
+                if not self._news_is_fresh():
+                    refreshed = True
+                    try:
+                        await self.news_service.sync()
+                        self._write_news_marker(self._now())
+                    except Exception as error_value:
+                        error = str(error_value)
+        except PreparationLockTimeout as error_value:
+            error = str(error_value)
         return refreshed, error
 
     async def _diagnosis_sources(self, symbol, as_of, cutoff):
@@ -234,7 +267,10 @@ class AStockPreparationService:
             [symbol], 120, as_of, cutoff=cutoff
         ).get(symbol, [])
 
-    def _expected_trading_day(self, as_of):
+    async def _expected_trading_day(self, as_of):
+        return await asyncio.to_thread(self._expected_trading_day_sync, as_of)
+
+    def _expected_trading_day_sync(self, as_of):
         now = self._now().astimezone(ZoneInfo("Asia/Shanghai"))
         if (
             as_of == now.date()
@@ -251,7 +287,7 @@ class AStockPreparationService:
         return len(bars) >= 60 and bool(bars) and bars[-1].trade_date >= expected
 
     def _history_source(self, bars, expected, sync_error):
-        ready = self._history_ready(bars, expected)
+        ready = self._history_ready(bars, expected) and sync_error is None
         latest = bars[-1].trade_date if bars else None
         return PreparationSource(
             name="history",
@@ -270,6 +306,18 @@ class AStockPreparationService:
         self.lock_dir.mkdir(parents=True, exist_ok=True)
         return self.lock_dir / "news-success.txt"
 
+    def _write_news_marker(self, refreshed_at: datetime) -> None:
+        marker = self._news_marker()
+        temporary = marker.with_name(f".{marker.name}.{uuid4().hex}.tmp")
+        try:
+            with temporary.open("w", encoding="utf-8") as handle:
+                handle.write(refreshed_at.isoformat())
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, marker)
+        finally:
+            temporary.unlink(missing_ok=True)
+
     def _news_is_fresh(self):
         try:
             refreshed_at = datetime.fromisoformat(
@@ -281,14 +329,32 @@ class AStockPreparationService:
 
     @asynccontextmanager
     async def _file_lock(self, name):
-        lock = _FileLock(self.lock_dir / name)
-        await asyncio.to_thread(lock.acquire)
+        lock = _FileLock(
+            self.lock_dir / name,
+            timeout_seconds=self.lock_timeout_seconds,
+            retry_seconds=self.lock_retry_seconds,
+        )
+        acquisition = asyncio.create_task(asyncio.to_thread(lock.acquire))
+        acquired = False
+        try:
+            await asyncio.shield(acquisition)
+            acquired = True
+        except asyncio.CancelledError:
+            loop = asyncio.get_running_loop()
+
+            def release_if_acquired(completed):
+                if not completed.cancelled() and completed.exception() is None:
+                    loop.create_task(asyncio.to_thread(lock.release))
+
+            acquisition.add_done_callback(release_if_acquired)
+            raise
         self._active_locks += 1
         try:
             yield
         finally:
             self._active_locks -= 1
-            await asyncio.to_thread(lock.release)
+            if acquired:
+                await asyncio.shield(asyncio.to_thread(lock.release))
 
     def _now(self):
         return self._aware(self.clock()) or datetime.now(timezone.utc)

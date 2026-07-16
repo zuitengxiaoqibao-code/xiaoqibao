@@ -75,3 +75,28 @@
 - Weekend and pre-close history freshness.
 - Bounded symbol/cutoff news queries.
 - Concurrent POST middleware serialization.
+
+## Second Review Remediation
+
+### RED Evidence
+
+- The expanded preparation review suite failed because lock timeout configuration, cancellation-safe acquisition, async calendar inspection, and atomic marker publication did not exist.
+- Cancellation previously abandoned a worker-thread acquisition that could later own the file lock without any release path.
+- Windows used the built-in blocking lock mode, which has an unsuitable retry interval and no application deadline.
+
+### Changes
+
+- File locking now uses `LK_NBLCK` on Windows and `LOCK_NB` on POSIX with a monotonic deadline, short configurable retry interval, and typed `PreparationLockTimeout`.
+- History and global-news lock timeouts degrade their source result to `partial` with a stable reason instead of escaping as HTTP 500 errors.
+- Async lock acquisition is a retained task awaited through `asyncio.shield`. Cancellation attaches a completion callback that releases exactly once if background acquisition later succeeds.
+- Normal context exit also shields the release thread, including cancellation during the protected operation.
+- All trading-calendar work, including a potentially blocking live signal, runs through `asyncio.to_thread` for prepare and inspect.
+- News success markers are written to a unique temporary file, flushed, synced, and atomically replaced. Readers therefore see the previous complete marker or the new complete marker.
+
+### GREEN Coverage
+
+- Cancellation during contention followed by successful third-party acquisition.
+- Typed partial degradation on a short contention deadline.
+- Multiple nonblocking retries followed by acquisition after the holder releases.
+- Event-loop responsiveness with a deliberately blocking calendar.
+- Atomic marker publication while inspecting the destination immediately before replacement.
