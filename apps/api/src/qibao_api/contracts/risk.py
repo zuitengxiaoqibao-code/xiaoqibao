@@ -19,21 +19,6 @@ class RiskRule(BaseModel):
     created_at: AwareDatetime
 
 
-class RiskDecision(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    decision_id: str = Field(min_length=1, max_length=128)
-    order_id: str = Field(min_length=1, max_length=128)
-    symbol: str = Field(pattern=r"^\d{6}$")
-    asset: AssetKind
-    outcome: Literal["approve", "reduce", "reject", "observe_only"]
-    reason_code: str = Field(pattern=r"^[a-z][a-z0-9_]*$", max_length=128)
-    evidence: tuple[NonBlankReference, ...] = Field(min_length=1)
-    rule_id: str = Field(min_length=1, max_length=128)
-    rule_version: str = Field(min_length=1, max_length=64)
-    decided_at: AwareDatetime
-
-
 class ComplianceRecord(BaseModel):
     model_config = ConfigDict(frozen=True)
 

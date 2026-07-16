@@ -8,7 +8,6 @@ from pydantic import (
     ConfigDict,
     Field,
     StringConstraints,
-    field_validator,
     model_validator,
 )
 
@@ -29,17 +28,6 @@ class EvidenceReference(BaseModel):
     snapshot_id: NonBlank
     summary: NonBlank
     observed_at: AwareDatetime
-
-
-class SimulationGateAudit(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    quote_state: Literal["ready", "blocked"]
-    compliance_state: Literal["ready", "blocked"]
-    evidence_state: Literal["ready", "blocked"]
-    risk_state: Literal["approve", "reject"]
-    risk_decision_id: str | None
-    compliance_snapshot_id: str | None
 
 
 class DecisionCycleSnapshot(BaseModel):
@@ -100,14 +88,13 @@ class AdviceCard(BaseModel):
     quantitative_result: dict[str, Decimal | str | None]
     ai_interpretation_id: str | None = None
     risk_decision_id: str | None = None
-    simulation_gate: SimulationGateAudit | None = None
     previous_advice_id: str | None = None
     changed_fields: tuple[NonBlank, ...] = ()
     strategy_version: NonBlank
     created_at: AwareDatetime
 
     @model_validator(mode="after")
-    def validate_asset_and_plan_gate(self) -> "AdviceCard":
+    def validate_asset(self) -> "AdviceCard":
         if self.asset == AssetKind.A_SHARE:
             validate_a_share_code(self.symbol)
         else:

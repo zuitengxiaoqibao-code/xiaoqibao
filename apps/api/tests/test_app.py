@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from importlib.util import find_spec
 
 from fastapi.testclient import TestClient
 
@@ -47,3 +48,9 @@ def test_decision_responses_do_not_expose_simulation_plans():
 
     assert "plans" not in str(body)
     assert "simulation_plan_id" not in str(body)
+
+
+def test_paper_only_modules_are_deleted():
+    assert find_spec("qibao_api.contracts.trading") is None
+    assert find_spec("qibao_api.hubu.schema") is None
+    assert find_spec("qibao_api.libu.allocation") is None

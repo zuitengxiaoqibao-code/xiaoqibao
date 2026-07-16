@@ -145,7 +145,7 @@ class OpenAICompatibleAssessmentGateway:
                     "content": (
                         "Return one strict JSON object matching the supplied schema. "
                         "Explain only; never change the deterministic action, confidence, "
-                        "or simulation eligibility. Cite only allowed evidence IDs."
+                        "or supporting evidence. Cite only allowed evidence IDs."
                     ),
                 },
                 {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},

@@ -100,19 +100,6 @@ class Outcomes:
         return self.values
 
 
-class Paper:
-    def __init__(self, executions=(), decisions=()):
-        self.executions = executions
-        self.decisions = decisions
-
-    def list_order_outcomes_between(self, start, end):
-        assert end == CLOSE
-        return list(self.executions)
-
-    def list_risk_decisions(self, *, limit=50):
-        return list(self.decisions)
-
-
 class Audit:
     def __init__(self, findings=()):
         self.findings = findings
@@ -122,7 +109,7 @@ class Audit:
         return list(self.findings)
 
 
-def _service(advice, market, *, executions=(), decisions=(), findings=()):
+def _service(advice, market, *, findings=()):
     repository = Decisions([_cycle(item) for item in advice])
     service = PostcloseReviewService(
         decision_repository=repository,
@@ -288,10 +275,6 @@ def test_evidence_at_exact_advice_creation_time_is_excluded() -> None:
     clean_service, _ = _service((advice,), (after,))
     boundary_service, _ = _service(
         (advice,), (exact, after),
-        executions=({"advice_id": "strict-boundary", "execution_id": "execution-exact",
-                     "created_at": created, "status": "rejected"},),
-        decisions=({"advice_id": "strict-boundary", "decision_id": "risk-exact",
-                    "decided_at": created, "outcome": "reject"},),
         findings=({"finding_id": "finding-exact", "input_snapshot_ids": ("strict-boundary",),
                    "detected_at": created},),
     )

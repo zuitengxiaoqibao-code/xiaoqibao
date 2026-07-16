@@ -116,7 +116,6 @@ async def lifespan(application: FastAPI):
     application.state.compliance_repository = compliance
     compliance.set_feature_sources("realtime_quotes", "a_share", ("tencent",))
     compliance.set_feature_sources("a_share_finance", "a_share", ("mootdx",))
-    compliance.set_feature_sources("paper_orders", "a_share", ("tencent",))
     compliance.set_feature_sources("history_sync.mootdx", "a_share", ("mootdx",))
     compliance.set_feature_sources("history_sync.baidu", "a_share", ("baidu",))
     compliance.set_feature_sources("bond_quotes", "convertible_bond", ("tencent",))
@@ -179,7 +178,7 @@ async def lifespan(application: FastAPI):
                 AuthorizedQuoteSource(
                     TencentQuoteSource(client),
                     compliance,
-                    ("realtime_quotes", "paper_orders"),
+                    ("realtime_quotes",),
                     "a_share",
                 ),
                 QuoteRepository(engine),

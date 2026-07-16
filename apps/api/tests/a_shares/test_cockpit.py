@@ -1,6 +1,5 @@
 from datetime import date, datetime, timezone
 from decimal import Decimal
-from types import SimpleNamespace
 import pytest
 
 from qibao_api.a_shares.cockpit import StockDecisionCockpitService
@@ -16,7 +15,6 @@ from qibao_api.contracts.decision import (
     DecisionCycleAggregate,
     DecisionCycleSnapshot,
     EvidenceReference,
-    SimulationGateAudit,
 )
 from qibao_api.contracts.market import AssetKind
 from qibao_api.shangshu.decision_repository import DecisionIntegrityError
@@ -24,7 +22,6 @@ from qibao_api.shangshu.decision_repository import DecisionIntegrityError
 
 TRADE_DATE = date(2026, 7, 15)
 CUTOFF = datetime(2026, 7, 15, 6, 0, tzinfo=timezone.utc)
-SimulationPlan = SimpleNamespace
 
 
 class Directory:
@@ -241,146 +238,6 @@ async def test_live_cockpit_rejects_observation_after_completion() -> None:
     assert result.cutoff == CUTOFF.replace(second=1)
     assert result.sections["market"].status == "unavailable"
     assert result.sections["market"].reason == "observed_after_cutoff"
-
-
-def simulated_advice():
-    gate = SimulationGateAudit(
-        quote_state="ready", compliance_state="ready", evidence_state="ready",
-        risk_state="approve", risk_decision_id="risk-1",
-        compliance_snapshot_id="compliance-1",
-    )
-    return advice("600000").model_copy(update={
-        "action": "simulated_plan", "simulation_plan_id": "plan-1",
-        "risk_decision_id": "risk-1", "simulation_gate": gate,
-    })
-
-
-def simulation_plan(**updates):
-    values = {
-        "plan_id": "plan-1", "advice_id": "a-600000", "risk_decision_id": "risk-1",
-        "compliance_snapshot_id": "compliance-1", "watch_price_low": Decimal("10"),
-        "watch_price_high": Decimal("11"), "stop_loss": Decimal("9"),
-        "take_profit": (Decimal("12"),), "tranches": (Decimal("0.1"),),
-        "max_position": Decimal("0.2"), "invalidation_conditions": ("invalid",),
-        "valid_from": CUTOFF.replace(hour=5), "valid_until": CUTOFF.replace(hour=7),
-        "strategy_version": "v1", "risk_version": "v1", "compliance_version": "v1",
-    }
-    values.update(updates)
-    return SimulationPlan(**values)
-
-
-class SimulationDecisions:
-    def __init__(self, plans):
-        self.plans = plans
-
-    def cycles(self, trading_date=None, phase=None):
-        if phase != "intraday":
-            return []
-        return [aggregate((simulated_advice(),), plans=self.plans)]
-
-
-@pytest.mark.asyncio
-@pytest.mark.skip(reason="paper simulation plans were removed")
-async def test_candidate_and_two_non_candidates_keep_separate_assessment_and_plan_layers() -> None:
-    subject = StockDecisionCockpitService(
-        AcceptanceDirectory(), Diagnosis(),
-        SimulationDecisions((simulation_plan(),)), clock=lambda: CUTOFF,
-    )
-
-    results = {
-        symbol: await subject.get(symbol, TRADE_DATE, CUTOFF)
-        for symbol in ("600000", "600519", "000001")
-    }
-
-    assert all(result.assessment.symbol == symbol for symbol, result in results.items())
-    assert all(result.ai_status == "unconfigured" for result in results.values())
-    assert all(result.ai_explanation is None for result in results.values())
-    assert results["600000"].candidate_membership == ("short_term",)
-    assert results["600000"].assessment.simulation_eligible is True
-    for symbol in ("600519", "000001"):
-        assert results[symbol].candidate_membership == ()
-        assert results[symbol].current_advice == ()
-        assert results[symbol].assessment.simulation_eligible is False
-        assert results[symbol].assessment.authorized_simulation_plan_id is None
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "plans",
-    [
-        (),
-        (simulation_plan(advice_id="wrong-advice"),),
-        (simulation_plan(risk_decision_id="wrong-risk"),),
-        (simulation_plan(compliance_snapshot_id="wrong-compliance"),),
-    ],
-)
-@pytest.mark.skip(reason="paper simulation plans were removed")
-async def test_simulation_eligibility_requires_persisted_mutually_verified_plan(plans) -> None:
-    result = await service(decisions=SimulationDecisions(plans)).get(
-        "600000", TRADE_DATE, CUTOFF
-    )
-
-    assert result.assessment.simulation_eligible is False
-
-
-@pytest.mark.asyncio
-@pytest.mark.skip(reason="paper simulation plans were removed")
-async def test_simulation_eligibility_accepts_complete_persisted_plan_chain() -> None:
-    result = await service(
-        decisions=SimulationDecisions((simulation_plan(),))
-    ).get("600000", TRADE_DATE, CUTOFF)
-
-    assert result.assessment.action == "observe"
-    assert result.assessment.simulation_eligible is True
-    assert result.assessment.authorized_simulation_advice_id == "a-600000"
-    assert result.assessment.authorized_simulation_plan_id == "plan-1"
-
-
-class MixedHorizonSimulationDecisions:
-    def __init__(self, plan):
-        self.plan = plan
-
-    def cycles(self, trading_date=None, phase=None):
-        if phase != "intraday":
-            return []
-        intraday = simulated_advice().model_copy(update={
-            "advice_id": "intraday-unverified", "simulation_plan_id": "forged-plan",
-            "created_at": CUTOFF.replace(minute=1),
-        })
-        swing = simulated_advice().model_copy(update={
-            "advice_id": "swing-authorized", "horizon": "swing",
-            "simulation_plan_id": "swing-plan",
-        })
-        return [aggregate((intraday, swing), plans=(self.plan,))]
-
-
-@pytest.mark.asyncio
-@pytest.mark.skip(reason="paper simulation plans were removed")
-async def test_authorized_simulation_reference_keeps_advice_and_plan_together() -> None:
-    plan = simulation_plan(plan_id="swing-plan", advice_id="swing-authorized")
-    result = await service(decisions=MixedHorizonSimulationDecisions(plan)).get(
-        "600000", TRADE_DATE, CUTOFF
-    )
-
-    assert result.assessment.authorized_simulation_advice_id == "swing-authorized"
-    assert result.assessment.authorized_simulation_plan_id == "swing-plan"
-
-
-@pytest.mark.asyncio
-@pytest.mark.skip(reason="paper simulation plans were removed")
-async def test_expired_simulation_plan_does_not_return_an_authorized_reference() -> None:
-    expired = simulation_plan(
-        plan_id="swing-plan", advice_id="swing-authorized",
-        valid_until=CUTOFF.replace(minute=0, second=0, microsecond=0),
-    )
-    result = await service(
-        decisions=MixedHorizonSimulationDecisions(expired),
-        clock=lambda: CUTOFF.replace(minute=1),
-    ).get("600000", TRADE_DATE, CUTOFF)
-
-    assert result.assessment.simulation_eligible is False
-    assert result.assessment.authorized_simulation_advice_id is None
-    assert result.assessment.authorized_simulation_plan_id is None
 
 
 @pytest.mark.asyncio

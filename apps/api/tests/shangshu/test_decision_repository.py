@@ -1,4 +1,6 @@
 import sqlite3
+import hashlib
+import json
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
@@ -148,3 +150,54 @@ def test_concurrent_reads_are_serialized_safely(tmp_path: Path) -> None:
     with ThreadPoolExecutor(max_workers=4) as pool:
         results = list(pool.map(lambda _: repository.cycles(), range(20)))
     assert all(result == [aggregate()] for result in results)
+
+
+def test_legacy_plan_bearing_cycle_projects_to_research_history_and_allows_append(tmp_path: Path) -> None:
+    database = tmp_path / "decisions.sqlite3"
+    repository = DecisionRepository(database)
+    repository.close()
+    connection = sqlite3.connect(database)
+    connection.executescript("""
+    ALTER TABLE decision_cycles ADD COLUMN plan_count INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE decision_advice ADD COLUMN plan_id TEXT;
+    CREATE TABLE decision_plans (
+      plan_id TEXT PRIMARY KEY, snapshot_id TEXT NOT NULL, advice_id TEXT NOT NULL,
+      canonical_hash TEXT NOT NULL, payload TEXT NOT NULL
+    );
+    """)
+    item = aggregate()
+    snapshot_payload = json.dumps(
+        item.snapshot.model_dump(mode="json"), sort_keys=True, separators=(",", ":")
+    )
+    advice_payload = item.advice[0].model_dump(mode="json") | {
+        "action": "simulated_plan",
+        "simulation_plan_id": "legacy-plan-1",
+        "simulation_gate": {"quote_state": "ready", "risk_state": "approve"},
+    }
+    advice_json = json.dumps(advice_payload, sort_keys=True, separators=(",", ":"))
+    plan_json = json.dumps({"plan_id": "legacy-plan-1", "watch_price_low": "10"})
+    def digest(value: str) -> str:
+        return hashlib.sha256(value.encode()).hexdigest()
+    connection.execute(
+        """INSERT INTO decision_cycles VALUES(?,?,?,?,?,?,?,?,?,?)""",
+        ("cycle-1", TRADE_DATE.isoformat(), "premarket", 1, None, None,
+         digest(snapshot_payload), 1, snapshot_payload, 1, ),
+    )
+    connection.execute(
+        "INSERT INTO decision_advice VALUES(?,?,?,?,?)",
+        ("advice-1", "cycle-1", digest(advice_json), advice_json, "legacy-plan-1"),
+    )
+    connection.execute(
+        "INSERT INTO decision_plans VALUES(?,?,?,?,?)",
+        ("legacy-plan-1", "cycle-1", "advice-1", digest(plan_json), plan_json),
+    )
+    connection.commit()
+    connection.close()
+
+    reopened = DecisionRepository(database)
+    legacy = reopened.latest(TRADE_DATE, "premarket")
+    assert legacy is not None
+    assert legacy.advice[0].action == "observe"
+    assert "simulation" not in str(legacy.model_dump(mode="json"))
+    assert reopened.append_cycle(aggregate(2, "cycle-1")) is True
+    assert [cycle.snapshot.sequence for cycle in reopened.cycles()] == [1, 2]

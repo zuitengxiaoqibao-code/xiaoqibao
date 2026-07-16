@@ -31,7 +31,6 @@ from qibao_api.contracts.decision import (
     DecisionCycleAggregate,
     DecisionCycleSnapshot,
     EvidenceReference,
-    SimulationGateAudit,
 )
 from qibao_api.shangshu.decision_repository import DecisionIntegrityError
 from qibao_api.main import app
@@ -485,19 +484,14 @@ def acceptance_advice():
         evidence_id="e-600000", source="fixture", snapshot_id="source-1",
         summary="fixture", observed_at=COCKPIT_CUTOFF,
     )
-    gate = SimulationGateAudit(
-        quote_state="ready", compliance_state="ready", evidence_state="ready",
-        risk_state="approve", risk_decision_id="risk-1",
-        compliance_snapshot_id="compliance-1",
-    )
     return AdviceCard(
         advice_id="a-600000", snapshot_id="cycle-1", asset=AssetKind.A_SHARE,
         symbol="600000", horizon="intraday", observation_state="watch",
-        action="simulated_plan", conclusion="observe", confidence=Decimal("0.5"),
+        action="observe", conclusion="observe", confidence=Decimal("0.5"),
         supporting_evidence=(evidence,), contrary_evidence=(), risks=("risk",),
         invalidation_conditions=("invalid",), quantitative_result={},
         strategy_version="v1", created_at=COCKPIT_CUTOFF,
-        simulation_plan_id="plan-1", risk_decision_id="risk-1", simulation_gate=gate,
+        risk_decision_id="risk-1",
     )
 
 
@@ -515,24 +509,13 @@ class AcceptanceCockpitDecisions:
             news_event_ids=(), risk_event_ids=(), input_snapshot_hash="1" * 64,
             previous_snapshot_id=None, status="ready", ai_status="not_requested",
         )
-        plan = SimulationPlan(
-            plan_id="plan-1", advice_id="a-600000", risk_decision_id="risk-1",
-            compliance_snapshot_id="compliance-1", watch_price_low=Decimal("10"),
-            watch_price_high=Decimal("11"), stop_loss=Decimal("9"),
-            take_profit=(Decimal("12"),), tranches=(Decimal("0.1"),),
-            max_position=Decimal("0.2"), invalidation_conditions=("invalid",),
-            valid_from=COCKPIT_CUTOFF, valid_until=COCKPIT_CUTOFF.replace(hour=3),
-            strategy_version="v1", risk_version="v1", compliance_version="v1",
-        )
         return [
             DecisionCycleAggregate(
-                snapshot=snapshot, advice=(acceptance_advice(),), plans=(plan,),
-                next_focus_due_at=COCKPIT_CUTOFF, next_universe_due_at=COCKPIT_CUTOFF,
+                snapshot=snapshot, advice=(acceptance_advice(),),
             )
         ]
 
 
-@pytest.mark.skip(reason="paper simulation plans were removed")
 def test_cockpit_api_serializes_assessment_for_candidate_and_two_non_candidates() -> None:
     service = StockDecisionCockpitService(
         AcceptanceCockpitDirectory(), AcceptanceCockpitDiagnosis(),
@@ -548,10 +531,8 @@ def test_cockpit_api_serializes_assessment_for_candidate_and_two_non_candidates(
     assert all(payload["assessment"]["symbol"] == symbol for symbol, payload in payloads.items())
     assert all(payload["ai_status"] == "unconfigured" for payload in payloads.values())
     assert all(payload["ai_explanation"] is None for payload in payloads.values())
-    assert payloads["600000"]["assessment"]["simulation_eligible"] is True
+    assert payloads["600000"]["current_advice"][0]["action"] == "observe"
+    assert "simulation" not in str(payloads)
     for symbol in ("600519", "000001"):
         payload = payloads[symbol]
         assert payload["current_advice"] == []
-        assert payload["assessment"]["simulation_eligible"] is False
-        assert payload["assessment"]["authorized_simulation_advice_id"] is None
-        assert payload["assessment"]["authorized_simulation_plan_id"] is None

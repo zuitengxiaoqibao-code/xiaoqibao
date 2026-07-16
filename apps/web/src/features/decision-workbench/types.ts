@@ -1,10 +1,5 @@
 export type DecisionPhase = "premarket" | "intraday" | "postclose";
 export type Evidence = { evidence_id: string; source: string; snapshot_id: string; summary: string; observed_at: string };
-export type SimulationGateAudit = {
-  quote_state: "ready" | "blocked"; compliance_state: "ready" | "blocked";
-  evidence_state: "ready" | "blocked"; risk_state: "approve" | "reject";
-  risk_decision_id: string | null; compliance_snapshot_id: string | null;
-};
 export type Advice = {
   advice_id: string; snapshot_id: string; asset: "a_share" | "convertible_bond"; symbol: string; horizon: "intraday" | "swing";
   observation_state: string;
@@ -13,7 +8,7 @@ export type Advice = {
   risks: string[]; invalidation_conditions: string[]; plain_language_explanation: string | null;
   quantitative_result: Record<string, string | null>; ai_interpretation_id: string | null;
   strategy_version: string; created_at: string; risk_decision_id: string | null;
-  simulation_gate: SimulationGateAudit | null; previous_advice_id: string | null; changed_fields: string[];
+  previous_advice_id: string | null; changed_fields: string[];
 };
 export type PhaseSlot = {
   phase_status: "empty" | "ready" | "partial" | "blocked"; quality: "empty" | "ready" | "partial" | "blocked";

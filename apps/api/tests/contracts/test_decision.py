@@ -66,3 +66,9 @@ def test_cycle_rejects_inputs_after_window_end() -> None:
 def test_advice_rejects_removed_simulated_plan_action() -> None:
     with pytest.raises(ValidationError):
         advice(action="simulated_plan")
+
+
+def test_advice_contract_has_no_simulation_gate_fields() -> None:
+    fields = AdviceCard.model_fields
+    assert "simulation_gate" not in fields
+    assert "simulation_plan_id" not in fields

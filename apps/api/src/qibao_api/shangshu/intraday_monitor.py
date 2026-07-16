@@ -533,7 +533,6 @@ class IntradayMonitor:
             gate = result.gates.get(item.advice_id)
             if gate is not None:
                 candidate = candidate.model_copy(update={
-                    "simulation_gate": None,
                     "risk_decision_id": gate.risk_decision_id,
                 })
             updated = candidate if previous is None else AdviceChangeDetector.changed(previous, candidate)

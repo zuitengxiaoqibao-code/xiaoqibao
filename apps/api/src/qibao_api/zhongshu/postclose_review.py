@@ -269,7 +269,7 @@ def _value(value: Any, field: str, default=None):
 
 
 def _observed_at(value: Any):
-    for field in ("observed_at", "decided_at", "detected_at", "created_at", "filled_at"):
+    for field in ("observed_at", "detected_at", "created_at"):
         found = _value(value, field)
         if found is not None:
             return found
@@ -288,8 +288,7 @@ def _evidence_sort_key(value: Any) -> tuple[datetime, str, str]:
     identity = next((
         str(_value(value, field))
         for field in (
-            "outcome_id", "execution_id", "order_id", "decision_id", "finding_id",
-            "snapshot_id", "source_snapshot_id",
+            "outcome_id", "finding_id", "snapshot_id", "source_snapshot_id",
         )
         if _value(value, field)
     ), "")

@@ -88,5 +88,43 @@ Result: `NO_MOJIBAKE_MATCHES`.
 
 ## Concerns
 
-- Nineteen legacy API test cases and thirteen legacy web test cases are skipped because they exclusively asserted the deleted simulation-plan product. Remaining suites and builds pass.
-- Legacy SQLite plan rows remain on disk by design and are ignored by the runtime.
+- Superseded by the review-fix section below. Legacy SQLite plan rows remain on disk by design and are projected to plan-free research history without being modified.
+
+## Review Fixes
+
+The initial Task 1 review failed because legacy plan-bearing decision rows could not be loaded, paper-only domain modules and compliance registration remained, simulation-gate fields remained in response contracts, and obsolete tests had been skipped or type-suppressed.
+
+### Additional RED Evidence
+
+Focused command:
+
+`apps/api/.venv/Scripts/python.exe -m pytest apps/api/tests/shangshu/test_decision_repository.py::test_legacy_plan_bearing_cycle_projects_to_research_history_and_allows_append apps/api/tests/libu_compliance/test_main_lifespan.py::test_lifespan_injects_guarded_production_sources_and_closes_compliance apps/api/tests/contracts/test_decision.py::test_advice_contract_has_no_simulation_gate_fields apps/api/tests/test_app.py::test_paper_only_modules_are_deleted -q`
+
+Result: `4 failed`. The failures reproduced legacy `simulated_plan` validation failure, remaining `paper_orders` registration, remaining `simulation_gate` contract field, and remaining paper-only modules.
+
+The first full API fix run also exposed a normal-row decimal coercion regression (`485 passed, 1 failed`). A focused regression confirmed the root cause and the compatibility projection was restricted to legacy plan-bearing rows.
+
+### Fixes Applied
+
+- Added a real legacy SQLite fixture with stored plan-bearing advice and a plan row. The repository verifies original hashes, projects only the returned domain object to deterministic `observe`, removes plan/gate keys, preserves the stored rows, and appends the next cycle without breaking lineage.
+- Removed `paper_orders` compliance registration and quote authorization.
+- Deleted trading contracts, paper schema, allocation policy, order-risk rules, and their exclusive tests.
+- Removed `SimulationGateAudit`, `simulation_gate`, gate handling, TypeScript gate types, paper CSS, and order-rejection UI contracts.
+- Rewrote cockpit, decision-workbench, research-route, and intraday tests around research-only advice, evidence, history, stale isolation, stock switching, filtering, and append behavior.
+- Removed all file-wide TypeScript suppression and all Task 1 skips. Removed dead paper fakes and execution/risk parameters.
+
+### Final GREEN Evidence
+
+- Legacy compatibility plus normal-row regression: `2 passed`.
+- Focused affected backend suites: `117 passed`.
+- Full API suite with ASCII `QIBAO_DATA_DIR`: `486 passed`, no skips.
+- Full web suite: `89 passed`, no skips.
+- Web TypeScript and Vite production build: passed, 1,604 modules transformed.
+- Ruff on all touched Python files: `All checks passed!`.
+- Full non-legacy production scan for paper accounts/orders/fills/positions/ledger, allocation, risk decisions, and simulation gates: `NO_NONLEGACY_PAPER_OR_GATE_REFERENCES`.
+- Mojibake scan: `NO_MOJIBAKE_MATCHES`.
+
+### Final Concerns
+
+- The repository contains three literal legacy simulation field names in one compatibility projection method. They are necessary to recognize and strip old payloads and are not part of new models, responses, or writes.
+- Full API verification uses an ASCII temp `QIBAO_DATA_DIR` because DuckDB on this Windows environment intermittently fails to decode the Chinese workspace path; the isolated failing lifespan tests pass, and the full suite passes with the ASCII data directory.

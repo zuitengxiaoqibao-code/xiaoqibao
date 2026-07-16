@@ -110,10 +110,11 @@ def test_audit_store_unavailable_is_explicit() -> None:
     assert response.json()["detail"] == "audit_store_unavailable"
 
 
-def test_xingbu_status_has_no_paper_order_rejections(tmp_path) -> None:
+def test_xingbu_status_exposes_research_risk_limits(tmp_path) -> None:
     client, _, _ = make_client(tmp_path)
     response = client.get("/api/v1/xingbu/status")
-    assert response.json()["recent_rejections"] == []
+    assert response.json()["rule_version"] == "research-risk-v1"
+    assert "recent_rejections" not in response.json()
 
 
 def test_dongchang_audit_run_generates_and_persists_findings(tmp_path) -> None:

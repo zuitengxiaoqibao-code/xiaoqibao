@@ -43,11 +43,10 @@ describe("governance navigation", () => {
   it("switches to an independent Xingbu view", async () => {
     render(<Dashboard loadSnapshot={snapshot} loadRisk={() => Promise.resolve({
       rule_version: "2026-07-13.1", limits: { max_position: "0.20" },
-      recent_rejections: [{ decision_id: "risk-1", order_id: "order-1", symbol: "600000", outcome: "reject", reason_code: "source_unavailable", rule_version: "system.1", decided_at: "2026-07-13T10:00:00Z" }],
     })} />);
     fireEvent.click(screen.getByRole("button", { name: /刑部/ }));
     expect(await screen.findByRole("heading", { name: "实时风控" })).toBeInTheDocument();
-    expect(screen.getByText(/source_unavailable/)).toBeInTheDocument();
+    expect(screen.getByText("已验证风险事件统一进入审计记录")).toBeInTheDocument();
     expect(screen.queryByText("A 股单标的侦测")).not.toBeInTheDocument();
   });
 

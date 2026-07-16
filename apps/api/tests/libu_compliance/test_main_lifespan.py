@@ -61,7 +61,7 @@ async def test_lifespan_injects_guarded_production_sources_and_closes_compliance
         assert fallback.sources
         assert all(isinstance(source, AuthorizedHistorySource) for source in fallback.sources)
         assert len(compliance.list_feature_source_history("realtime_quotes", "a_share")) == 1
-        assert len(compliance.list_feature_source_history("paper_orders", "a_share")) == 1
+        assert compliance.list_feature_source_history("paper_orders", "a_share") == []
         assert len(compliance.list_feature_source_history("history_sync.baidu", "a_share")) == 1
         assert len(compliance.list_feature_source_history("market_news", "a_share")) == 1
         news_repository = application.state.news_repository

@@ -1,8 +1,6 @@
 from fastapi import APIRouter
-from qibao_api.xingbu.rules import RULE_VERSION
-
-
 router = APIRouter(prefix="/api/v1/xingbu", tags=["刑部"])
+RULE_VERSION = "research-risk-v1"
 
 
 @router.get("/status")
@@ -14,6 +12,4 @@ def status():
             "industry_concentration": "data_required",
             "liquidity": "data_required",
         },
-        "decisions": [],
-        "recent_rejections": [],
     }

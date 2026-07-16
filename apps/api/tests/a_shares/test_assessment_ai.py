@@ -36,9 +36,6 @@ def assessment() -> StockAssessment:
         contrary_evidence=(),
         risks=("risk",),
         invalidation_conditions=("condition",),
-        simulation_eligible=True,
-        authorized_simulation_advice_id="advice-1",
-        authorized_simulation_plan_id="plan-1",
         generated_at=NOW,
     )
 

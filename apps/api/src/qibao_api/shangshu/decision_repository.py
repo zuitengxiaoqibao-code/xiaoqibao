@@ -198,7 +198,15 @@ class DecisionRepository:
     def _validated_child(row: sqlite3.Row) -> AdviceCard:
         if not hmac.compare_digest(_hash(row["payload"]), row["canonical_hash"]):
             raise DecisionIntegrityError("decision child payload hash mismatch")
-        return AdviceCard.model_validate_json(row["payload"])
+        payload = json.loads(row["payload"])
+        if payload.get("action") != "simulated_plan":
+            return AdviceCard.model_validate_json(row["payload"])
+        payload["action"] = "observe"
+        payload["observation_state"] = "legacy_plan_removed"
+        payload["risk_decision_id"] = None
+        payload.pop("simulation_plan_id", None)
+        payload.pop("simulation_gate", None)
+        return AdviceCard.model_validate(payload)
 
     def cycles(self, trading_date: date | None = None,
                phase: DecisionPhase | None = None) -> list[DecisionCycleAggregate]:
