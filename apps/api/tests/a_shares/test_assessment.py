@@ -81,15 +81,29 @@ def test_assessment_evidence_is_deterministic_and_cutoff_traceable() -> None:
     assert len({item.evidence_id for item in first.supporting_evidence}) == len(
         first.supporting_evidence
     )
-    assert first.simulation_eligible is True
+    assert first.simulation_eligible is False
 
 
-def test_market_unavailable_waits_and_is_contrary_evidence() -> None:
+def test_missing_observation_is_a_risk_but_not_evidence() -> None:
     result = DeterministicStockAssessor().assess(
         "600519", sections(no_market=True), ("swing",), CUTOFF
     )
 
     assert result.action == "wait"
     assert "行情" in result.conclusion
-    assert result.contrary_evidence
+    assert not any(item.source == "fixture-market" for item in result.contrary_evidence)
+    assert any("缺失" in risk for risk in result.risks)
     assert result.simulation_eligible is False
+
+
+def test_future_source_observation_never_enters_assessment_evidence() -> None:
+    values = sections()
+    values["market"] = section(
+        "market", observed_at=CUTOFF.replace(hour=7), metrics={"price": "future"}
+    )
+
+    result = DeterministicStockAssessor().assess("600519", values, (), CUTOFF)
+
+    assert result.action == "wait"
+    assert not any(item.source == "fixture-market" for item in result.supporting_evidence)
+    assert "future" not in "".join(item.summary for item in result.supporting_evidence)

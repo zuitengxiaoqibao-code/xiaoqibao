@@ -1,5 +1,6 @@
 from datetime import date, datetime, timezone
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
 
@@ -120,9 +121,9 @@ class CorruptDecisions:
         raise DecisionIntegrityError("corrupt advice payload")
 
 
-def service(diagnosis=None, decisions=None):
+def service(diagnosis=None, decisions=None, clock=lambda: CUTOFF):
     return StockDecisionCockpitService(
-        Directory(), diagnosis or Diagnosis(), decisions or Decisions()
+        Directory(), diagnosis or Diagnosis(), decisions or Decisions(), clock=clock
     )
 
 
@@ -135,7 +136,7 @@ async def test_cockpit_filters_every_phase_and_evidence_to_selected_symbol() -> 
     assert result.phases["intraday"].change_stream[0].sequence == 1
     assert result.candidate_membership == ("short_term",)
     assert result.assessment.symbol == "600000"
-    assert result.assessment.simulation_eligible is True
+    assert result.assessment.simulation_eligible is False
 
 
 @pytest.mark.asyncio
@@ -148,13 +149,73 @@ async def test_cockpit_degrades_only_failed_section() -> None:
 
 @pytest.mark.asyncio
 async def test_live_cockpit_extends_cutoff_to_quote_observed_during_request() -> None:
-    result = await service(diagnosis=QuoteObservedDuringRequest()).get(
-        "600000", TRADE_DATE, CUTOFF
+    completed_at = CUTOFF.replace(second=3)
+    result = await service(
+        diagnosis=QuoteObservedDuringRequest(), clock=lambda: completed_at
+    ).get("600000", TRADE_DATE, CUTOFF)
+
+    assert result.cutoff == completed_at
+    assert result.sections["market"].observed_at == CUTOFF.replace(second=2)
+
+
+@pytest.mark.asyncio
+async def test_historical_cockpit_keeps_strict_requested_cutoff() -> None:
+    historical_date = TRADE_DATE.replace(day=14)
+    result = await service(clock=lambda: CUTOFF.replace(hour=8)).get(
+        "600000", historical_date, CUTOFF
     )
 
-    assert result.sections["market"].status == "ready"
-    assert result.sections["market"].observed_at == CUTOFF.replace(second=2)
-    assert result.cutoff == CUTOFF.replace(second=2)
+    assert result.cutoff == CUTOFF
+
+
+@pytest.mark.asyncio
+async def test_live_cockpit_rejects_observation_after_completion() -> None:
+    result = await service(
+        diagnosis=QuoteObservedDuringRequest(), clock=lambda: CUTOFF.replace(second=1)
+    ).get("600000", TRADE_DATE, CUTOFF)
+
+    assert result.cutoff == CUTOFF.replace(second=1)
+    assert result.sections["market"].status == "unavailable"
+    assert result.sections["market"].reason == "observed_after_cutoff"
+
+
+def simulated_advice_with_gate(**updates):
+    gate = {
+        "quote_state": "ready",
+        "compliance_state": "ready",
+        "evidence_state": "ready",
+        "risk_state": "approve",
+        "risk_decision_id": "risk-1",
+        "compliance_snapshot_id": "compliance-1",
+    }
+    gate.update(updates)
+    return SimpleNamespace(
+        action="simulated_plan",
+        simulation_plan_id="plan-1",
+        risk_decision_id="risk-1",
+        simulation_gate=SimpleNamespace(**gate),
+    )
+
+
+@pytest.mark.parametrize(
+    "failed_gate",
+    [
+        {"quote_state": "blocked"},
+        {"compliance_state": "blocked"},
+        {"evidence_state": "blocked"},
+        {"risk_state": "reject"},
+    ],
+)
+def test_simulation_eligibility_requires_every_authoritative_gate(failed_gate) -> None:
+    assert StockDecisionCockpitService._simulation_eligible(
+        (simulated_advice_with_gate(**failed_gate),)
+    ) is False
+
+
+def test_simulation_eligibility_accepts_mutually_verified_plan() -> None:
+    assert StockDecisionCockpitService._simulation_eligible(
+        (simulated_advice_with_gate(),)
+    ) is True
 
 
 @pytest.mark.asyncio

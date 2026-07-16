@@ -31,26 +31,26 @@ def _digest(value: dict[str, Any]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def _evidence(name: str, section: Any, cutoff: datetime) -> EvidenceReference:
+def _evidence(name: str, section: Any) -> EvidenceReference | None:
+    if section.observed_at is None or section.snapshot_id is None:
+        return None
     metrics = section.payload.get("metrics", {})
-    observed_at = section.observed_at or cutoff
     content = {
         "section": name,
         "source": section.source,
-        "observed_at": observed_at.isoformat(),
+        "observed_at": section.observed_at.isoformat(),
         "status": section.status,
         "reason": section.reason,
         "metrics": metrics,
     }
     evidence_id = _digest(content)
-    snapshot_id = section.snapshot_id or f"assessment-source-{evidence_id[:16]}"
     summary = json.dumps(content, ensure_ascii=False, sort_keys=True, default=str)
     return EvidenceReference(
         evidence_id=evidence_id,
         source=section.source,
-        snapshot_id=snapshot_id,
+        snapshot_id=section.snapshot_id,
         summary=summary,
-        observed_at=observed_at,
+        observed_at=section.observed_at,
     )
 
 
@@ -89,14 +89,16 @@ class DeterministicStockAssessor:
             confidence = Decimal("0.75")
 
         supporting = tuple(
-            _evidence(name, section, cutoff)
+            evidence
             for name, section in sorted(usable.items())
             if section.status == "ready"
+            if (evidence := _evidence(name, section)) is not None
         )
         contrary = tuple(
-            _evidence(name, section, cutoff)
+            evidence
             for name, section in sorted(usable.items())
             if section.status in {"unavailable", "blocked"}
+            if (evidence := _evidence(name, section)) is not None
         )
         assessment_id = _digest({
             "symbol": symbol,
@@ -106,12 +108,18 @@ class DeterministicStockAssessor:
             "supporting_evidence": [item.evidence_id for item in supporting],
             "contrary_evidence": [item.evidence_id for item in contrary],
         })
-        simulation_eligible = bool(candidate_membership) and action == "observe"
-        risks = (
+        missing = tuple(
+            name for name, section in sorted(sections.items())
+            if section.observed_at is None or section.observed_at > cutoff
+        )
+        primary_risk = (
             "风险分区阻断。" if action == "avoid" else
             "核心行情或趋势证据不足。" if action == "wait" else
             "市场与基本面条件可能在截止时间后变化。"
         )
+        risks = (primary_risk, *(
+            (f"缺失或晚于截止时间的分区：{'、'.join(missing)}。",) if missing else ()
+        ))
         return StockAssessment(
             assessment_id=assessment_id,
             symbol=symbol,
@@ -120,8 +128,8 @@ class DeterministicStockAssessor:
             confidence=confidence,
             supporting_evidence=supporting,
             contrary_evidence=contrary,
-            risks=(risks,),
+            risks=risks,
             invalidation_conditions=("任一核心分区状态或指标发生变化。",),
-            simulation_eligible=simulation_eligible,
+            simulation_eligible=False,
             generated_at=cutoff,
         )

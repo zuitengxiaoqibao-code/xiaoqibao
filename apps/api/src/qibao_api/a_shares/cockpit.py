@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from datetime import date, datetime, time, timezone
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
@@ -92,12 +93,18 @@ def _unavailable(source: str, reason: str, explanation: str | None = None) -> Co
 
 class StockDecisionCockpitService:
     def __init__(
-        self, instrument_directory, diagnosis_service, decision_repository, assessor=None
+        self,
+        instrument_directory,
+        diagnosis_service,
+        decision_repository,
+        assessor=None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.instrument_directory = instrument_directory
         self.diagnosis_service = diagnosis_service
         self.decision_repository = decision_repository
         self.assessor = assessor or DeterministicStockAssessor()
+        self.clock = clock or (lambda: datetime.now(timezone.utc))
 
     async def get(
         self, symbol: AShareCode, as_of: date, cutoff: datetime
@@ -110,17 +117,17 @@ class StockDecisionCockpitService:
         sections = await self._diagnosis_sections(
             symbol, as_of, None if live_request else cutoff
         )
-        effective_cutoff = max(
-            (section.observed_at for section in sections.values() if section.observed_at),
-            default=cutoff,
-        )
-        effective_cutoff = max(cutoff, effective_cutoff)
+        effective_cutoff = self.clock() if live_request else cutoff
+        sections = self._enforce_cutoff(sections, effective_cutoff)
         sections["funds"] = _unavailable("not-connected", "fund_data_not_connected")
         sections["backtest"] = _unavailable("not-run", "backtest_not_run")
         phases = self._phases(symbol, as_of, effective_cutoff)
         current = self._current_advice(phases)
         membership = self._candidate_membership(current)
         assessment = self.assessor.assess(symbol, sections, membership, effective_cutoff)
+        assessment = assessment.model_copy(update={
+            "simulation_eligible": self._simulation_eligible(current)
+        })
         qualities = {section.status for section in sections.values()}
         overall: Literal["ready", "partial", "blocked"] = (
             "blocked" if "blocked" in qualities else
@@ -131,6 +138,36 @@ class StockDecisionCockpitService:
             instrument=instrument, candidate_membership=membership,
             assessment=assessment, current_advice=current, sections=sections, phases=phases,
         )
+
+    @staticmethod
+    def _enforce_cutoff(sections, cutoff):
+        return {
+            name: (
+                _unavailable(section.source, "observed_after_cutoff")
+                if section.observed_at is not None and section.observed_at > cutoff
+                else section
+            )
+            for name, section in sections.items()
+        }
+
+    @staticmethod
+    def _simulation_eligible(current_advice) -> bool:
+        for item in current_advice:
+            gate = getattr(item, "simulation_gate", None)
+            if (
+                item.action == "simulated_plan"
+                and bool(item.simulation_plan_id)
+                and bool(item.risk_decision_id)
+                and gate is not None
+                and gate.quote_state == "ready"
+                and gate.compliance_state == "ready"
+                and gate.evidence_state == "ready"
+                and gate.risk_state == "approve"
+                and gate.risk_decision_id == item.risk_decision_id
+                and bool(gate.compliance_snapshot_id)
+            ):
+                return True
+        return False
 
     async def _diagnosis_sections(self, symbol, as_of, cutoff):
         try:
