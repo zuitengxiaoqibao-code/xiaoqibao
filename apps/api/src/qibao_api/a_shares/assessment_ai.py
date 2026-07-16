@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict
 
 from qibao_api.a_shares.assessment import StockAssessment
 from qibao_api.contracts.decision import EvidenceReference
+from qibao_api.settings_repository import AISettings, AISettingsRepository
 
 
 AIStatus = Literal["ready", "unconfigured", "timeout", "http_error", "invalid"]
@@ -157,3 +158,46 @@ class OpenAICompatibleAssessmentGateway:
         return AssessmentAIResult(
             status=status, assessment=assessment, explanation=None
         )
+
+
+class ReloadableAssessmentGateway:
+    def __init__(
+        self,
+        repository: AISettingsRepository,
+        *,
+        fallback: AISettings | None = None,
+        client: httpx.AsyncClient | None = None,
+        client_factory: Callable[[], httpx.AsyncClient] | None = None,
+        timeout: float = 10,
+    ) -> None:
+        self._repository = repository
+        self._fallback = fallback
+        self._client = client
+        self._client_factory = client_factory
+        self._timeout = timeout
+
+    def __repr__(self) -> str:
+        return "ReloadableAssessmentGateway()"
+
+    async def explain(
+        self,
+        assessment: StockAssessment,
+        evidence: tuple[EvidenceReference, ...],
+    ) -> AssessmentAIResult:
+        current = self._repository.load()
+        if not isinstance(current, AISettings):
+            current = self._fallback if current.reason == "missing" else None
+        if current is None:
+            return OpenAICompatibleAssessmentGateway._result("unconfigured", assessment)
+        gateway = OpenAICompatibleAssessmentGateway(
+            base_url=current.base_url,
+            api_key=current.api_key,
+            model=current.model,
+            client=self._client,
+            client_factory=self._client_factory,
+            timeout=self._timeout,
+        )
+        try:
+            return await gateway.explain(assessment, evidence)
+        finally:
+            await gateway.aclose()

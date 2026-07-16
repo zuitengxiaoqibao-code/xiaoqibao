@@ -4,6 +4,8 @@ from pydantic import computed_field
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from qibao_api.settings_repository import AISettings
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="QIBAO_", extra="ignore")
@@ -24,3 +26,16 @@ class Settings(BaseSettings):
     @property
     def decision_database_path(self) -> Path:
         return self.data_dir / "decisions.sqlite3"
+
+    @property
+    def initial_ai_settings(self) -> AISettings | None:
+        if self.ai_base_url is None or self.ai_api_key is None or self.ai_model is None:
+            return None
+        try:
+            return AISettings(
+                base_url=self.ai_base_url,
+                model=self.ai_model,
+                api_key=self.ai_api_key.get_secret_value(),
+            )
+        except ValueError:
+            return None

@@ -6,8 +6,12 @@ import httpx
 import pytest
 
 from qibao_api.a_shares.assessment import StockAssessment
-from qibao_api.a_shares.assessment_ai import OpenAICompatibleAssessmentGateway
+from qibao_api.a_shares.assessment_ai import (
+    OpenAICompatibleAssessmentGateway,
+    ReloadableAssessmentGateway,
+)
 from qibao_api.contracts.decision import EvidenceReference
+from qibao_api.settings_repository import AISettings, AISettingsRepository
 
 
 NOW = datetime(2026, 7, 15, 6, tzinfo=UTC)
@@ -196,3 +200,57 @@ async def test_rejects_free_text_trading_instructions(instruction: str) -> None:
     await ai.aclose()
 
     assert result.status == "invalid"
+
+
+@pytest.mark.asyncio
+async def test_reloadable_gateway_reads_new_local_settings_without_restart(tmp_path) -> None:
+    repository = AISettingsRepository(tmp_path)
+    seen_models = []
+
+    def client_factory():
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_models.append(json.loads(request.content)["model"])
+            return httpx.Response(200, json=response_payload())
+
+        return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+    ai = ReloadableAssessmentGateway(repository, client_factory=client_factory)
+    assert (await ai.explain(assessment(), (evidence(),))).status == "unconfigured"
+
+    repository.save(AISettings(
+        base_url="https://provider.example/v1", model="first", api_key=SECRET
+    ))
+    assert (await ai.explain(assessment(), (evidence(),))).status == "ready"
+    repository.save(AISettings(
+        base_url="https://provider.example/v1", model="second", api_key=SECRET
+    ))
+    assert (await ai.explain(assessment(), (evidence(),))).status == "ready"
+
+    assert seen_models == ["first", "second"]
+
+
+@pytest.mark.asyncio
+async def test_reloadable_gateway_uses_environment_fallback_until_local_is_saved(tmp_path) -> None:
+    repository = AISettingsRepository(tmp_path)
+    fallback = AISettings(
+        base_url="https://provider.example/v1", model="environment", api_key=SECRET
+    )
+    seen_models = []
+
+    def client_factory():
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_models.append(json.loads(request.content)["model"])
+            return httpx.Response(200, json=response_payload())
+
+        return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+    ai = ReloadableAssessmentGateway(
+        repository, fallback=fallback, client_factory=client_factory
+    )
+    assert (await ai.explain(assessment(), (evidence(),))).status == "ready"
+    repository.save(AISettings(
+        base_url="https://provider.example/v1", model="local", api_key=SECRET
+    ))
+    assert (await ai.explain(assessment(), (evidence(),))).status == "ready"
+
+    assert seen_models == ["environment", "local"]

@@ -9,7 +9,7 @@ from sqlalchemy import create_engine
 
 from qibao_api.a_shares.diagnosis import AShareDiagnosisService
 from qibao_api.a_shares.cockpit import StockDecisionCockpitService
-from qibao_api.a_shares.assessment_ai import OpenAICompatibleAssessmentGateway
+from qibao_api.a_shares.assessment_ai import ReloadableAssessmentGateway
 from qibao_api.a_shares.fundamentals import TdxFinanceSource
 from qibao_api.a_shares.instrument_directory import AShareInstrument, AShareInstrumentDirectory
 from qibao_api.a_shares.repository import AShareResearchRepository
@@ -37,7 +37,9 @@ from qibao_api.routes.backtest import router as backtest_router
 from qibao_api.routes.data import router as data_router
 from qibao_api.routes.health import router as health_router
 from qibao_api.routes.research import router as research_router
+from qibao_api.routes.settings import router as settings_router
 from qibao_api.settings import Settings
+from qibao_api.settings_repository import AISettingsRepository
 from qibao_api.shangshu.pipeline import ResearchPipeline
 from qibao_api.storage.database import create_schema
 from qibao_api.storage.bar_repository import BarRepository
@@ -109,6 +111,8 @@ async def lifespan(application: FastAPI):
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     write_gate = asyncio.Lock()
     application.state.write_gate = write_gate
+    ai_settings_repository = AISettingsRepository(settings.data_dir)
+    application.state.ai_settings_repository = ai_settings_repository
     engine = create_engine(settings.database_url)
     create_schema(engine)
     compliance = ComplianceRepository(settings.data_dir / "compliance.sqlite3")
@@ -336,19 +340,14 @@ async def lifespan(application: FastAPI):
             )
             try:
                 application.state.a_share_instrument_directory = a_share_instrument_directory
-                ai_api_key = getattr(settings, "ai_api_key", None)
                 application.state.a_share_cockpit_service = StockDecisionCockpitService(
                     a_share_instrument_directory,
                     application.state.a_share_diagnosis_service,
                     decision_repository,
                     preparation_service=application.state.a_share_preparation_service,
-                    assessor_ai=OpenAICompatibleAssessmentGateway(
-                        base_url=getattr(settings, "ai_base_url", None),
-                        api_key=(
-                            ai_api_key.get_secret_value()
-                            if ai_api_key is not None else None
-                        ),
-                        model=getattr(settings, "ai_model", None),
+                    assessor_ai=ReloadableAssessmentGateway(
+                        ai_settings_repository,
+                        fallback=getattr(settings, "initial_ai_settings", None),
                         client=client,
                     ),
                 )
@@ -420,3 +419,4 @@ app.include_router(news_router)
 app.include_router(briefings_router)
 app.include_router(operations_router)
 app.include_router(decisions_router)
+app.include_router(settings_router)
