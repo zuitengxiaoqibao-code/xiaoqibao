@@ -68,7 +68,7 @@ class PremarketDecisionService:
         if now <= window_start:
             raise ValueError("premarket window has not opened")
 
-        candidates = self.candidate_service.candidates(trading_date)
+        candidates = self.candidate_service.candidates(trading_date, cutoff=window_end)
         compliance = self.compliance_checker.check(trading_date, window_end)
         risk = self.market_risk_summary.summarize(trading_date, window_end)
         candidate_symbols = {

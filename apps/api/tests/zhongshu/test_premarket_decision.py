@@ -6,6 +6,7 @@ import pytest
 from qibao_api.a_shares.models import CandidateBoard, CandidateEntry, FactorSnapshot
 from qibao_api.contracts.market import AssetKind
 from qibao_api.contracts.news import EvidenceCitation, NormalizedNewsEvent
+from qibao_api.shangshu.decision_runtime import RepositoryCandidateFactorSource
 from qibao_api.shangshu.decision_repository import DecisionRepository
 from qibao_api.zhongshu.decision_ai import DecisionAIResult
 from qibao_api.zhongshu.premarket_decision import (
@@ -18,6 +19,8 @@ TZ = timezone(timedelta(hours=8))
 TRADE_DATE = date(2026, 7, 15)
 PREVIOUS = date(2026, 7, 14)
 NOW = datetime(2026, 7, 15, 9, 20, tzinfo=TZ)
+WINDOW_END = datetime(2026, 7, 15, 9, 25, tzinfo=TZ)
+LATE_TIME = datetime(2026, 7, 15, 10, 0, tzinfo=TZ)
 
 
 def entry(symbol: str, horizon: str) -> CandidateEntry:
@@ -41,6 +44,17 @@ def candidate_input(*, captured_at=NOW, history_available=True, changed=False):
     return CandidateInputSnapshot(
         board=board, captured_at=captured_at, history_available=history_available,
     )
+
+
+def test_premarket_uses_requested_cutoff_for_candidate_capture() -> None:
+    frozen = candidate_input()
+    source = RepositoryCandidateFactorSource(
+        CandidateService(frozen.board), clock=lambda: LATE_TIME,
+    )
+
+    snapshot = source.candidates(TRADE_DATE, cutoff=WINDOW_END)
+
+    assert snapshot.captured_at == WINDOW_END
 
 
 def news(
@@ -69,7 +83,7 @@ class Calendar:
 
 class CandidateService:
     def __init__(self, value): self.value = value
-    def candidates(self, as_of): return self.value
+    def candidates(self, as_of, cutoff=None): return self.value
 
 
 class NewsRepository:

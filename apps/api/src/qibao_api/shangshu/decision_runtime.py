@@ -32,11 +32,13 @@ class RepositoryCandidateFactorSource:
         self.candidate_service = candidate_service
         self.clock = clock
 
-    def candidates(self, as_of: date) -> CandidateInputSnapshot:
+    def candidates(
+        self, as_of: date, cutoff: datetime | None = None,
+    ) -> CandidateInputSnapshot:
         board = self.candidate_service.candidates(as_of)
         return CandidateInputSnapshot(
             board=board,
-            captured_at=self.clock(),
+            captured_at=cutoff or self.clock(),
             history_available=board.universe_status == "ready",
         )
 
