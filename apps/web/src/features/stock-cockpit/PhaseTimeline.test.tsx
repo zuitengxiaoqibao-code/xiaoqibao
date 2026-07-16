@@ -10,7 +10,8 @@ describe("PhaseTimeline", () => {
     const foreign = { ...item, advice_id: "a2", symbol: "000001" };
     const phases: StockCockpitSnapshot["phases"] = {
       premarket: { advice: [item, foreign], change_stream: [{ snapshot_id: "s1", sequence: 1, generated_at: item.created_at, status: "ready" }] },
-      intraday: { advice: [], change_stream: [] }, postclose: { advice: [], change_stream: [] },
+      intraday: { advice: [], change_stream: [{ snapshot_id: "s2", sequence: 1, generated_at: item.created_at, status: "partial" }] },
+      postclose: { advice: [], change_stream: [] },
     };
     render(<PhaseTimeline phases={phases} symbol="600000" />);
     expect(screen.getByText("盘前研判")).toBeInTheDocument();
@@ -20,6 +21,7 @@ describe("PhaseTimeline", () => {
     expect(screen.getByText("暂不参与")).toBeInTheDocument();
     expect(screen.getByText("这是通俗解释，不是盘后归因")).toBeInTheDocument();
     expect(screen.queryByText(/前序建议|版本 #|变更字段/)).not.toBeInTheDocument();
-    expect(screen.getAllByText("暂无已验证记录")).toHaveLength(2);
+    expect(screen.getByText("本阶段已运行，当时未纳入这只股票")).toBeInTheDocument();
+    expect(screen.getByText("本阶段没有生成可核验记录")).toBeInTheDocument();
   });
 });

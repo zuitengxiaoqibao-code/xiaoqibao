@@ -63,7 +63,13 @@ class DailyBriefingScheduler:
         if self.intraday_monitor is None or self.repository.paused():
             return None
         local_now = now.astimezone(CHINA_TZ)
-        if not self.calendar.is_trading_day(local_now.date()):
+        if (
+            not self.calendar.is_trading_day(local_now.date())
+            or not time(9, 25) <= local_now.time() <= time(15, 0)
+        ):
+            return None
+        due = getattr(self.intraday_monitor, "due", None)
+        if callable(due) and not due(now):
             return None
         slot = local_now.strftime("%H%M%S")
         with self._run_lock:

@@ -49,6 +49,11 @@ class Monitor:
         return type("Check", (), {"result_id": f"check-{len(self.calls)}"})()
 
 
+class NotDueMonitor(Monitor):
+    def due(self, now):
+        return frozenset()
+
+
 def test_scheduler_runs_due_slots_once_and_survives_restart(tmp_path) -> None:
     repository = OperationsRepository(tmp_path / "operations.sqlite3")
     workflow = Workflow()
@@ -285,6 +290,34 @@ def test_background_monitor_tick_skips_unconfirmed_trading_day(tmp_path) -> None
         Workflow(), Calendar(), repository, intraday_monitor=monitor,
     )
     scheduler.tick_intraday(datetime(2026, 7, 15, 2, 30, tzinfo=UTC))
+    assert monitor.calls == []
+    assert repository.jobs() == []
+    repository.close()
+
+
+def test_background_monitor_tick_skips_time_outside_market_window(tmp_path) -> None:
+    repository = OperationsRepository(tmp_path / "operations.sqlite3")
+    monitor = Monitor()
+    scheduler = DailyBriefingScheduler(
+        Workflow(), Calendar(), repository, intraday_monitor=monitor,
+    )
+
+    scheduler.tick_intraday(datetime(2026, 7, 14, 14, 30, tzinfo=UTC))
+
+    assert monitor.calls == []
+    assert repository.jobs() == []
+    repository.close()
+
+
+def test_background_monitor_tick_skips_when_no_poll_scope_is_due(tmp_path) -> None:
+    repository = OperationsRepository(tmp_path / "operations.sqlite3")
+    monitor = NotDueMonitor()
+    scheduler = DailyBriefingScheduler(
+        Workflow(), Calendar(), repository, intraday_monitor=monitor,
+    )
+
+    scheduler.tick_intraday(datetime(2026, 7, 14, 2, 30, tzinfo=UTC))
+
     assert monitor.calls == []
     assert repository.jobs() == []
     repository.close()

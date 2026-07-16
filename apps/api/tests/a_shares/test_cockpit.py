@@ -363,6 +363,23 @@ async def test_cockpit_excludes_same_symbol_non_a_share_advice() -> None:
     assert result.phases["intraday"].advice[0].asset == AssetKind.A_SHARE
 
 
+class OtherStockDecisions:
+    def cycles(self, trading_date=None, phase=None):
+        if phase != "intraday":
+            return []
+        return [aggregate((advice("600519"),))]
+
+
+@pytest.mark.asyncio
+async def test_cockpit_preserves_phase_version_when_selected_stock_was_not_included() -> None:
+    result = await service(decisions=OtherStockDecisions()).get(
+        "600000", TRADE_DATE, CUTOFF
+    )
+
+    assert result.phases["intraday"].advice == ()
+    assert len(result.phases["intraday"].change_stream) == 1
+
+
 class FutureSourceDecisions:
     def cycles(self, trading_date=None, phase=None):
         if phase != "intraday":

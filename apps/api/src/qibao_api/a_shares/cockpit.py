@@ -265,8 +265,6 @@ class StockDecisionCockpitService:
                         for evidence in (*item.supporting_evidence, *item.contrary_evidence)
                     )
                 )
-                if not selected:
-                    continue
                 advice.extend(selected)
                 versions.append(DecisionVersion(
                     snapshot_id=snapshot.snapshot_id, sequence=snapshot.sequence,

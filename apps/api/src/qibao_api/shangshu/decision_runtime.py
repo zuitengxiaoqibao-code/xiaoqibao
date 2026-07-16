@@ -64,7 +64,13 @@ class RepositoryCandidateFactorSource:
         return CandidateInputSnapshot(
             board=board,
             captured_at=cutoff or self.clock(),
-            history_available=board.universe_status == "ready",
+            history_available=(
+                bool(board.short_term or board.swing)
+                or any(
+                    item.reason_code == "insufficient_liquidity"
+                    for item in board.exclusions
+                )
+            ),
         )
 
 
@@ -162,8 +168,12 @@ class DecisionSymbolSource:
         for phase in ("premarket", "intraday"):
             for cycle in self.repository.cycles(trading_date, phase):
                 symbols.update({item.symbol: None for item in cycle.advice})
-        if not symbols:
+        try:
             candidates = self.candidate_source.candidates(trading_date)
+        except Exception:
+            if not symbols:
+                raise
+        else:
             symbols.update({
                 item.symbol: None
                 for item in (*candidates.board.short_term, *candidates.board.swing)
@@ -214,7 +224,25 @@ class DeterministicIntradayEvaluator:
     def evaluate(self, context) -> IntradayEvaluationResult:
         by_symbol = {item.symbol: item for item in context.quotes}
         advice = []
-        current_advice = context.current_advice or self._seed_advice(context, by_symbol)
+        candidate_keys = {
+            (item.symbol, horizon)
+            for horizon, entries in (
+                ("intraday", context.candidate_factor_input.board.short_term),
+                ("swing", context.candidate_factor_input.board.swing),
+            )
+            for item in entries
+        }
+        current_advice = list(context.current_advice)
+        if context.candidate_factor_input.history_available:
+            current_advice = [
+                item for item in current_advice
+                if (item.symbol, item.horizon) in candidate_keys
+            ]
+        current_keys = {(item.symbol, item.horizon) for item in current_advice}
+        current_advice.extend(
+            item for item in self._seed_advice(context, by_symbol)
+            if (item.symbol, item.horizon) not in current_keys
+        )
         for current in current_advice:
             quote = by_symbol.get(current.symbol)
             if quote is None:

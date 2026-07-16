@@ -16,8 +16,9 @@ export function PhaseTimeline({ phases: histories, symbol }: { phases: StockCock
       const history = histories[phase];
       const selected = (history?.advice ?? []).filter((item) => item.symbol === symbol);
       const latest = selected.at(-1);
+      const phaseRan = (history?.change_stream ?? []).length > 0;
       return <section className="phase-lane" key={phase}><header><div><Activity size={15} /><h3>{title}</h3></div><p>{description}</p></header>
-        {!latest ? <p className="phase-empty"><Clock3 size={14} />暂无已验证记录</p> : <article className="phase-summary"><span><CheckCircle2 size={14} />{actions[latest.action]}</span><h4>{latest.conclusion}</h4><p>{latest.plain_language_explanation || latest.supporting_evidence[0]?.summary || "等待更多可验证信息"}</p><time>{new Date(latest.created_at).toLocaleString("zh-CN", { hour12: false })}</time></article>}
+        {!latest ? <p className="phase-empty"><Clock3 size={14} />{phaseRan ? "本阶段已运行，当时未纳入这只股票" : "本阶段没有生成可核验记录"}</p> : <article className="phase-summary"><span><CheckCircle2 size={14} />{actions[latest.action]}</span><h4>{latest.conclusion}</h4><p>{latest.plain_language_explanation || latest.supporting_evidence[0]?.summary || "等待更多可验证信息"}</p><time>{new Date(latest.created_at).toLocaleString("zh-CN", { hour12: false })}</time></article>}
       </section>;
     })}</div>
   </section>;

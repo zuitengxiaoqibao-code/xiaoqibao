@@ -21,4 +21,12 @@ describe("HistoryReview", () => {
     expect(await screen.findByText(/2026-07-14/)).toBeInTheDocument();
     expect(loadDate).toHaveBeenCalledWith("2026-07-14");
   });
+  it("distinguishes a phase that excluded the stock from a phase with no output", async () => {
+    const data = response();
+    data.phases.intraday.advice = [];
+    render(<HistoryReview loadCurrent={() => Promise.resolve(data)} symbol="600000" />);
+
+    expect(await screen.findByText("本阶段已运行，当时未纳入这只股票")).toBeInTheDocument();
+    expect(screen.getAllByText("本阶段没有生成可核验记录")).toHaveLength(2);
+  });
 });
